@@ -27,14 +27,17 @@ typedef struct {
 
 typedef enum {
   RENDERER_SHADER_PBR = 0,
-  RENDERER_SHADER_TOON = 1
+  RENDERER_SHADER_TOON = 1,
+  RENDERER_SHADER_ANIME = 2
 } RendererShaderMode;
 
 typedef struct {
   ShaderProgram pbr;
   ShaderProgram toon;
+  ShaderProgram anime;
   ShaderProgram *active;
   GLuint shadow_program;
+  GLuint outline_program;
 
   /* Shadow shader uniforms */
   GLint u_shadow_view;
@@ -45,6 +48,15 @@ typedef struct {
   GLint u_shadow_offset;
   GLint u_shadow_alpha;
   GLint u_shadow_scale;
+
+  /* Outline shader uniforms */
+  GLint u_outline_view;
+  GLint u_outline_proj;
+  GLint u_outline_model;
+  GLint u_outline_bones;
+  GLint u_outline_use_skinning;
+  GLint u_outline_width;
+  GLint u_outline_color;
 
   /* Loaded model */
   GltfModel *model;

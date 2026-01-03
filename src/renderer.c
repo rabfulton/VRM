@@ -97,7 +97,7 @@ static const char *pbr_frag_src =
     "    }\n"
     "    vec3 normal = normalize(vNormal);\n"
     "    // Key light (upper right front)\n"
-    "    vec3 keyDir = normalize(vec3(0.5, 1.0, -0.8));\n"
+    "    vec3 keyDir = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float key = max(dot(normal, keyDir), 0.0) * 0.5;\n"
     "    // Fill light (left side, softer)\n"
     "    vec3 fillDir = normalize(vec3(-0.7, 0.3, -0.5));\n"
@@ -127,7 +127,7 @@ static const char *toon_frag_src =
     "        color *= texture(uBaseColorTex, vTexCoord);\n"
     "    }\n"
     "    vec3 normal = normalize(vNormal);\n"
-    "    vec3 lightDir = normalize(vec3(0.4, 0.9, -0.6));\n"
+    "    vec3 lightDir = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float ndotl = max(dot(normal, lightDir), 0.0);\n"
     "    float shade = 0.25;\n"
     "    if (ndotl > 0.8) {\n"
@@ -147,6 +147,83 @@ static const char *toon_frag_src =
     "    color.rgb = mix(color.rgb, vec3(1.0), rim * rimStrength);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
     "    FragColor = vec4(color.rgb * color.a, color.a);\n"
+    "}\n";
+
+/* Anime-style cel shader with smooth color bands and specular highlights */
+static const char *anime_frag_src =
+    "#version 330 core\n"
+    "in vec3 vNormal;\n"
+    "in vec2 vTexCoord;\n"
+    "in vec3 vWorldPos;\n"
+    "uniform mat4 uView;\n"
+    "uniform vec4 uBaseColor;\n"
+    "uniform sampler2D uBaseColorTex;\n"
+    "uniform bool uHasBaseColorTex;\n"
+    "uniform int uAlphaMode;\n"
+    "uniform float uAlphaCutoff;\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    vec4 color = uBaseColor;\n"
+    "    if (uHasBaseColorTex) color *= texture(uBaseColorTex, vTexCoord);\n"
+    "    vec3 N = normalize(vNormal);\n"
+    "    vec3 L = normalize(vec3(0.2, 0.4, -0.9));\n"
+    "    float NdotL = dot(N, L);\n"
+    /* Two-tone cel shading with soft edge */
+    "    float shadow = smoothstep(-0.1, 0.1, NdotL);\n"
+    "    vec3 shadowColor = color.rgb * 0.6;\n"
+    "    vec3 litColor = color.rgb;\n"
+    "    color.rgb = mix(shadowColor, litColor, shadow);\n"
+    /* Specular highlight band */
+    "    vec3 viewPos = (uView * vec4(vWorldPos, 1.0)).xyz;\n"
+    "    vec3 V = normalize(-viewPos);\n"
+    "    vec3 H = normalize(L + V);\n"
+    "    float spec = pow(max(dot(N, H), 0.0), 40.0);\n"
+    "    float specBand = smoothstep(0.4, 0.5, spec);\n"
+    "    color.rgb += vec3(0.3) * specBand;\n"
+    /* Rim light */
+    "    vec3 Nv = normalize((uView * vec4(N, 0.0)).xyz);\n"
+    "    float rim = 1.0 - max(dot(Nv, V), 0.0);\n"
+    "    rim = smoothstep(0.6, 0.8, rim);\n"
+    "    color.rgb += vec3(0.15) * rim;\n"
+    "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
+    "    FragColor = vec4(color.rgb * color.a, color.a);\n"
+    "}\n";
+
+/* Outline vertex shader - extrudes along normals */
+static const char *outline_vert_src =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 aPos;\n"
+    "layout(location = 1) in vec3 aNormal;\n"
+    "layout(location = 3) in ivec4 aJoints;\n"
+    "layout(location = 4) in vec4 aWeights;\n"
+    "uniform mat4 uView;\n"
+    "uniform mat4 uProj;\n"
+    "uniform mat4 uModel;\n"
+    "uniform mat4 uBones[200];\n"
+    "uniform bool uUseSkinning;\n"
+    "uniform float uOutlineWidth;\n"
+    "void main() {\n"
+    "    mat4 skinMatrix;\n"
+    "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
+    "        skinMatrix = aWeights.x * uBones[aJoints.x]\n"
+    "                   + aWeights.y * uBones[aJoints.y]\n"
+    "                   + aWeights.z * uBones[aJoints.z]\n"
+    "                   + aWeights.w * uBones[aJoints.w];\n"
+    "    } else {\n"
+    "        skinMatrix = mat4(1.0);\n"
+    "    }\n"
+    "    vec3 normal = mat3(transpose(inverse(uModel * skinMatrix))) * aNormal;\n"
+    "    vec4 worldPos = uModel * skinMatrix * vec4(aPos, 1.0);\n"
+    "    worldPos.xyz += normalize(normal) * uOutlineWidth;\n"
+    "    gl_Position = uProj * uView * worldPos;\n"
+    "}\n";
+
+static const char *outline_frag_src =
+    "#version 330 core\n"
+    "uniform vec3 uOutlineColor;\n"
+    "out vec4 FragColor;\n"
+    "void main() {\n"
+    "    FragColor = vec4(uOutlineColor, 1.0);\n"
     "}\n";
 
 static GLuint compile_shader(GLenum type, const char *source) {
@@ -231,8 +308,14 @@ bool renderer_init(Renderer *r) {
     fprintf(stderr, "Failed to initialize toon shader, falling back to PBR\n");
     r->toon.program = 0;
   }
-  r->shader_mode = RENDERER_SHADER_PBR;
-  r->active = &r->pbr;
+
+  if (!init_shader_program(&r->anime, anime_frag_src)) {
+    fprintf(stderr, "Failed to initialize anime shader\n");
+    r->anime.program = 0;
+  }
+
+  r->shader_mode = RENDERER_SHADER_ANIME;
+  r->active = &r->anime;
 
   /* Shadow shader */
   GLuint shadow_vert = compile_shader(GL_VERTEX_SHADER, shadow_vert_src);
@@ -253,6 +336,24 @@ bool renderer_init(Renderer *r) {
   if (shadow_vert) glDeleteShader(shadow_vert);
   if (shadow_frag) glDeleteShader(shadow_frag);
 
+  /* Outline shader */
+  GLuint outline_vert = compile_shader(GL_VERTEX_SHADER, outline_vert_src);
+  GLuint outline_frag = compile_shader(GL_FRAGMENT_SHADER, outline_frag_src);
+  if (outline_vert && outline_frag) {
+    r->outline_program = link_program(outline_vert, outline_frag);
+    if (r->outline_program) {
+      r->u_outline_view = glGetUniformLocation(r->outline_program, "uView");
+      r->u_outline_proj = glGetUniformLocation(r->outline_program, "uProj");
+      r->u_outline_model = glGetUniformLocation(r->outline_program, "uModel");
+      r->u_outline_bones = glGetUniformLocation(r->outline_program, "uBones");
+      r->u_outline_use_skinning = glGetUniformLocation(r->outline_program, "uUseSkinning");
+      r->u_outline_width = glGetUniformLocation(r->outline_program, "uOutlineWidth");
+      r->u_outline_color = glGetUniformLocation(r->outline_program, "uOutlineColor");
+    }
+  }
+  if (outline_vert) glDeleteShader(outline_vert);
+  if (outline_frag) glDeleteShader(outline_frag);
+
   /* Initialize bone matrices to identity */
   for (int i = 0; i < 200; i++) {
     float *m = &r->bone_matrices[i * 16];
@@ -269,7 +370,9 @@ void renderer_cleanup(Renderer *r) {
   if (!r->initialized) return;
   if (r->pbr.program) glDeleteProgram(r->pbr.program);
   if (r->toon.program) glDeleteProgram(r->toon.program);
+  if (r->anime.program) glDeleteProgram(r->anime.program);
   if (r->shadow_program) glDeleteProgram(r->shadow_program);
+  if (r->outline_program) glDeleteProgram(r->outline_program);
   memset(r, 0, sizeof(Renderer));
 }
 
@@ -368,7 +471,47 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
 
   if (!r->model || !r->model->loaded) return;
 
-  /* === Draw shadow pass first (behind model) === */
+  /* === Draw outline pass for anime mode (back faces extruded) === */
+  if (r->shader_mode == RENDERER_SHADER_ANIME && r->outline_program) {
+    glUseProgram(r->outline_program);
+    glUniformMatrix4fv(r->u_outline_view, 1, GL_FALSE, camera->view[0]);
+    glUniformMatrix4fv(r->u_outline_proj, 1, GL_FALSE, camera->proj[0]);
+    glUniform1f(r->u_outline_width, 0.002f);
+    float outline_color[3] = {0.1f, 0.08f, 0.12f};
+    glUniform3fv(r->u_outline_color, 1, outline_color);
+
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+    for (int i = 0; i < r->model->node_count; i++) {
+      GltfNode *node = &r->model->nodes[i];
+      if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
+
+      if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
+        renderer_update_bones(r, node->skin_index, node->world_matrix);
+        glUniformMatrix4fv(r->u_outline_bones, 200, GL_FALSE, r->bone_matrices);
+      }
+      glUniform1i(r->u_outline_use_skinning, node->skin_index >= 0 ? 1 : 0);
+      glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, node->world_matrix);
+
+      GltfMesh *mesh = &r->model->meshes[node->mesh_index];
+      for (int j = 0; j < mesh->primitive_count; j++) {
+        GltfPrimitive *prim = &mesh->primitives[j];
+        GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count)
+                            ? &r->model->materials[prim->material_index] : NULL;
+        if (mat && mat->alpha_mode == 2) continue; /* Skip transparent */
+        glBindVertexArray(prim->vao);
+        if (prim->ebo && prim->index_count > 0) {
+          glDrawElements(GL_TRIANGLES, prim->index_count, prim->index_type, NULL);
+        }
+        glBindVertexArray(0);
+      }
+    }
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+  }
+
+  /* === Draw shadow pass (behind model) === */
   if (r->shadow_program) {
     glUseProgram(r->shadow_program);
     glUniformMatrix4fv(r->u_shadow_view, 1, GL_FALSE, camera->view[0]);
@@ -453,18 +596,26 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
 
 void renderer_toggle_shader(Renderer *r) {
   if (!r->initialized) return;
-  if (!r->toon.program) {
-    fprintf(stderr, "Toon shader unavailable\n");
-    return;
-  }
 
   if (r->shader_mode == RENDERER_SHADER_PBR) {
-    r->shader_mode = RENDERER_SHADER_TOON;
-    r->active = &r->toon;
-    printf("Shader: toon\n");
+    if (r->toon.program) {
+      r->shader_mode = RENDERER_SHADER_TOON;
+      r->active = &r->toon;
+      printf("Shader: toon\n");
+    }
+  } else if (r->shader_mode == RENDERER_SHADER_TOON) {
+    if (r->anime.program) {
+      r->shader_mode = RENDERER_SHADER_ANIME;
+      r->active = &r->anime;
+      printf("Shader: anime\n");
+    } else {
+      r->shader_mode = RENDERER_SHADER_ANIME;
+      r->active = &r->anime;
+      printf("Shader: PBR\n");
+    }
   } else {
-    r->shader_mode = RENDERER_SHADER_PBR;
-    r->active = &r->pbr;
+    r->shader_mode = RENDERER_SHADER_ANIME;
+    r->active = &r->anime;
     printf("Shader: PBR\n");
   }
 }
