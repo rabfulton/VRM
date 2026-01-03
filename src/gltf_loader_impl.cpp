@@ -159,7 +159,9 @@ static size_t component_type_size(int componentType) {
 }
 
 /* Create OpenGL texture from glTF image */
-static GLuint create_texture(const tinygltf::Image &image) {
+static GLuint create_texture(const tinygltf::Image &image,
+                             size_t *texture_bytes,
+                             size_t *texture_bytes_mip) {
   GLuint tex;
   glGenTextures(1, &tex);
   glBindTexture(GL_TEXTURE_2D, tex);
@@ -178,13 +180,22 @@ static GLuint create_texture(const tinygltf::Image &image) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glGenerateMipmap(GL_TEXTURE_2D);
 
+  if (texture_bytes) {
+    size_t base = (size_t)image.width * (size_t)image.height * 4;
+    *texture_bytes += base;
+    if (texture_bytes_mip) {
+      *texture_bytes_mip += (base * 4) / 3;
+    }
+  }
+
   return tex;
 }
 
 /* Create OpenGL buffers for a primitive */
 static void create_primitive_buffers(GltfPrimitive *prim,
                                      const tinygltf::Model &gltf,
-                                     const tinygltf::Primitive &tprim) {
+                                     const tinygltf::Primitive &tprim,
+                                     size_t *gpu_buffer_bytes) {
   glGenVertexArrays(1, &prim->vao);
   glBindVertexArray(prim->vao);
 
@@ -203,6 +214,9 @@ static void create_primitive_buffers(GltfPrimitive *prim,
     glGenBuffers(1, vbo);
     glBindBuffer(GL_ARRAY_BUFFER, *vbo);
     glBufferData(GL_ARRAY_BUFFER, view.byteLength, view_data, GL_STATIC_DRAW);
+    if (gpu_buffer_bytes) {
+      *gpu_buffer_bytes += (size_t)view.byteLength;
+    }
 
     size_t stride = accessor.ByteStride(view);
     if (stride == 0) {
@@ -289,6 +303,9 @@ static void create_primitive_buffers(GltfPrimitive *prim,
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, accessor.count * elem_size, data,
                  GL_STATIC_DRAW);
     prim->index_count = (uint32_t)accessor.count;
+    if (gpu_buffer_bytes) {
+      *gpu_buffer_bytes += (size_t)accessor.count * elem_size;
+    }
   }
 
   prim->material_index = tprim.material;
@@ -300,6 +317,9 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
   tinygltf::TinyGLTF loader;
   tinygltf::Model gltf;
   std::string err, warn;
+  size_t gpu_texture_bytes = 0;
+  size_t gpu_texture_bytes_mip = 0;
+  size_t gpu_buffer_bytes = 0;
 
   bool ret;
   std::string spath(path);
@@ -337,9 +357,13 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
     for (size_t i = 0; i < gltf.textures.size(); i++) {
       int img_idx = gltf.textures[i].source;
       if (img_idx >= 0 && img_idx < (int)gltf.images.size()) {
-        model->textures[i].id = create_texture(gltf.images[img_idx]);
+        model->textures[i].id =
+            create_texture(gltf.images[img_idx], &gpu_texture_bytes,
+                           &gpu_texture_bytes_mip);
         model->textures[i].width = gltf.images[img_idx].width;
         model->textures[i].height = gltf.images[img_idx].height;
+        gltf.images[img_idx].image.clear();
+        gltf.images[img_idx].image.shrink_to_fit();
       }
     }
   }
@@ -394,7 +418,8 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
           (GltfPrimitive *)calloc(m->primitive_count, sizeof(GltfPrimitive));
 
       for (size_t j = 0; j < mesh.primitives.size(); j++) {
-        create_primitive_buffers(&m->primitives[j], gltf, mesh.primitives[j]);
+        create_primitive_buffers(&m->primitives[j], gltf, mesh.primitives[j],
+                                 &gpu_buffer_bytes);
       }
 
       /* Morph targets */
@@ -727,6 +752,22 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
   model->anim_global_auto_correction[2] = 0.0f;
   model->anim_global_auto_correction[3] = 1.0f;
   gltf_update_transforms(model);
+
+  for (auto &img : gltf.images) {
+    img.image.clear();
+    img.image.shrink_to_fit();
+  }
+  for (auto &buf : gltf.buffers) {
+    buf.data.clear();
+    buf.data.shrink_to_fit();
+  }
+
+  if (gpu_texture_bytes > 0 || gpu_buffer_bytes > 0) {
+    printf("Approx GPU usage: textures=%.1f MB (base), %.1f MB (with mips), buffers=%.1f MB\n",
+           (double)gpu_texture_bytes / (1024.0 * 1024.0),
+           (double)gpu_texture_bytes_mip / (1024.0 * 1024.0),
+           (double)gpu_buffer_bytes / (1024.0 * 1024.0));
+  }
 
   return true;
 }

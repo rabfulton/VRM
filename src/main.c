@@ -23,6 +23,12 @@ typedef struct {
     GltfModel model;
     Animator animator;
     IpcServer ipc;
+    GLuint msaa_fbo;
+    GLuint msaa_color;
+    GLuint msaa_depth;
+    int msaa_samples;
+    int fb_width;
+    int fb_height;
     gboolean visible;
     gboolean always_on_top;
     gboolean model_loaded;
@@ -30,6 +36,58 @@ typedef struct {
 } VrmApp;
 
 static VrmApp app = {0};
+
+static void msaa_cleanup(VrmApp *state) {
+    if (state->msaa_color) {
+        glDeleteRenderbuffers(1, &state->msaa_color);
+        state->msaa_color = 0;
+    }
+    if (state->msaa_depth) {
+        glDeleteRenderbuffers(1, &state->msaa_depth);
+        state->msaa_depth = 0;
+    }
+    if (state->msaa_fbo) {
+        glDeleteFramebuffers(1, &state->msaa_fbo);
+        state->msaa_fbo = 0;
+    }
+}
+
+static void msaa_resize(VrmApp *state, int width, int height) {
+    if (width <= 0 || height <= 0 || state->msaa_samples <= 0) return;
+    if (state->fb_width == width && state->fb_height == height && state->msaa_fbo) {
+        return;
+    }
+
+    msaa_cleanup(state);
+
+    glGenFramebuffers(1, &state->msaa_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, state->msaa_fbo);
+
+    glGenRenderbuffers(1, &state->msaa_color);
+    glBindRenderbuffer(GL_RENDERBUFFER, state->msaa_color);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, state->msaa_samples,
+                                     GL_RGBA8, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_RENDERBUFFER, state->msaa_color);
+
+    glGenRenderbuffers(1, &state->msaa_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, state->msaa_depth);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, state->msaa_samples,
+                                     GL_DEPTH24_STENCIL8, width, height);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_RENDERBUFFER, state->msaa_depth);
+
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        fprintf(stderr, "MSAA framebuffer incomplete (status 0x%x)\n", status);
+        msaa_cleanup(state);
+        return;
+    }
+
+    state->fb_width = width;
+    state->fb_height = height;
+}
 
 static void update_anim_correction_mode(int mode) {
     /* VRMA/poses.glb in this repo require a global Y-180 correction.
@@ -251,6 +309,13 @@ static void on_realize(GtkGLArea *area, gpointer user_data) {
         return;
     }
 
+    GLint max_samples = 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
+    app.msaa_samples = max_samples >= 4 ? 4 : max_samples;
+    printf("MSAA samples (requested): %d\n", app.msaa_samples);
+    msaa_resize(&app, gtk_widget_get_allocated_width(GTK_WIDGET(area)),
+                gtk_widget_get_allocated_height(GTK_WIDGET(area)));
+
     camera_init(&app.camera);
     app.camera.distance = 3.0f;
     app.camera.target[1] = 0.8f;  /* Look at chest height */
@@ -262,12 +327,29 @@ static void on_realize(GtkGLArea *area, gpointer user_data) {
 
 static gboolean on_render(GtkGLArea *area, GdkGLContext *context, gpointer user_data) {
     (void)area; (void)context; (void)user_data;
+    GLint target_fbo = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &target_fbo);
+
+    if (app.msaa_fbo) {
+        glBindFramebuffer(GL_FRAMEBUFFER, app.msaa_fbo);
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)target_fbo);
+    }
 
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     camera_update(&app.camera);
     renderer_draw(&app.renderer, &app.camera);
+
+    if (app.msaa_fbo) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, app.msaa_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)target_fbo);
+        glBlitFramebuffer(0, 0, app.fb_width, app.fb_height,
+                          0, 0, app.fb_width, app.fb_height,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)target_fbo);
+    }
 
     return TRUE;
 }
@@ -276,6 +358,7 @@ static void on_resize(GtkGLArea *area, gint width, gint height, gpointer user_da
     (void)area; (void)user_data;
     glViewport(0, 0, width, height);
     app.camera.aspect = (float)width / (float)height;
+    msaa_resize(&app, width, height);
 }
 
 static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data) {

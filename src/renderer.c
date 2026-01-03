@@ -114,6 +114,7 @@ static const char *toon_frag_src =
     "in vec3 vNormal;\n"
     "in vec2 vTexCoord;\n"
     "in vec3 vWorldPos;\n"
+    "uniform mat4 uView;\n"
     "uniform vec4 uBaseColor;\n"
     "uniform sampler2D uBaseColorTex;\n"
     "uniform bool uHasBaseColorTex;\n"
@@ -137,7 +138,13 @@ static const char *toon_frag_src =
     "        shade = 0.45;\n"
     "    }\n"
     "    float ambient = 0.2;\n"
+    "    vec3 viewPos = (uView * vec4(vWorldPos, 1.0)).xyz;\n"
+    "    vec3 viewDir = normalize(-viewPos);\n"
+    "    vec3 normalV = normalize((uView * vec4(normal, 0.0)).xyz);\n"
+    "    float rim = pow(1.0 - max(dot(normalV, viewDir), 0.0), 2.0);\n"
+    "    float rimStrength = 0.35;\n"
     "    color.rgb *= (shade + ambient);\n"
+    "    color.rgb = mix(color.rgb, vec3(1.0), rim * rimStrength);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
     "    FragColor = vec4(color.rgb * color.a, color.a);\n"
     "}\n";
@@ -212,6 +219,7 @@ bool renderer_init(Renderer *r) {
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LESS);
+  glEnable(GL_MULTISAMPLE);
   glDisable(GL_CULL_FACE);  /* Disable culling by default */
 
   /* Main shader */
