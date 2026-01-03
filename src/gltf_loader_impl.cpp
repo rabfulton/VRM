@@ -459,6 +459,30 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
     printf("Loaded %d animations\n", model->animation_count);
   }
 
+  /* Load VRM humanoid bone mapping */
+  if (gltf.extensions.count("VRM")) {
+    const auto &vrm = gltf.extensions.at("VRM");
+    if (vrm.Has("humanoid") && vrm.Get("humanoid").Has("humanBones")) {
+      const auto &bones = vrm.Get("humanoid").Get("humanBones");
+      if (bones.IsArray()) {
+        model->humanoid_bone_count = (int)bones.ArrayLen();
+        model->humanoid_names = (char(*)[32])calloc(model->humanoid_bone_count, 32);
+        model->humanoid_bones = (int *)malloc(model->humanoid_bone_count * sizeof(int));
+        
+        for (size_t i = 0; i < bones.ArrayLen(); i++) {
+          const auto &b = bones.Get((int)i);
+          if (b.Has("bone") && b.Has("node")) {
+            std::string name = b.Get("bone").Get<std::string>();
+            int node = b.Get("node").Get<int>();
+            strncpy(model->humanoid_names[i], name.c_str(), 31);
+            model->humanoid_bones[i] = node;
+          }
+        }
+        printf("Loaded %d humanoid bone mappings\n", model->humanoid_bone_count);
+      }
+    }
+  }
+
   model->loaded = true;
   gltf_update_transforms(model);
 
@@ -526,6 +550,10 @@ extern "C" void gltf_unload_impl(GltfModel *model) {
   }
   free(model->animations);
 
+  /* Free humanoid mapping */
+  free(model->humanoid_names);
+  free(model->humanoid_bones);
+
   free(model->scene_roots);
 }
 
@@ -565,14 +593,159 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     free(a->channels);
   }
   free(model->animations);
+  model->animations = NULL;
+  model->animation_count = 0;
 
-  /* Build node name to index map for the model */
+  /* Build mapping from animation node index to model node index */
+  std::unordered_map<int, int> anim_to_model_node;
+  
+  /* Method 1: Direct node name matching (for animations with same node names) */
   std::unordered_map<std::string, int> model_node_map;
   for (int i = 0; i < model->node_count; i++) {
     if (model->nodes[i].name[0]) {
       model_node_map[model->nodes[i].name] = i;
     }
   }
+  
+  /* Method 2: VRM humanoid bone name mapping (model's humanoid -> model node) */
+  std::unordered_map<std::string, int> model_humanoid_map;
+  if (model->humanoid_names && model->humanoid_bones && model->humanoid_bone_count > 0) {
+    for (int i = 0; i < model->humanoid_bone_count; i++) {
+      if (model->humanoid_names[i][0]) {
+        model_humanoid_map[model->humanoid_names[i]] = model->humanoid_bones[i];
+      }
+    }
+  }
+  
+  /* Check for VRMC_vrm_animation extension (VRMA files) */
+  std::unordered_map<int, std::array<float,4>> anim_local_rest;  /* Local rest rotation */
+  bool needs_coord_flip = false;  /* Detect if VRMA uses different coordinate system */
+  
+  if (anim_gltf.extensions.count("VRMC_vrm_animation")) {
+    const auto &vrma_ext = anim_gltf.extensions.at("VRMC_vrm_animation");
+    if (vrma_ext.Has("humanoid") && vrma_ext.Get("humanoid").Has("humanBones")) {
+      const auto &hbones = vrma_ext.Get("humanoid").Get("humanBones");
+      
+      /* Check if coordinate system is flipped by looking at leftUpperLeg position */
+      if (hbones.Has("leftUpperLeg")) {
+        int node_idx = hbones.Get("leftUpperLeg").Get("node").GetNumberAsInt();
+        const auto &node = anim_gltf.nodes[node_idx];
+        if (node.translation.size() >= 1 && node.translation[0] > 0) {
+          needs_coord_flip = true;  /* Left leg has positive X = flipped */
+          printf("VRMA: detected flipped coordinate system\n");
+        }
+      }
+      
+      for (const auto &key : hbones.Keys()) {
+        if (hbones.Get(key).Has("node")) {
+          int anim_node = hbones.Get(key).Get("node").GetNumberAsInt();
+          auto it = model_humanoid_map.find(key);
+          if (it != model_humanoid_map.end()) {
+            anim_to_model_node[anim_node] = it->second;
+            
+            /* Store rest rotation for normalization */
+            const auto &node = anim_gltf.nodes[anim_node];
+            std::array<float,4> local_rot = {0,0,0,1};
+            if (node.rotation.size() == 4) {
+              local_rot = {(float)node.rotation[0], (float)node.rotation[1], 
+                          (float)node.rotation[2], (float)node.rotation[3]};
+            }
+            anim_local_rest[anim_node] = local_rot;
+          }
+        }
+      }
+      printf("VRMA: mapped %zu humanoid bones, coord_flip=%d\n", anim_to_model_node.size(), needs_coord_flip);
+    }
+  }
+  
+  /* Store coord flip flag in model */
+  model->anim_needs_coord_flip = needs_coord_flip;
+  
+  /* Mixamo bone name to VRM humanoid name mapping */
+  static const std::pair<const char*, const char*> mixamo_to_vrm[] = {
+    {"Hips", "hips"}, {"Spine", "spine"}, {"Spine1", "chest"}, {"Spine2", "upperChest"},
+    {"Neck", "neck"}, {"Head", "head"},
+    {"LeftShoulder", "leftShoulder"}, {"LeftArm", "leftUpperArm"}, 
+    {"LeftForeArm", "leftLowerArm"}, {"LeftHand", "leftHand"},
+    {"RightShoulder", "rightShoulder"}, {"RightArm", "rightUpperArm"},
+    {"RightForeArm", "rightLowerArm"}, {"RightHand", "rightHand"},
+    {"LeftUpLeg", "leftUpperLeg"}, {"LeftLeg", "leftLowerLeg"},
+    {"LeftFoot", "leftFoot"}, {"LeftToeBase", "leftToes"},
+    {"RightUpLeg", "rightUpperLeg"}, {"RightLeg", "rightLowerLeg"},
+    {"RightFoot", "rightFoot"}, {"RightToeBase", "rightToes"},
+  };
+  
+  /* Compute world rest rotations for animation nodes */
+  std::unordered_map<int, std::array<float,4>> anim_world_rest;
+  std::function<void(int, const float*)> compute_world_rot = [&](int node_idx, const float* parent_world) {
+    const auto &node = anim_gltf.nodes[node_idx];
+    float local[4] = {0,0,0,1};
+    if (node.rotation.size() == 4) {
+      local[0] = (float)node.rotation[0]; local[1] = (float)node.rotation[1];
+      local[2] = (float)node.rotation[2]; local[3] = (float)node.rotation[3];
+    }
+    float world[4];
+    /* world = parent_world * local */
+    world[0] = parent_world[3]*local[0] + parent_world[0]*local[3] + parent_world[1]*local[2] - parent_world[2]*local[1];
+    world[1] = parent_world[3]*local[1] - parent_world[0]*local[2] + parent_world[1]*local[3] + parent_world[2]*local[0];
+    world[2] = parent_world[3]*local[2] + parent_world[0]*local[1] - parent_world[1]*local[0] + parent_world[2]*local[3];
+    world[3] = parent_world[3]*local[3] - parent_world[0]*local[0] - parent_world[1]*local[1] - parent_world[2]*local[2];
+    anim_world_rest[node_idx] = {world[0], world[1], world[2], world[3]};
+    for (int child : node.children) compute_world_rot(child, world);
+  };
+  for (int scene_idx : anim_gltf.scenes[0].nodes) {
+    float identity[4] = {0,0,0,1};
+    compute_world_rot(scene_idx, identity);
+  }
+  
+  /* Fallback: Mixamo name mapping, then direct node name matching */
+  bool is_mixamo = false;
+  for (size_t i = 0; i < anim_gltf.nodes.size(); i++) {
+    if (anim_to_model_node.count(i)) continue;
+    const std::string &name = anim_gltf.nodes[i].name;
+    if (name.empty()) continue;
+    
+    /* Try Mixamo to VRM mapping */
+    for (const auto& [mixamo, vrm] : mixamo_to_vrm) {
+      if (name == mixamo) {
+        auto it = model_humanoid_map.find(vrm);
+        if (it != model_humanoid_map.end()) {
+          anim_to_model_node[i] = it->second;
+          is_mixamo = true;
+          /* Store rest pose from node rotation */
+          const auto &node = anim_gltf.nodes[i];
+          if (node.rotation.size() == 4) {
+            anim_local_rest[i] = {(float)node.rotation[0], (float)node.rotation[1],
+                                  (float)node.rotation[2], (float)node.rotation[3]};
+          }
+        }
+        break;
+      }
+    }
+    
+    /* Try direct name match */
+    if (!anim_to_model_node.count(i)) {
+      auto it = model_node_map.find(name);
+      if (it != model_node_map.end()) {
+        anim_to_model_node[i] = it->second;
+      }
+    }
+  }
+  
+  model->anim_needs_coord_flip = needs_coord_flip && !is_mixamo;
+  model->anim_is_mixamo = is_mixamo;
+  printf("Animation: mapped %zu nodes, coord_flip=%d, mixamo=%d\n", anim_to_model_node.size(), model->anim_needs_coord_flip, is_mixamo);
+  
+  /* Quaternion helpers */
+  auto qmul = [](const float* a, const float* b, float* out) {
+    out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
+    out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
+    out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
+    out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
+  };
+  auto qinv = [](const float* q, float* out) {
+    out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3];
+  };
 
   /* Load animations, remapping node indices */
   model->animation_count = (int)anim_gltf.animations.size();
@@ -618,24 +791,42 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       memcpy(s->output, output_data, s->keyframe_count * components * sizeof(float));
     }
 
-    /* Load channels, remapping node indices by name */
+    /* Load channels, remapping node indices */
     a->channel_count = (int)anim.channels.size();
     a->channels = (GltfAnimChannel *)calloc(a->channel_count, sizeof(GltfAnimChannel));
+    int matched = 0;
     for (size_t j = 0; j < anim.channels.size(); j++) {
       const auto &channel = anim.channels[j];
       GltfAnimChannel *c = &a->channels[j];
 
       c->sampler_index = channel.sampler;
 
-      /* Remap node index by name */
       int anim_node_idx = channel.target_node;
-      if (anim_node_idx >= 0 && anim_node_idx < (int)anim_gltf.nodes.size()) {
-        const std::string &node_name = anim_gltf.nodes[anim_node_idx].name;
-        auto it = model_node_map.find(node_name);
-        if (it != model_node_map.end()) {
-          c->target_node = it->second;
-        } else {
-          c->target_node = -1; /* Node not found in model */
+      auto it = anim_to_model_node.find(anim_node_idx);
+      if (it != anim_to_model_node.end()) {
+        c->target_node = it->second;
+        matched++;
+        
+        /* Process rotation keyframes */
+        if (channel.target_path == "rotation") {
+          GltfAnimSampler *s = &a->samplers[c->sampler_index];
+          
+          /* Normalize: L^-1 * anim */
+          auto local_it = anim_local_rest.find(anim_node_idx);
+          if (local_it != anim_local_rest.end()) {
+            const auto &L = local_it->second;
+            if (std::abs(L[0]) > 0.001f || std::abs(L[1]) > 0.001f || 
+                std::abs(L[2]) > 0.001f || std::abs(L[3] - 1.0f) > 0.001f) {
+              float L_inv[4];
+              qinv(L.data(), L_inv);
+              for (int k = 0; k < s->keyframe_count; k++) {
+                float *q = &s->output[k * 4];
+                float tmp[4];
+                qmul(L_inv, q, tmp);  /* L^-1 * anim */
+                q[0] = tmp[0]; q[1] = tmp[1]; q[2] = tmp[2]; q[3] = tmp[3];
+              }
+            }
+          }
         }
       } else {
         c->target_node = -1;
@@ -646,6 +837,7 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
       else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
     }
+    printf("Animation '%s': %d/%d channels mapped\n", a->name, matched, a->channel_count);
   }
 
   printf("Loaded %d animations from %s (duration: %.2fs)\n", 

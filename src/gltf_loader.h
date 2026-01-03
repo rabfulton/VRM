@@ -159,6 +159,13 @@ typedef struct {
   /* Animations */
   GltfAnimation *animations;
   int animation_count;
+  bool anim_needs_coord_flip;  /* True if animation has flipped coordinate system */
+  bool anim_is_mixamo;         /* True if animation uses Mixamo skeleton */
+
+  /* VRM humanoid bone mapping */
+  char (*humanoid_names)[32];  /* Array of bone names */
+  int *humanoid_bones;         /* Array of node indices */
+  int humanoid_bone_count;
 
   bool loaded;
 } GltfModel;

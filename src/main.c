@@ -146,6 +146,23 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             ipc_respond(&app.ipc, id, false, "Failed to load animation");
         }
     }
+    else if (strcmp(action, "set_debug_rot") == 0) {
+        extern int g_body[4], g_arms[4], g_legs[4];
+        cJSON *arr;
+        if ((arr = cJSON_GetObjectItem(json, "body")) && cJSON_IsArray(arr)) {
+            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
+                g_body[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
+        }
+        if ((arr = cJSON_GetObjectItem(json, "arms")) && cJSON_IsArray(arr)) {
+            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
+                g_arms[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
+        }
+        if ((arr = cJSON_GetObjectItem(json, "legs")) && cJSON_IsArray(arr)) {
+            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
+                g_legs[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
+        }
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
     else if (strcmp(action, "pause") == 0) {
         animator_pause(&app.animator);
         ipc_respond(&app.ipc, id, true, NULL);

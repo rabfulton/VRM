@@ -6,6 +6,11 @@
 #include <math.h>
 #include <string.h>
 
+/* Per-group axis negation: [x, y, z, w] */
+int g_body[4] = {0, 0, 0, 1};
+int g_arms[4] = {1, 0, 1, 0};
+int g_legs[4] = {0, 0, 0, 1};
+
 void animator_init(Animator *anim) {
     memset(anim, 0, sizeof(Animator));
     anim->speed = 1.0f;
@@ -69,6 +74,24 @@ static int find_keyframe(const GltfAnimSampler *s, float t) {
     return s->keyframe_count - 2;
 }
 
+/* Check if node is an arm bone */
+static int is_arm_bone(const char *name) {
+    return (strstr(name, "Shoulder") || strstr(name, "Arm") || strstr(name, "Hand") ||
+            strstr(name, "Thumb") || strstr(name, "Index") || strstr(name, "Middle") ||
+            strstr(name, "Ring") || strstr(name, "Little") || strstr(name, "Pinky"));
+}
+
+static int is_leg_bone(const char *name) {
+    return (strstr(name, "Leg") || strstr(name, "Foot") || strstr(name, "Toe"));
+}
+
+static void apply_rot_fix(float *rot, int *neg) {
+    if (neg[0]) rot[0] = -rot[0];
+    if (neg[1]) rot[1] = -rot[1];
+    if (neg[2]) rot[2] = -rot[2];
+    if (neg[3]) rot[3] = -rot[3];
+}
+
 /* Sample animation at time t */
 static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
     for (int i = 0; i < anim->channel_count; i++) {
@@ -100,9 +123,19 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
                 node->translation[1] = lerp(v0[1], v1[1], factor);
                 node->translation[2] = lerp(v0[2], v1[2], factor);
                 break;
-            case GLTF_PATH_ROTATION:
+            case GLTF_PATH_ROTATION: {
                 slerp(v0, v1, factor, node->rotation);
+                if (model->anim_needs_coord_flip) {
+                    if (is_arm_bone(node->name)) {
+                        apply_rot_fix(node->rotation, g_arms);
+                    } else if (is_leg_bone(node->name)) {
+                        apply_rot_fix(node->rotation, g_legs);
+                    } else {
+                        apply_rot_fix(node->rotation, g_body);
+                    }
+                }
                 break;
+            }
             case GLTF_PATH_SCALE:
                 node->scale[0] = lerp(v0[0], v1[0], factor);
                 node->scale[1] = lerp(v0[1], v1[1], factor);
