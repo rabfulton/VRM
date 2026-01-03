@@ -5,18 +5,34 @@
 #include "animator.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdint.h>
+
+static float loop_blend_duration = 0.0f;
 
 void animator_init(Animator *anim) {
     memset(anim, 0, sizeof(Animator));
     anim->speed = 1.0f;
     anim->current_animation = -1;
+    anim->next_animation = -1;
+}
+
+void animator_cleanup(Animator *anim) {
+    free(anim->snap_translations);
+    free(anim->snap_rotations);
+    free(anim->snap_scales);
+    anim->snap_translations = NULL;
+    anim->snap_rotations = NULL;
+    anim->snap_scales = NULL;
+    anim->snap_node_count = 0;
 }
 
 void animator_set_model(Animator *anim, GltfModel *model) {
+    animator_cleanup(anim);
     anim->model = model;
     anim->time = 0;
     anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
+    anim->next_animation = -1;
 }
 
 /* Linear interpolation */
@@ -189,30 +205,85 @@ void animator_update(Animator *anim, float dt) {
     if (!anim->model || !anim->playing) return;
     if (anim->current_animation < 0 || anim->current_animation >= anim->model->animation_count) return;
 
-    GltfAnimation *animation = &anim->model->animations[anim->current_animation];
+    GltfModel *model = anim->model;
+    extern void spring_bones_reset(GltfModel *model);
 
+    /* Blending mode */
+    if (anim->next_animation >= 0) {
+        anim->blend_time += dt;
+        anim->next_anim_time += dt * anim->speed;
+        
+        GltfAnimation *next_anim = &model->animations[anim->next_animation];
+        
+        /* Wrap next animation time */
+        if (next_anim->duration > 0) {
+            while (anim->next_anim_time > next_anim->duration)
+                anim->next_anim_time -= next_anim->duration;
+        }
+        
+        float t = anim->blend_time / anim->blend_duration;
+        if (t >= 1.0f) {
+            t = 1.0f;
+            anim->current_animation = anim->next_animation;
+            anim->time = anim->next_anim_time;
+            anim->next_animation = -1;
+        }
+        
+        /* Sample target animation */
+        sample_animation(model, next_anim, anim->next_anim_time);
+        
+        /* Blend with snapshot */
+        for (int i = 0; i < model->node_count && i < anim->snap_node_count; i++) {
+            GltfNode *node = &model->nodes[i];
+            if (node->is_spring_bone) continue;
+            
+            float *st = &anim->snap_translations[i * 3];
+            float *sr = &anim->snap_rotations[i * 4];
+            float *ss = &anim->snap_scales[i * 3];
+            
+            node->translation[0] = lerp(st[0], node->translation[0], t);
+            node->translation[1] = lerp(st[1], node->translation[1], t);
+            node->translation[2] = lerp(st[2], node->translation[2], t);
+            
+            float blended_rot[4];
+            slerp(sr, node->rotation, t, blended_rot);
+            memcpy(node->rotation, blended_rot, sizeof(float) * 4);
+            
+            node->scale[0] = lerp(ss[0], node->scale[0], t);
+            node->scale[1] = lerp(ss[1], node->scale[1], t);
+            node->scale[2] = lerp(ss[2], node->scale[2], t);
+        }
+        
+        gltf_update_transforms(model);
+        return;
+    }
+
+    /* Normal playback */
+    GltfAnimation *animation = &model->animations[anim->current_animation];
     anim->time += dt * anim->speed;
 
-    /* Loop */
+    /* Loop with optional blend */
     if (animation->duration > 0) {
-        int looped = 0;
-        while (anim->time > animation->duration) {
-            anim->time -= animation->duration;
-            looped = 1;
+        if (anim->time > animation->duration) {
+            if (loop_blend_duration > 0.0f) {
+                /* Start loop blend: blend from end pose to start */
+                animator_blend_to(anim, anim->current_animation, loop_blend_duration);
+                anim->next_anim_time = anim->time - animation->duration;
+                return;
+            }
+            while (anim->time > animation->duration) {
+                anim->time -= animation->duration;
+            }
+            spring_bones_reset(model);
         }
         while (anim->time < 0) {
             anim->time += animation->duration;
-            looped = 1;
-        }
-        if (looped) {
-            /* Reset spring bones on loop to prevent oscillation */
-            extern void spring_bones_reset(GltfModel *model);
-            spring_bones_reset(anim->model);
+            spring_bones_reset(model);
         }
     }
 
-    sample_animation(anim->model, animation, anim->time);
-    gltf_update_transforms(anim->model);
+    sample_animation(model, animation, anim->time);
+    gltf_update_transforms(model);
 }
 
 void animator_play(Animator *anim, float speed) {
@@ -238,5 +309,48 @@ void animator_set_animation(Animator *anim, int index) {
     if (index >= 0 && index < anim->model->animation_count) {
         anim->current_animation = index;
         anim->time = 0;
+        anim->next_animation = -1;
     }
+}
+
+static void snapshot_pose(Animator *anim) {
+    GltfModel *model = anim->model;
+    int n = model->node_count;
+    
+    if (anim->snap_node_count < n) {
+        free(anim->snap_translations);
+        free(anim->snap_rotations);
+        free(anim->snap_scales);
+        anim->snap_translations = malloc(n * 3 * sizeof(float));
+        anim->snap_rotations = malloc(n * 4 * sizeof(float));
+        anim->snap_scales = malloc(n * 3 * sizeof(float));
+        anim->snap_node_count = n;
+    }
+    
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        memcpy(&anim->snap_translations[i * 3], node->translation, 3 * sizeof(float));
+        memcpy(&anim->snap_rotations[i * 4], node->rotation, 4 * sizeof(float));
+        memcpy(&anim->snap_scales[i * 3], node->scale, 3 * sizeof(float));
+    }
+}
+
+void animator_blend_to(Animator *anim, int index, float duration) {
+    if (!anim->model) return;
+    if (index < 0 || index >= anim->model->animation_count) return;
+    if (duration <= 0.0f) {
+        animator_set_animation(anim, index);
+        return;
+    }
+    
+    snapshot_pose(anim);
+    anim->next_animation = index;
+    anim->blend_time = 0.0f;
+    anim->blend_duration = duration;
+    anim->next_anim_time = 0.0f;
+}
+
+void animator_set_loop_blend(Animator *anim, float duration) {
+    (void)anim;
+    loop_blend_duration = duration >= 0.0f ? duration : 0.0f;
 }

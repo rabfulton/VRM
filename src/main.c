@@ -264,6 +264,21 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (idx) animator_set_animation(&app.animator, idx->valueint);
         ipc_respond(&app.ipc, id, true, NULL);
     }
+    else if (strcmp(action, "blend_to") == 0) {
+        cJSON *idx = cJSON_GetObjectItem(json, "index");
+        cJSON *dur = cJSON_GetObjectItem(json, "duration");
+        if (idx) {
+            float d = dur ? (float)dur->valuedouble : 0.3f;
+            animator_blend_to(&app.animator, idx->valueint, d);
+        }
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_loop_blend") == 0) {
+        cJSON *dur = cJSON_GetObjectItem(json, "duration");
+        float d = dur ? (float)dur->valuedouble : 0.0f;
+        animator_set_loop_blend(&app.animator, d);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
     else if (strcmp(action, "set_spring") == 0) {
         /* Tune spring bone global multipliers */
         extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
