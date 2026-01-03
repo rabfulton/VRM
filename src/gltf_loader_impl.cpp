@@ -11,12 +11,20 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 
 #include "tiny_gltf.h"
+#include <cglm/cglm.h>
+#include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
+#include <array>
+#include <set>
+#include <vector>
 
 extern "C" {
 #include "gltf_loader.h"
 }
+
+static void mat4_to_quat(const float *m, float *q);
 
 /* Helper to copy string safely */
 static void copy_name(char *dst, const std::string &src, size_t max_len) {
@@ -25,6 +33,129 @@ static void copy_name(char *dst, const std::string &src, size_t max_len) {
     len = max_len - 1;
   memcpy(dst, src.c_str(), len);
   dst[len] = '\0';
+}
+
+static void normalize_quat(float *q) {
+  float len = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+  if (len > 0.0001f) {
+    q[0] /= len; q[1] /= len; q[2] /= len; q[3] /= len;
+  }
+}
+
+static float vec3_len(const float *v) {
+  return sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+}
+
+static void vec3_norm(float *v) {
+  float len = vec3_len(v);
+  if (len > 1e-6f) {
+    v[0] /= len; v[1] /= len; v[2] /= len;
+  }
+}
+
+static float vec3_dot(const float *a, const float *b) {
+  return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+static void vec3_cross(const float *a, const float *b, float *out) {
+  float x = a[1]*b[2] - a[2]*b[1];
+  float y = a[2]*b[0] - a[0]*b[2];
+  float z = a[0]*b[1] - a[1]*b[0];
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+}
+
+static void quat_mul(const float *a, const float *b, float *out) {
+  out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
+  out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
+  out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
+  out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
+}
+
+static void quat_inv(const float *q, float *out) {
+  out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3];
+}
+
+static void mat4_mul(const float *a, const float *b, float *out) {
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      float sum = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        sum += a[k * 4 + row] * b[col * 4 + k];
+      }
+      out[col * 4 + row] = sum;
+    }
+  }
+}
+
+static void mat4_to_quat(const float *m, float *q) {
+  float m00 = m[0], m01 = m[4], m02 = m[8];
+  float m10 = m[1], m11 = m[5], m12 = m[9];
+  float m20 = m[2], m21 = m[6], m22 = m[10];
+  float trace = m00 + m11 + m22;
+  if (trace > 0.0f) {
+    float s = sqrtf(trace + 1.0f) * 2.0f;
+    q[3] = 0.25f * s;
+    q[0] = (m21 - m12) / s;
+    q[1] = (m02 - m20) / s;
+    q[2] = (m10 - m01) / s;
+  } else if (m00 > m11 && m00 > m22) {
+    float s = sqrtf(1.0f + m00 - m11 - m22) * 2.0f;
+    q[3] = (m21 - m12) / s;
+    q[0] = 0.25f * s;
+    q[1] = (m01 + m10) / s;
+    q[2] = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    float s = sqrtf(1.0f + m11 - m00 - m22) * 2.0f;
+    q[3] = (m02 - m20) / s;
+    q[0] = (m01 + m10) / s;
+    q[1] = 0.25f * s;
+    q[2] = (m12 + m21) / s;
+  } else {
+    float s = sqrtf(1.0f + m22 - m00 - m11) * 2.0f;
+    q[3] = (m10 - m01) / s;
+    q[0] = (m02 + m20) / s;
+    q[1] = (m12 + m21) / s;
+    q[2] = 0.25f * s;
+  }
+  normalize_quat(q);
+}
+
+
+static GLenum component_gl_type(int componentType) {
+  switch (componentType) {
+  case TINYGLTF_COMPONENT_TYPE_BYTE:
+    return GL_BYTE;
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+    return GL_UNSIGNED_BYTE;
+  case TINYGLTF_COMPONENT_TYPE_SHORT:
+    return GL_SHORT;
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+    return GL_UNSIGNED_SHORT;
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+    return GL_UNSIGNED_INT;
+  case TINYGLTF_COMPONENT_TYPE_FLOAT:
+    return GL_FLOAT;
+  default:
+    return GL_FLOAT;
+  }
+}
+
+static size_t component_type_size(int componentType) {
+  switch (componentType) {
+  case TINYGLTF_COMPONENT_TYPE_BYTE:
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+    return 1;
+  case TINYGLTF_COMPONENT_TYPE_SHORT:
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+    return 2;
+  case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+  case TINYGLTF_COMPONENT_TYPE_FLOAT:
+    return 4;
+  default:
+    return 0;
+  }
 }
 
 /* Create OpenGL texture from glTF image */
@@ -57,93 +188,79 @@ static void create_primitive_buffers(GltfPrimitive *prim,
   glGenVertexArrays(1, &prim->vao);
   glBindVertexArray(prim->vao);
 
-  /* Helper lambda to get accessor data */
-  auto get_buffer = [&](int accessor_idx) -> const uint8_t * {
+  auto bind_attribute = [&](int accessor_idx, GLuint *vbo, GLint location,
+                            int components, bool integer_attr,
+                            bool normalize) -> bool {
     if (accessor_idx < 0)
-      return nullptr;
+      return false;
     const auto &accessor = gltf.accessors[accessor_idx];
+    if (accessor.bufferView < 0)
+      return false;
     const auto &view = gltf.bufferViews[accessor.bufferView];
     const auto &buffer = gltf.buffers[view.buffer];
-    return buffer.data.data() + view.byteOffset + accessor.byteOffset;
+    const uint8_t *view_data = buffer.data.data() + view.byteOffset;
+
+    glGenBuffers(1, vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+    glBufferData(GL_ARRAY_BUFFER, view.byteLength, view_data, GL_STATIC_DRAW);
+
+    size_t stride = accessor.ByteStride(view);
+    if (stride == 0) {
+      stride = components * component_type_size(accessor.componentType);
+    }
+
+    const void *offset = (const void *)(uintptr_t)accessor.byteOffset;
+    GLenum gl_type = component_gl_type(accessor.componentType);
+    if (integer_attr) {
+      glVertexAttribIPointer(location, components, gl_type,
+                             (GLsizei)stride, offset);
+    } else {
+      glVertexAttribPointer(location, components, gl_type,
+                            normalize ? GL_TRUE : GL_FALSE, (GLsizei)stride,
+                            offset);
+    }
+    glEnableVertexAttribArray(location);
+    return true;
   };
 
   /* Positions (required) */
   auto it = tprim.attributes.find("POSITION");
   if (it != tprim.attributes.end()) {
-    const auto &accessor = gltf.accessors[it->second];
-    const uint8_t *data = get_buffer(it->second);
-
-    glGenBuffers(1, &prim->vbo_positions);
-    glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_positions);
-    glBufferData(GL_ARRAY_BUFFER, accessor.count * 3 * sizeof(float), data,
-                 GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-    glEnableVertexAttribArray(0);
+    bind_attribute(it->second, &prim->vbo_positions, 0, 3, false, false);
   }
 
   /* Normals */
   it = tprim.attributes.find("NORMAL");
   if (it != tprim.attributes.end()) {
-    const auto &accessor = gltf.accessors[it->second];
-    const uint8_t *data = get_buffer(it->second);
-
-    glGenBuffers(1, &prim->vbo_normals);
-    glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_normals);
-    glBufferData(GL_ARRAY_BUFFER, accessor.count * 3 * sizeof(float), data,
-                 GL_STATIC_DRAW);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-    glEnableVertexAttribArray(1);
-    prim->has_normals = true;
+    if (bind_attribute(it->second, &prim->vbo_normals, 1, 3, false, false)) {
+      prim->has_normals = true;
+    }
   }
 
   /* Texcoords */
   it = tprim.attributes.find("TEXCOORD_0");
   if (it != tprim.attributes.end()) {
     const auto &accessor = gltf.accessors[it->second];
-    const uint8_t *data = get_buffer(it->second);
-
-    glGenBuffers(1, &prim->vbo_texcoords);
-    glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_texcoords);
-    glBufferData(GL_ARRAY_BUFFER, accessor.count * 2 * sizeof(float), data,
-                 GL_STATIC_DRAW);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-    glEnableVertexAttribArray(2);
-    prim->has_texcoords = true;
+    if (bind_attribute(it->second, &prim->vbo_texcoords, 2, 2, false,
+                       accessor.normalized)) {
+      prim->has_texcoords = true;
+    }
   }
 
   /* Joints */
   it = tprim.attributes.find("JOINTS_0");
   if (it != tprim.attributes.end()) {
-    const auto &accessor = gltf.accessors[it->second];
-    const uint8_t *data = get_buffer(it->second);
-
-    glGenBuffers(1, &prim->vbo_joints);
-    glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_joints);
-
-    if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-      glBufferData(GL_ARRAY_BUFFER, accessor.count * 4, data, GL_STATIC_DRAW);
-      glVertexAttribIPointer(3, 4, GL_UNSIGNED_BYTE, 0, nullptr);
-    } else {
-      glBufferData(GL_ARRAY_BUFFER, accessor.count * 4 * sizeof(uint16_t), data,
-                   GL_STATIC_DRAW);
-      glVertexAttribIPointer(3, 4, GL_UNSIGNED_SHORT, 0, nullptr);
+    if (bind_attribute(it->second, &prim->vbo_joints, 3, 4, true, false)) {
+      prim->has_skinning = true;
     }
-    glEnableVertexAttribArray(3);
-    prim->has_skinning = true;
   }
 
   /* Weights */
   it = tprim.attributes.find("WEIGHTS_0");
   if (it != tprim.attributes.end()) {
     const auto &accessor = gltf.accessors[it->second];
-    const uint8_t *data = get_buffer(it->second);
-
-    glGenBuffers(1, &prim->vbo_weights);
-    glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_weights);
-    glBufferData(GL_ARRAY_BUFFER, accessor.count * 4 * sizeof(float), data,
-                 GL_STATIC_DRAW);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
-    glEnableVertexAttribArray(4);
+    bind_attribute(it->second, &prim->vbo_weights, 4, 4, false,
+                   accessor.normalized);
   }
 
   /* Indices */
@@ -310,6 +427,10 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
       n->rotation[0] = n->rotation[1] = n->rotation[2] = 0.0f;
       n->rotation[3] = 1.0f;
       n->scale[0] = n->scale[1] = n->scale[2] = 1.0f;
+      n->base_translation[0] = n->base_translation[1] = n->base_translation[2] = 0.0f;
+      n->base_rotation[0] = n->base_rotation[1] = n->base_rotation[2] = 0.0f;
+      n->base_rotation[3] = 1.0f;
+      n->base_scale[0] = n->base_scale[1] = n->base_scale[2] = 1.0f;
 
       if (node.translation.size() == 3) {
         n->translation[0] = (float)node.translation[0];
@@ -321,12 +442,24 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         n->rotation[1] = (float)node.rotation[1];
         n->rotation[2] = (float)node.rotation[2];
         n->rotation[3] = (float)node.rotation[3];
+        normalize_quat(n->rotation);
       }
       if (node.scale.size() == 3) {
         n->scale[0] = (float)node.scale[0];
         n->scale[1] = (float)node.scale[1];
         n->scale[2] = (float)node.scale[2];
       }
+
+      n->base_translation[0] = n->translation[0];
+      n->base_translation[1] = n->translation[1];
+      n->base_translation[2] = n->translation[2];
+      n->base_rotation[0] = n->rotation[0];
+      n->base_rotation[1] = n->rotation[1];
+      n->base_rotation[2] = n->rotation[2];
+      n->base_rotation[3] = n->rotation[3];
+      n->base_scale[0] = n->scale[0];
+      n->base_scale[1] = n->scale[1];
+      n->base_scale[2] = n->scale[2];
 
       /* Children */
       n->child_count = (int)node.children.size();
@@ -443,6 +576,8 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
       /* Load channels */
       a->channel_count = (int)anim.channels.size();
       a->channels = (GltfAnimChannel *)calloc(a->channel_count, sizeof(GltfAnimChannel));
+      a->node_mask_count = model->node_count;
+      a->node_mask = (uint8_t *)calloc(a->node_mask_count, sizeof(uint8_t));
       for (size_t j = 0; j < anim.channels.size(); j++) {
         const auto &channel = anim.channels[j];
         GltfAnimChannel *c = &a->channels[j];
@@ -454,6 +589,12 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         else if (channel.target_path == "rotation") c->path = GLTF_PATH_ROTATION;
         else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
         else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
+
+        if (c->target_node >= 0 && c->target_node < a->node_mask_count) {
+          if (c->path == GLTF_PATH_TRANSLATION) a->node_mask[c->target_node] |= 1;
+          else if (c->path == GLTF_PATH_ROTATION) a->node_mask[c->target_node] |= 2;
+          else if (c->path == GLTF_PATH_SCALE) a->node_mask[c->target_node] |= 4;
+        }
       }
     }
     printf("Loaded %d animations\n", model->animation_count);
@@ -484,6 +625,15 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
   }
 
   model->loaded = true;
+  model->anim_correction_mode = 3;
+  model->anim_global_correction[0] = 0.0f;
+  model->anim_global_correction[1] = 0.0f;
+  model->anim_global_correction[2] = 0.0f;
+  model->anim_global_correction[3] = 1.0f;
+  model->anim_global_auto_correction[0] = 0.0f;
+  model->anim_global_auto_correction[1] = 0.0f;
+  model->anim_global_auto_correction[2] = 0.0f;
+  model->anim_global_auto_correction[3] = 1.0f;
   gltf_update_transforms(model);
 
   return true;
@@ -547,6 +697,7 @@ extern "C" void gltf_unload_impl(GltfModel *model) {
     }
     free(a->samplers);
     free(a->channels);
+    free(a->node_mask);
   }
   free(model->animations);
 
@@ -591,6 +742,7 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     }
     free(a->samplers);
     free(a->channels);
+    free(a->node_mask);
   }
   free(model->animations);
   model->animations = NULL;
@@ -617,24 +769,116 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     }
   }
   
+  /* Compute target model's rest rotations (L_B, W_B) for step 2 of spec conversion */
+  std::unordered_map<int, std::array<float,4>> model_local_rest;
+  std::unordered_map<int, std::array<float,4>> model_world_rest;
+  std::unordered_map<int, std::array<float,4>> model_world_bind;
+  
+  std::function<void(int, const float*)> compute_model_world = [&](int node_idx, const float* parent_world) {
+    if (node_idx < 0 || node_idx >= model->node_count) return;
+    GltfNode *node = &model->nodes[node_idx];
+    float *L = node->base_rotation;
+    model_local_rest[node_idx] = {L[0], L[1], L[2], L[3]};
+    
+    float W[4];
+    W[0] = parent_world[3]*L[0] + parent_world[0]*L[3] + parent_world[1]*L[2] - parent_world[2]*L[1];
+    W[1] = parent_world[3]*L[1] - parent_world[0]*L[2] + parent_world[1]*L[3] + parent_world[2]*L[0];
+    W[2] = parent_world[3]*L[2] + parent_world[0]*L[1] - parent_world[1]*L[0] + parent_world[2]*L[3];
+    W[3] = parent_world[3]*L[3] - parent_world[0]*L[0] - parent_world[1]*L[1] - parent_world[2]*L[2];
+    normalize_quat(W);
+    model_world_rest[node_idx] = {W[0], W[1], W[2], W[3]};
+    
+    for (int i = 0; i < node->child_count; i++) {
+      compute_model_world(node->children[i], W);
+    }
+  };
+  /* Find root nodes and traverse */
+  for (int i = 0; i < model->node_count; i++) {
+    if (model->nodes[i].parent_index < 0) {
+      float identity[4] = {0,0,0,1};
+      compute_model_world(i, identity);
+    }
+  }
+
+  /* Override rest rotations using skin inverse bind matrices when available. */
+  if (model->skin_count > 0) {
+    for (int skin_idx = 0; skin_idx < model->skin_count; skin_idx++) {
+      GltfSkin *skin = &model->skins[skin_idx];
+      if (!skin->inverse_bind_matrices) continue;
+
+      const float *mesh_world = NULL;
+      for (int n = 0; n < model->node_count; n++) {
+        if (model->nodes[n].skin_index == skin_idx) {
+          mesh_world = model->nodes[n].world_matrix;
+          break;
+        }
+      }
+      float mesh_world_local[16];
+      if (!mesh_world) {
+        memset(mesh_world_local, 0, sizeof(mesh_world_local));
+        mesh_world_local[0] = mesh_world_local[5] = mesh_world_local[10] = mesh_world_local[15] = 1.0f;
+        mesh_world = mesh_world_local;
+      }
+
+      for (int j = 0; j < skin->joint_count; j++) {
+        int node_idx = skin->joints[j];
+        if (node_idx < 0 || node_idx >= model->node_count) continue;
+
+        const float *ibm = &skin->inverse_bind_matrices[j * 16];
+        float bind[16];
+        /* bind = inverse(ibm) */
+        float inv[16];
+        memcpy(inv, ibm, sizeof(inv));
+        /* Invert using cglm-friendly layout */
+        mat4 inv_mat;
+        mat4 bind_mat;
+        memcpy(inv_mat, inv, sizeof(mat4));
+        glm_mat4_inv(inv_mat, bind_mat);
+        memcpy(bind, bind_mat, sizeof(bind));
+
+        float joint_world[16];
+        mat4_mul(mesh_world, bind, joint_world);
+
+        float q[4];
+        mat4_to_quat(joint_world, q);
+        model_world_bind[node_idx] = {q[0], q[1], q[2], q[3]};
+      }
+    }
+  }
+
+  /* Recompute local/world rest from bind pose when available. */
+  if (!model_world_bind.empty()) {
+    for (const auto &pair : model_world_bind) {
+      model_world_rest[pair.first] = pair.second;
+    }
+    for (int i = 0; i < model->node_count; i++) {
+      auto it = model_world_rest.find(i);
+      if (it == model_world_rest.end()) continue;
+      int parent = model->nodes[i].parent_index;
+      if (parent >= 0) {
+        auto pit = model_world_rest.find(parent);
+        if (pit != model_world_rest.end()) {
+          float parent_inv[4];
+          quat_inv(pit->second.data(), parent_inv);
+          float local_q[4];
+          quat_mul(parent_inv, it->second.data(), local_q);
+          normalize_quat(local_q);
+          model_local_rest[i] = {local_q[0], local_q[1], local_q[2], local_q[3]};
+        }
+      } else {
+        model_local_rest[i] = it->second;
+      }
+    }
+  }
+  
   /* Check for VRMC_vrm_animation extension (VRMA files) */
   std::unordered_map<int, std::array<float,4>> anim_local_rest;  /* Local rest rotation */
-  bool needs_coord_flip = false;  /* Detect if VRMA uses different coordinate system */
+  std::unordered_map<int, std::string> anim_bone_name;
   
   if (anim_gltf.extensions.count("VRMC_vrm_animation")) {
     const auto &vrma_ext = anim_gltf.extensions.at("VRMC_vrm_animation");
     if (vrma_ext.Has("humanoid") && vrma_ext.Get("humanoid").Has("humanBones")) {
       const auto &hbones = vrma_ext.Get("humanoid").Get("humanBones");
-      
-      /* Check if coordinate system is flipped by looking at leftUpperLeg position */
-      if (hbones.Has("leftUpperLeg")) {
-        int node_idx = hbones.Get("leftUpperLeg").Get("node").GetNumberAsInt();
-        const auto &node = anim_gltf.nodes[node_idx];
-        if (node.translation.size() >= 1 && node.translation[0] > 0) {
-          needs_coord_flip = true;  /* Left leg has positive X = flipped */
-          printf("VRMA: detected flipped coordinate system\n");
-        }
-      }
       
       for (const auto &key : hbones.Keys()) {
         if (hbones.Get(key).Has("node")) {
@@ -642,6 +886,7 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
           auto it = model_humanoid_map.find(key);
           if (it != model_humanoid_map.end()) {
             anim_to_model_node[anim_node] = it->second;
+            anim_bone_name[anim_node] = key;
             
             /* Store rest rotation for normalization */
             const auto &node = anim_gltf.nodes[anim_node];
@@ -650,16 +895,35 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
               local_rot = {(float)node.rotation[0], (float)node.rotation[1], 
                           (float)node.rotation[2], (float)node.rotation[3]};
             }
+            normalize_quat(local_rot.data());
             anim_local_rest[anim_node] = local_rot;
           }
         }
       }
-      printf("VRMA: mapped %zu humanoid bones, coord_flip=%d\n", anim_to_model_node.size(), needs_coord_flip);
+
+      std::set<std::string> src_bones;
+      for (const auto &key : hbones.Keys()) {
+        src_bones.insert(key);
+      }
+      std::set<std::string> tgt_bones;
+      for (const auto &pair : model_humanoid_map) {
+        tgt_bones.insert(pair.first);
+      }
+      for (const auto &name : src_bones) {
+        if (!tgt_bones.count(name)) {
+          printf("VRMA: target missing bone %s\n", name.c_str());
+        }
+      }
+      for (const auto &name : tgt_bones) {
+        if (!src_bones.count(name)) {
+          printf("VRMA: source missing bone %s\n", name.c_str());
+        }
+      }
+
+      printf("VRMA: mapped %zu humanoid bones\n", anim_to_model_node.size());
     }
   }
-  
-  /* Store coord flip flag in model */
-  model->anim_needs_coord_flip = needs_coord_flip;
+  model->anim_needs_coord_flip = false;
   
   /* Mixamo bone name to VRM humanoid name mapping */
   static const std::pair<const char*, const char*> mixamo_to_vrm[] = {
@@ -683,6 +947,7 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     if (node.rotation.size() == 4) {
       local[0] = (float)node.rotation[0]; local[1] = (float)node.rotation[1];
       local[2] = (float)node.rotation[2]; local[3] = (float)node.rotation[3];
+      normalize_quat(local);
     }
     float world[4];
     /* world = parent_world * local */
@@ -690,12 +955,155 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     world[1] = parent_world[3]*local[1] - parent_world[0]*local[2] + parent_world[1]*local[3] + parent_world[2]*local[0];
     world[2] = parent_world[3]*local[2] + parent_world[0]*local[1] - parent_world[1]*local[0] + parent_world[2]*local[3];
     world[3] = parent_world[3]*local[3] - parent_world[0]*local[0] - parent_world[1]*local[1] - parent_world[2]*local[2];
+    normalize_quat(world);
     anim_world_rest[node_idx] = {world[0], world[1], world[2], world[3]};
     for (int child : node.children) compute_world_rot(child, world);
   };
-  for (int scene_idx : anim_gltf.scenes[0].nodes) {
-    float identity[4] = {0,0,0,1};
-    compute_world_rot(scene_idx, identity);
+  if (!anim_gltf.scenes.empty() && !anim_gltf.scenes[0].nodes.empty()) {
+    for (int scene_idx : anim_gltf.scenes[0].nodes) {
+      float identity[4] = {0,0,0,1};
+      compute_world_rot(scene_idx, identity);
+    }
+  }
+
+  auto get_source_dir = [&](int node_idx, float *out) -> bool {
+    if (node_idx < 0 || node_idx >= (int)anim_gltf.nodes.size()) return false;
+    const auto &node = anim_gltf.nodes[node_idx];
+    if (node.children.empty()) return false;
+    float best_len = 0.0f;
+    bool found = false;
+    for (int child_idx : node.children) {
+      if (child_idx < 0 || child_idx >= (int)anim_gltf.nodes.size()) continue;
+      const auto &child = anim_gltf.nodes[child_idx];
+      if (child.translation.size() != 3) continue;
+      float v[3] = {(float)child.translation[0],
+                    (float)child.translation[1],
+                    (float)child.translation[2]};
+      float len = vec3_len(v);
+      if (len > best_len) {
+        best_len = len;
+        out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
+        found = true;
+      }
+    }
+    return found && best_len > 1e-6f;
+  };
+  auto get_target_dir = [&](int node_idx, float *out) -> bool {
+    if (node_idx < 0 || node_idx >= model->node_count) return false;
+    const auto &node = model->nodes[node_idx];
+    if (node.child_count <= 0) return false;
+    float best_len = 0.0f;
+    bool found = false;
+    for (int i = 0; i < node.child_count; i++) {
+      int child_idx = node.children[i];
+      if (child_idx < 0 || child_idx >= model->node_count) continue;
+      const auto &child = model->nodes[child_idx];
+      float v[3] = {child.base_translation[0],
+                    child.base_translation[1],
+                    child.base_translation[2]};
+      float len = vec3_len(v);
+      if (len > best_len) {
+        best_len = len;
+        out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
+        found = true;
+      }
+    }
+    return found && best_len > 1e-6f;
+  };
+  auto candidate_rotations = []() {
+    std::vector<std::array<float,9>> mats;
+    static const int perms[6][3] = {
+      {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0}
+    };
+    auto perm_sign = [](const int *p) {
+      int inv = 0;
+      for (int i = 0; i < 3; i++) {
+        for (int j = i + 1; j < 3; j++) {
+          if (p[i] > p[j]) inv++;
+        }
+      }
+      return (inv % 2 == 0) ? 1 : -1;
+    };
+    for (int pi = 0; pi < 6; pi++) {
+      const int *p = perms[pi];
+      int ps = perm_sign(p);
+      for (int sx = -1; sx <= 1; sx += 2) {
+        for (int sy = -1; sy <= 1; sy += 2) {
+          for (int sz = -1; sz <= 1; sz += 2) {
+            int det = ps * sx * sy * sz;
+            if (det != 1) continue;
+            float m[9] = {0};
+            float axes[3][3] = {{1,0,0},{0,1,0},{0,0,1}};
+            const int signs[3] = {sx, sy, sz};
+            for (int col = 0; col < 3; col++) {
+              int axis = p[col];
+              m[col * 3 + 0] = axes[axis][0] * signs[col];
+              m[col * 3 + 1] = axes[axis][1] * signs[col];
+              m[col * 3 + 2] = axes[axis][2] * signs[col];
+            }
+            mats.push_back({m[0], m[1], m[2],
+                            m[3], m[4], m[5],
+                            m[6], m[7], m[8]});
+          }
+        }
+      }
+    }
+    return mats;
+  };
+  std::vector<std::pair<std::array<float,3>, std::array<float,3>>> dir_pairs;
+  for (const auto &pair : anim_to_model_node) {
+    int anim_node = pair.first;
+    int model_node = pair.second;
+    float src_dir[3];
+    float dst_dir[3];
+    if (get_source_dir(anim_node, src_dir) && get_target_dir(model_node, dst_dir)) {
+      vec3_norm(src_dir);
+      vec3_norm(dst_dir);
+      dir_pairs.push_back({{src_dir[0], src_dir[1], src_dir[2]},
+                           {dst_dir[0], dst_dir[1], dst_dir[2]}});
+    }
+  }
+  float best_corr_q[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  if (!dir_pairs.empty()) {
+    float best_score = -1e9f;
+    auto mats = candidate_rotations();
+    for (const auto &m : mats) {
+      float score = 0.0f;
+      for (const auto &pair : dir_pairs) {
+        const float *s = pair.first.data();
+        const float *d = pair.second.data();
+        float v[3] = {
+          m[0] * s[0] + m[3] * s[1] + m[6] * s[2],
+          m[1] * s[0] + m[4] * s[1] + m[7] * s[2],
+          m[2] * s[0] + m[5] * s[1] + m[8] * s[2]
+        };
+        score += vec3_dot(v, d);
+      }
+      if (score > best_score) {
+        best_score = score;
+        float m4[16] = {
+          m[0], m[1], m[2], 0.0f,
+          m[3], m[4], m[5], 0.0f,
+          m[6], m[7], m[8], 0.0f,
+          0.0f, 0.0f, 0.0f, 1.0f
+        };
+        mat4_to_quat(m4, best_corr_q);
+        normalize_quat(best_corr_q);
+      }
+    }
+  }
+  model->anim_global_auto_correction[0] = best_corr_q[0];
+  model->anim_global_auto_correction[1] = best_corr_q[1];
+  model->anim_global_auto_correction[2] = best_corr_q[2];
+  model->anim_global_auto_correction[3] = best_corr_q[3];
+  printf("Animation: auto_correction %.4f %.4f %.4f %.4f (pairs=%zu)\n",
+         best_corr_q[0], best_corr_q[1], best_corr_q[2], best_corr_q[3],
+         dir_pairs.size());
+  if (model->anim_correction_mode == 1) {
+    model->anim_global_correction[0] = model->anim_global_auto_correction[0];
+    model->anim_global_correction[1] = model->anim_global_auto_correction[1];
+    model->anim_global_correction[2] = model->anim_global_auto_correction[2];
+    model->anim_global_correction[3] = model->anim_global_auto_correction[3];
   }
   
   /* Fallback: Mixamo name mapping, then direct node name matching */
@@ -717,6 +1125,7 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
           if (node.rotation.size() == 4) {
             anim_local_rest[i] = {(float)node.rotation[0], (float)node.rotation[1],
                                   (float)node.rotation[2], (float)node.rotation[3]};
+            normalize_quat(anim_local_rest[i].data());
           }
         }
         break;
@@ -728,24 +1137,26 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       auto it = model_node_map.find(name);
       if (it != model_node_map.end()) {
         anim_to_model_node[i] = it->second;
+        const auto &node = anim_gltf.nodes[i];
+        if (node.rotation.size() == 4) {
+          anim_local_rest[i] = {(float)node.rotation[0], (float)node.rotation[1],
+                                (float)node.rotation[2], (float)node.rotation[3]};
+          normalize_quat(anim_local_rest[i].data());
+        } else {
+          anim_local_rest[i] = {0.0f, 0.0f, 0.0f, 1.0f};
+        }
       }
     }
   }
   
-  model->anim_needs_coord_flip = needs_coord_flip && !is_mixamo;
+  model->anim_needs_coord_flip = false;
   model->anim_is_mixamo = is_mixamo;
-  printf("Animation: mapped %zu nodes, coord_flip=%d, mixamo=%d\n", anim_to_model_node.size(), model->anim_needs_coord_flip, is_mixamo);
+  printf("Animation: mapped %zu nodes, coord_flip=%d, mixamo=%d\n", 
+         anim_to_model_node.size(), model->anim_needs_coord_flip, is_mixamo);
   
   /* Quaternion helpers */
-  auto qmul = [](const float* a, const float* b, float* out) {
-    out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
-    out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
-    out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
-    out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
-  };
-  auto qinv = [](const float* q, float* out) {
-    out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3];
-  };
+  auto qmul = quat_mul;
+  auto qinv = quat_inv;
 
   /* Load animations, remapping node indices */
   model->animation_count = (int)anim_gltf.animations.size();
@@ -795,6 +1206,8 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
     a->channel_count = (int)anim.channels.size();
     a->channels = (GltfAnimChannel *)calloc(a->channel_count, sizeof(GltfAnimChannel));
     int matched = 0;
+    a->node_mask_count = model->node_count;
+    a->node_mask = (uint8_t *)calloc(a->node_mask_count, sizeof(uint8_t));
     for (size_t j = 0; j < anim.channels.size(); j++) {
       const auto &channel = anim.channels[j];
       GltfAnimChannel *c = &a->channels[j];
@@ -810,22 +1223,133 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
         /* Process rotation keyframes */
         if (channel.target_path == "rotation") {
           GltfAnimSampler *s = &a->samplers[c->sampler_index];
+          int model_node = c->target_node;
           
-          /* Normalize: L^-1 * anim */
-          auto local_it = anim_local_rest.find(anim_node_idx);
-          if (local_it != anim_local_rest.end()) {
-            const auto &L = local_it->second;
-            if (std::abs(L[0]) > 0.001f || std::abs(L[1]) > 0.001f || 
-                std::abs(L[2]) > 0.001f || std::abs(L[3] - 1.0f) > 0.001f) {
-              float L_inv[4];
-              qinv(L.data(), L_inv);
+          /* Get source rest rotations (A) */
+          auto src_local_it = anim_local_rest.find(anim_node_idx);
+          auto src_world_it = anim_world_rest.find(anim_node_idx);
+          
+          /* Get target rest rotations (B) */
+          auto tgt_local_it = model_local_rest.find(model_node);
+          auto tgt_world_it = model_world_rest.find(model_node);
+          
+          if (src_local_it != anim_local_rest.end() && src_world_it != anim_world_rest.end() &&
+              tgt_local_it != model_local_rest.end() && tgt_world_it != model_world_rest.end()) {
+            const auto &L_A = src_local_it->second;
+            const auto &W_A = src_world_it->second;
+            const auto &L_B = tgt_local_it->second;
+            const auto &W_B = tgt_world_it->second;
+
+            const char *debug_name = anim_gltf.nodes[anim_node_idx].name.c_str();
+            auto bone_it = anim_bone_name.find(anim_node_idx);
+            if (bone_it != anim_bone_name.end()) {
+              debug_name = bone_it->second.c_str();
+            }
+            bool debug_bone =
+                strcmp(debug_name, "LeftArm") == 0 ||
+                strcmp(debug_name, "LeftShoulder") == 0 ||
+                strcmp(debug_name, "LeftUpLeg") == 0 ||
+                strcmp(debug_name, "leftUpperArm") == 0 ||
+                strcmp(debug_name, "leftLowerArm") == 0 ||
+                strcmp(debug_name, "leftUpperLeg") == 0 ||
+                strcmp(debug_name, "leftLowerLeg") == 0;
+            
+            bool src_non_identity =
+                std::abs(L_A[0]) > 0.001f || std::abs(L_A[1]) > 0.001f ||
+                std::abs(L_A[2]) > 0.001f || std::abs(L_A[3] - 1.0f) > 0.001f ||
+                std::abs(W_A[0]) > 0.001f || std::abs(W_A[1]) > 0.001f ||
+                std::abs(W_A[2]) > 0.001f || std::abs(W_A[3] - 1.0f) > 0.001f;
+            bool tgt_non_identity =
+                std::abs(L_B[0]) > 0.001f || std::abs(L_B[1]) > 0.001f ||
+                std::abs(L_B[2]) > 0.001f || std::abs(L_B[3] - 1.0f) > 0.001f ||
+                std::abs(W_B[0]) > 0.001f || std::abs(W_B[1]) > 0.001f ||
+                std::abs(W_B[2]) > 0.001f || std::abs(W_B[3] - 1.0f) > 0.001f;
+
+            bool tgt_identity = !tgt_non_identity;
+
+            if ((src_non_identity || tgt_non_identity) && !tgt_identity) {
+              float L_A_inv[4], W_A_inv[4], W_B_inv[4];
+              qinv(L_A.data(), L_A_inv);
+              qinv(W_A.data(), W_A_inv);
+              qinv(W_B.data(), W_B_inv);
+              
               for (int k = 0; k < s->keyframe_count; k++) {
                 float *q = &s->output[k * 4];
-                float tmp[4];
-                qmul(L_inv, q, tmp);  /* L^-1 * anim */
-                q[0] = tmp[0]; q[1] = tmp[1]; q[2] = tmp[2]; q[3] = tmp[3];
+                if (k == 0 && debug_bone) {
+                  printf("VRMA debug bone %s\n", debug_name);
+                  printf("  L_A: %.4f %.4f %.4f %.4f\n", L_A[0], L_A[1], L_A[2], L_A[3]);
+                  printf("  W_A: %.4f %.4f %.4f %.4f\n", W_A[0], W_A[1], W_A[2], W_A[3]);
+                  printf("  L_B: %.4f %.4f %.4f %.4f\n", L_B[0], L_B[1], L_B[2], L_B[3]);
+                  printf("  W_B: %.4f %.4f %.4f %.4f\n", W_B[0], W_B[1], W_B[2], W_B[3]);
+                  printf("  key: %.4f %.4f %.4f %.4f\n", q[0], q[1], q[2], q[3]);
+                }
+                float t1[4], t2[4], normalized[4], t3[4], t4[4];
+                
+                /* Step 1: Normalized = W_A * L_A^-1 * anim * W_A^-1 */
+                qmul(L_A_inv, q, t1);
+                qmul(W_A.data(), t1, t2);
+                qmul(t2, W_A_inv, normalized);
+                
+                /* Step 2: B.Local = L_B * W_B^-1 * Normalized * W_B */
+                qmul(W_B_inv, normalized, t3);
+                qmul(L_B.data(), t3, t4);
+                qmul(t4, W_B.data(), q);
+                float len = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+                if (len > 0.0001f) {
+                  q[0] /= len; q[1] /= len; q[2] /= len; q[3] /= len;
+                }
+                if (k == 0 && debug_bone) {
+                  printf("  out: %.4f %.4f %.4f %.4f\n", q[0], q[1], q[2], q[3]);
+                }
+              }
+            } else if (debug_bone && tgt_identity) {
+              float L_A_inv[4], W_A_inv[4];
+              qinv(L_A.data(), L_A_inv);
+              qinv(W_A.data(), W_A_inv);
+              float norm_a[4];
+              float t1[4], t2[4];
+              float t1r[4], t2r[4], norm_ar[4];
+              float *q0 = &s->output[0];
+              qmul(L_A_inv, q0, t1);
+              qmul(W_A.data(), t1, t2);
+              qmul(t2, W_A_inv, norm_a);
+              /* reversed order variant */
+              qmul(q0, L_A_inv, t1r);
+              qmul(t1r, W_A.data(), t2r);
+              qmul(W_A_inv, t2r, norm_ar);
+              printf("VRMA debug bone %s: target rest identity, skipping conversion\n",
+                     debug_name);
+              printf("  L_A: %.4f %.4f %.4f %.4f\n", L_A[0], L_A[1], L_A[2], L_A[3]);
+              printf("  W_A: %.4f %.4f %.4f %.4f\n", W_A[0], W_A[1], W_A[2], W_A[3]);
+              printf("  key: %.4f %.4f %.4f %.4f\n", q0[0], q0[1], q0[2], q0[3]);
+              printf("  norm: %.4f %.4f %.4f %.4f\n", norm_a[0], norm_a[1], norm_a[2], norm_a[3]);
+              printf("  norm_rev: %.4f %.4f %.4f %.4f\n", norm_ar[0], norm_ar[1], norm_ar[2], norm_ar[3]);
+            }
+
+            if (tgt_identity && src_non_identity) {
+              float L_A_inv[4], W_A_inv[4];
+              qinv(L_A.data(), L_A_inv);
+              qinv(W_A.data(), W_A_inv);
+              if (debug_bone) {
+                printf("VRMA debug bone %s: target rest identity, applying step1 normalization\n",
+                       debug_name);
+              }
+              for (int k = 0; k < s->keyframe_count; k++) {
+                float *q = &s->output[k * 4];
+                float t1[4], t2[4], normalized[4];
+                qmul(L_A_inv, q, t1);
+                qmul(W_A.data(), t1, t2);
+                qmul(t2, W_A_inv, normalized);
+                q[0] = normalized[0];
+                q[1] = normalized[1];
+                q[2] = normalized[2];
+                q[3] = normalized[3];
+                normalize_quat(q);
               }
             }
+
+            (void)tgt_identity;
+
           }
         }
       } else {
@@ -836,6 +1360,12 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       else if (channel.target_path == "rotation") c->path = GLTF_PATH_ROTATION;
       else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
       else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
+
+      if (c->target_node >= 0 && c->target_node < a->node_mask_count) {
+        if (c->path == GLTF_PATH_TRANSLATION) a->node_mask[c->target_node] |= 1;
+        else if (c->path == GLTF_PATH_ROTATION) a->node_mask[c->target_node] |= 2;
+        else if (c->path == GLTF_PATH_SCALE) a->node_mask[c->target_node] |= 4;
+      }
     }
     printf("Animation '%s': %d/%d channels mapped\n", a->name, matched, a->channel_count);
   }

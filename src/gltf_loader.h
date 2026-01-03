@@ -10,6 +10,7 @@
 #include <epoxy/gl.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdint.h>
 
 /* Maximum limits */
 #define MAX_MESHES 256
@@ -89,6 +90,9 @@ typedef struct {
   float translation[3];
   float rotation[4]; /* Quaternion (x,y,z,w) */
   float scale[3];
+  float base_translation[3];
+  float base_rotation[4];
+  float base_scale[3];
 
   /* Computed world matrix */
   float world_matrix[16];
@@ -133,6 +137,8 @@ typedef struct {
   GltfAnimChannel *channels;
   int channel_count;
   float duration;
+  uint8_t *node_mask; /* Per-node mask of animated paths */
+  int node_mask_count;
 } GltfAnimation;
 
 /* Complete glTF model */
@@ -161,6 +167,12 @@ typedef struct {
   int animation_count;
   bool anim_needs_coord_flip;  /* True if animation has flipped coordinate system */
   bool anim_is_mixamo;         /* True if animation uses Mixamo skeleton */
+  int anim_correction_mode;    /* 0: none, 1: auto, 2: rotX, 3: rotY, 4: rotZ
+                                 NOTE: Default is rotY 180 to match legacy VRMA/poses.glb
+                                 data in this repo. Do not remove without validating
+                                 against VRMA_01-07 and poses.glb. */
+  float anim_global_correction[4];
+  float anim_global_auto_correction[4];
 
   /* VRM humanoid bone mapping */
   char (*humanoid_names)[32];  /* Array of bone names */

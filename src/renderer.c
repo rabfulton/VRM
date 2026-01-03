@@ -4,6 +4,7 @@
 
 #include "renderer.h"
 #include "camera.h"
+#include <cglm/cglm.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -221,9 +222,27 @@ void renderer_set_model(Renderer *r, GltfModel *model) {
   }
 }
 
-void renderer_update_bones(Renderer *r, int skin_index) {
+static void mat4_mul(const float *a, const float *b, float *out) {
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      float sum = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        sum += a[k * 4 + row] * b[col * 4 + k];
+      }
+      out[col * 4 + row] = sum;
+    }
+  }
+}
+
+void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world) {
   if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count) return;
   if (!r->model->skins[skin_index].inverse_bind_matrices) return;
+  if (!mesh_world) return;
+
+  mat4 mesh;
+  mat4 mesh_inv;
+  memcpy(mesh, mesh_world, sizeof(mat4));
+  glm_mat4_inv(mesh, mesh_inv);
 
   GltfSkin *skin = &r->model->skins[skin_index];
 
@@ -235,16 +254,10 @@ void renderer_update_bones(Renderer *r, int skin_index) {
     float *ibm = &skin->inverse_bind_matrices[i * 16];
     float *out = &r->bone_matrices[i * 16];
 
-    /* bone_matrix = world_matrix * inverse_bind_matrix (column-major) */
-    for (int col = 0; col < 4; col++) {
-      for (int row = 0; row < 4; row++) {
-        float sum = 0;
-        for (int k = 0; k < 4; k++) {
-          sum += node->world_matrix[k * 4 + row] * ibm[col * 4 + k];
-        }
-        out[col * 4 + row] = sum;
-      }
-    }
+    /* bone_matrix = inverse(mesh_world) * joint_world * inverse_bind */
+    float joint_ibm[16];
+    mat4_mul(node->world_matrix, ibm, joint_ibm);
+    mat4_mul((float *)mesh_inv, joint_ibm, out);
   }
 }
 
@@ -313,7 +326,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
 
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-        renderer_update_bones(r, node->skin_index);
+        renderer_update_bones(r, node->skin_index, node->world_matrix);
         glUniformMatrix4fv(r->u_shadow_bones, 200, GL_FALSE, r->bone_matrices);
       }
       glUniform1i(r->u_shadow_use_skinning, node->skin_index >= 0 ? 1 : 0);
@@ -342,7 +355,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
 
     if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-      renderer_update_bones(r, node->skin_index);
+      renderer_update_bones(r, node->skin_index, node->world_matrix);
       glUniformMatrix4fv(r->u_bones, 200, GL_FALSE, r->bone_matrices);
     }
 

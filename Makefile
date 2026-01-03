@@ -2,8 +2,8 @@
 
 CC = gcc
 CXX = g++
-CFLAGS = -std=c99 -Wall -Wextra -g -O2
-CXXFLAGS = -std=c++20 -Wall -Wextra -g -O2
+CFLAGS = -std=c99 -Wall -Wextra -g -O2 -MMD -MP
+CXXFLAGS = -std=c++20 -Wall -Wextra -g -O2 -MMD -MP
 CFLAGS += $(shell pkg-config --cflags gtk+-3.0 epoxy)
 CXXFLAGS += $(shell pkg-config --cflags gtk+-3.0 epoxy)
 INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb
@@ -34,3 +34,5 @@ $(TARGET): $(OBJ)
 
 clean:
 	rm -f $(OBJ) $(TARGET)
+
+-include $(OBJ:.o=.d)

@@ -30,6 +30,43 @@ typedef struct {
 
 static VrmApp app = {0};
 
+static void update_anim_correction_mode(int mode) {
+    /* VRMA/poses.glb in this repo require a global Y-180 correction.
+       Keep the hotkeys for testing, but default is rotY 180. */
+    app.model.anim_correction_mode = mode;
+    if (mode == 0) {
+        app.model.anim_global_correction[0] = 0.0f;
+        app.model.anim_global_correction[1] = 0.0f;
+        app.model.anim_global_correction[2] = 0.0f;
+        app.model.anim_global_correction[3] = 1.0f;
+        printf("Anim correction: none\n");
+    } else if (mode == 1) {
+        app.model.anim_global_correction[0] = app.model.anim_global_auto_correction[0];
+        app.model.anim_global_correction[1] = app.model.anim_global_auto_correction[1];
+        app.model.anim_global_correction[2] = app.model.anim_global_auto_correction[2];
+        app.model.anim_global_correction[3] = app.model.anim_global_auto_correction[3];
+        printf("Anim correction: auto\n");
+    } else if (mode == 2) {
+        app.model.anim_global_correction[0] = 1.0f;
+        app.model.anim_global_correction[1] = 0.0f;
+        app.model.anim_global_correction[2] = 0.0f;
+        app.model.anim_global_correction[3] = 0.0f;
+        printf("Anim correction: rotX 180\n");
+    } else if (mode == 3) {
+        app.model.anim_global_correction[0] = 0.0f;
+        app.model.anim_global_correction[1] = 1.0f;
+        app.model.anim_global_correction[2] = 0.0f;
+        app.model.anim_global_correction[3] = 0.0f;
+        printf("Anim correction: rotY 180\n");
+    } else if (mode == 4) {
+        app.model.anim_global_correction[0] = 0.0f;
+        app.model.anim_global_correction[1] = 0.0f;
+        app.model.anim_global_correction[2] = 1.0f;
+        app.model.anim_global_correction[3] = 0.0f;
+        printf("Anim correction: rotZ 180\n");
+    }
+}
+
 /* IPC command handler */
 static void on_ipc_command(const char *action, void *params, int id, void *user_data) {
     (void)user_data;
@@ -59,6 +96,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             app.model_loaded = true;
             renderer_set_model(&app.renderer, &app.model);
             animator_set_model(&app.animator, &app.model);
+            update_anim_correction_mode(app.model.anim_correction_mode);
             printf("Loaded: %s (%d animations)\n", path->valuestring, app.model.animation_count);
             ipc_respond(&app.ipc, id, true, NULL);
         } else {
@@ -141,27 +179,14 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         }
         if (gltf_load_animation(&app.model, path->valuestring)) {
             animator_set_model(&app.animator, &app.model);
+            update_anim_correction_mode(app.model.anim_correction_mode);
             ipc_respond(&app.ipc, id, true, NULL);
         } else {
             ipc_respond(&app.ipc, id, false, "Failed to load animation");
         }
     }
     else if (strcmp(action, "set_debug_rot") == 0) {
-        extern int g_body[4], g_arms[4], g_legs[4];
-        cJSON *arr;
-        if ((arr = cJSON_GetObjectItem(json, "body")) && cJSON_IsArray(arr)) {
-            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
-                g_body[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
-        }
-        if ((arr = cJSON_GetObjectItem(json, "arms")) && cJSON_IsArray(arr)) {
-            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
-                g_arms[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
-        }
-        if ((arr = cJSON_GetObjectItem(json, "legs")) && cJSON_IsArray(arr)) {
-            for (int i = 0; i < 4 && i < cJSON_GetArraySize(arr); i++)
-                g_legs[i] = cJSON_IsTrue(cJSON_GetArrayItem(arr, i));
-        }
-        ipc_respond(&app.ipc, id, true, NULL);
+        ipc_respond(&app.ipc, id, false, "Debug rotation overrides removed");
     }
     else if (strcmp(action, "pause") == 0) {
         animator_pause(&app.animator);
@@ -276,6 +301,21 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer use
         case GDK_KEY_t:
             app.always_on_top = !app.always_on_top;
             gtk_window_set_keep_above(GTK_WINDOW(app.window), app.always_on_top);
+            return TRUE;
+        case GDK_KEY_1:
+            update_anim_correction_mode(0);
+            return TRUE;
+        case GDK_KEY_2:
+            update_anim_correction_mode(1);
+            return TRUE;
+        case GDK_KEY_3:
+            update_anim_correction_mode(2);
+            return TRUE;
+        case GDK_KEY_4:
+            update_anim_correction_mode(3);
+            return TRUE;
+        case GDK_KEY_5:
+            update_anim_correction_mode(4);
             return TRUE;
     }
     return FALSE;

@@ -48,7 +48,7 @@ typedef struct {
 bool renderer_init(Renderer *r);
 void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
-void renderer_update_bones(Renderer *r, int skin_index);
+void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world);
 void renderer_draw(Renderer *r, const OrbitCamera *camera);
 
 #endif

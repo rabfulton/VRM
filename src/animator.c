@@ -5,11 +5,7 @@
 #include "animator.h"
 #include <math.h>
 #include <string.h>
-
-/* Per-group axis negation: [x, y, z, w] */
-int g_body[4] = {0, 0, 0, 1};
-int g_arms[4] = {1, 0, 1, 0};
-int g_legs[4] = {0, 0, 0, 1};
+#include <stdint.h>
 
 void animator_init(Animator *anim) {
     memset(anim, 0, sizeof(Animator));
@@ -64,6 +60,58 @@ static void slerp(const float *a, const float *b, float t, float *out) {
     }
 }
 
+static void quat_mul(const float *a, const float *b, float *out) {
+    out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
+    out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
+    out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
+    out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
+}
+
+static void quat_inv(const float *q, float *out) {
+    out[0] = -q[0]; out[1] = -q[1]; out[2] = -q[2]; out[3] = q[3];
+}
+
+static void quat_rotate_vec(const float *q, const float *v, float *out) {
+    float vq[4] = {v[0], v[1], v[2], 0.0f};
+    float qinv[4];
+    float t1[4], t2[4];
+    quat_inv(q, qinv);
+    quat_mul(q, vq, t1);
+    quat_mul(t1, qinv, t2);
+    out[0] = t2[0];
+    out[1] = t2[1];
+    out[2] = t2[2];
+}
+
+static void apply_global_anim_correction(GltfModel *model, GltfAnimation *anim) {
+    if (!model || !anim || model->anim_correction_mode == 0) return;
+    float corr[4] = {model->anim_global_correction[0],
+                     model->anim_global_correction[1],
+                     model->anim_global_correction[2],
+                     model->anim_global_correction[3]};
+    float corr_inv[4];
+    quat_inv(corr, corr_inv);
+    for (int i = 0; i < model->node_count; i++) {
+        uint8_t mask = (anim->node_mask && i < anim->node_mask_count) ? anim->node_mask[i] : 0;
+        if (mask & 2) {
+            float t1[4], t2[4];
+            quat_mul(corr, model->nodes[i].rotation, t1);
+            quat_mul(t1, corr_inv, t2);
+            model->nodes[i].rotation[0] = t2[0];
+            model->nodes[i].rotation[1] = t2[1];
+            model->nodes[i].rotation[2] = t2[2];
+            model->nodes[i].rotation[3] = t2[3];
+        }
+        if (mask & 1) {
+            float v[3];
+            quat_rotate_vec(corr, model->nodes[i].translation, v);
+            model->nodes[i].translation[0] = v[0];
+            model->nodes[i].translation[1] = v[1];
+            model->nodes[i].translation[2] = v[2];
+        }
+    }
+}
+
 /* Find keyframe index for time t */
 static int find_keyframe(const GltfAnimSampler *s, float t) {
     for (int i = 0; i < s->keyframe_count - 1; i++) {
@@ -74,26 +122,22 @@ static int find_keyframe(const GltfAnimSampler *s, float t) {
     return s->keyframe_count - 2;
 }
 
-/* Check if node is an arm bone */
-static int is_arm_bone(const char *name) {
-    return (strstr(name, "Shoulder") || strstr(name, "Arm") || strstr(name, "Hand") ||
-            strstr(name, "Thumb") || strstr(name, "Index") || strstr(name, "Middle") ||
-            strstr(name, "Ring") || strstr(name, "Little") || strstr(name, "Pinky"));
-}
-
-static int is_leg_bone(const char *name) {
-    return (strstr(name, "Leg") || strstr(name, "Foot") || strstr(name, "Toe"));
-}
-
-static void apply_rot_fix(float *rot, int *neg) {
-    if (neg[0]) rot[0] = -rot[0];
-    if (neg[1]) rot[1] = -rot[1];
-    if (neg[2]) rot[2] = -rot[2];
-    if (neg[3]) rot[3] = -rot[3];
-}
-
 /* Sample animation at time t */
 static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
+    for (int i = 0; i < model->node_count; i++) {
+        GltfNode *node = &model->nodes[i];
+        node->translation[0] = node->base_translation[0];
+        node->translation[1] = node->base_translation[1];
+        node->translation[2] = node->base_translation[2];
+        node->rotation[0] = node->base_rotation[0];
+        node->rotation[1] = node->base_rotation[1];
+        node->rotation[2] = node->base_rotation[2];
+        node->rotation[3] = node->base_rotation[3];
+        node->scale[0] = node->base_scale[0];
+        node->scale[1] = node->base_scale[1];
+        node->scale[2] = node->base_scale[2];
+    }
+
     for (int i = 0; i < anim->channel_count; i++) {
         GltfAnimChannel *ch = &anim->channels[i];
         if (ch->target_node < 0 || ch->target_node >= model->node_count) continue;
@@ -125,15 +169,6 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
                 break;
             case GLTF_PATH_ROTATION: {
                 slerp(v0, v1, factor, node->rotation);
-                if (model->anim_needs_coord_flip) {
-                    if (is_arm_bone(node->name)) {
-                        apply_rot_fix(node->rotation, g_arms);
-                    } else if (is_leg_bone(node->name)) {
-                        apply_rot_fix(node->rotation, g_legs);
-                    } else {
-                        apply_rot_fix(node->rotation, g_body);
-                    }
-                }
                 break;
             }
             case GLTF_PATH_SCALE:
@@ -146,6 +181,7 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
                 break;
         }
     }
+    apply_global_anim_correction(model, anim);
 }
 
 void animator_update(Animator *anim, float dt) {
