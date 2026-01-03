@@ -1006,7 +1006,6 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
   
   /* Check for VRMC_vrm_animation extension (VRMA files) */
   std::unordered_map<int, std::array<float,4>> anim_local_rest;  /* Local rest rotation */
-  std::unordered_map<int, std::string> anim_bone_name;
   
   if (anim_gltf.extensions.count("VRMC_vrm_animation")) {
     const auto &vrma_ext = anim_gltf.extensions.at("VRMC_vrm_animation");
@@ -1019,8 +1018,6 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
           auto it = model_humanoid_map.find(key);
           if (it != model_humanoid_map.end()) {
             anim_to_model_node[anim_node] = it->second;
-            anim_bone_name[anim_node] = key;
-            
             /* Store rest rotation for normalization */
             const auto &node = anim_gltf.nodes[anim_node];
             std::array<float,4> local_rot = {0,0,0,1};
@@ -1031,25 +1028,6 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
             normalize_quat(local_rot.data());
             anim_local_rest[anim_node] = local_rot;
           }
-        }
-      }
-
-      std::set<std::string> src_bones;
-      for (const auto &key : hbones.Keys()) {
-        src_bones.insert(key);
-      }
-      std::set<std::string> tgt_bones;
-      for (const auto &pair : model_humanoid_map) {
-        tgt_bones.insert(pair.first);
-      }
-      for (const auto &name : src_bones) {
-        if (!tgt_bones.count(name)) {
-          printf("VRMA: target missing bone %s\n", name.c_str());
-        }
-      }
-      for (const auto &name : tgt_bones) {
-        if (!src_bones.count(name)) {
-          printf("VRMA: source missing bone %s\n", name.c_str());
         }
       }
 
@@ -1373,20 +1351,6 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
             const auto &L_B = tgt_local_it->second;
             const auto &W_B = tgt_world_it->second;
 
-            const char *debug_name = anim_gltf.nodes[anim_node_idx].name.c_str();
-            auto bone_it = anim_bone_name.find(anim_node_idx);
-            if (bone_it != anim_bone_name.end()) {
-              debug_name = bone_it->second.c_str();
-            }
-            bool debug_bone =
-                strcmp(debug_name, "LeftArm") == 0 ||
-                strcmp(debug_name, "LeftShoulder") == 0 ||
-                strcmp(debug_name, "LeftUpLeg") == 0 ||
-                strcmp(debug_name, "leftUpperArm") == 0 ||
-                strcmp(debug_name, "leftLowerArm") == 0 ||
-                strcmp(debug_name, "leftUpperLeg") == 0 ||
-                strcmp(debug_name, "leftLowerLeg") == 0;
-            
             bool src_non_identity =
                 std::abs(L_A[0]) > 0.001f || std::abs(L_A[1]) > 0.001f ||
                 std::abs(L_A[2]) > 0.001f || std::abs(L_A[3] - 1.0f) > 0.001f ||
@@ -1408,14 +1372,6 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
               
               for (int k = 0; k < s->keyframe_count; k++) {
                 float *q = &s->output[k * 4];
-                if (k == 0 && debug_bone) {
-                  printf("VRMA debug bone %s\n", debug_name);
-                  printf("  L_A: %.4f %.4f %.4f %.4f\n", L_A[0], L_A[1], L_A[2], L_A[3]);
-                  printf("  W_A: %.4f %.4f %.4f %.4f\n", W_A[0], W_A[1], W_A[2], W_A[3]);
-                  printf("  L_B: %.4f %.4f %.4f %.4f\n", L_B[0], L_B[1], L_B[2], L_B[3]);
-                  printf("  W_B: %.4f %.4f %.4f %.4f\n", W_B[0], W_B[1], W_B[2], W_B[3]);
-                  printf("  key: %.4f %.4f %.4f %.4f\n", q[0], q[1], q[2], q[3]);
-                }
                 float t1[4], t2[4], normalized[4], t3[4], t4[4];
                 
                 /* Step 1: Normalized = W_A * L_A^-1 * anim * W_A^-1 */
@@ -1431,42 +1387,13 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
                 if (len > 0.0001f) {
                   q[0] /= len; q[1] /= len; q[2] /= len; q[3] /= len;
                 }
-                if (k == 0 && debug_bone) {
-                  printf("  out: %.4f %.4f %.4f %.4f\n", q[0], q[1], q[2], q[3]);
-                }
               }
-            } else if (debug_bone && tgt_identity) {
-              float L_A_inv[4], W_A_inv[4];
-              qinv(L_A.data(), L_A_inv);
-              qinv(W_A.data(), W_A_inv);
-              float norm_a[4];
-              float t1[4], t2[4];
-              float t1r[4], t2r[4], norm_ar[4];
-              float *q0 = &s->output[0];
-              qmul(L_A_inv, q0, t1);
-              qmul(W_A.data(), t1, t2);
-              qmul(t2, W_A_inv, norm_a);
-              /* reversed order variant */
-              qmul(q0, L_A_inv, t1r);
-              qmul(t1r, W_A.data(), t2r);
-              qmul(W_A_inv, t2r, norm_ar);
-              printf("VRMA debug bone %s: target rest identity, skipping conversion\n",
-                     debug_name);
-              printf("  L_A: %.4f %.4f %.4f %.4f\n", L_A[0], L_A[1], L_A[2], L_A[3]);
-              printf("  W_A: %.4f %.4f %.4f %.4f\n", W_A[0], W_A[1], W_A[2], W_A[3]);
-              printf("  key: %.4f %.4f %.4f %.4f\n", q0[0], q0[1], q0[2], q0[3]);
-              printf("  norm: %.4f %.4f %.4f %.4f\n", norm_a[0], norm_a[1], norm_a[2], norm_a[3]);
-              printf("  norm_rev: %.4f %.4f %.4f %.4f\n", norm_ar[0], norm_ar[1], norm_ar[2], norm_ar[3]);
             }
 
             if (tgt_identity && src_non_identity) {
               float L_A_inv[4], W_A_inv[4];
               qinv(L_A.data(), L_A_inv);
               qinv(W_A.data(), W_A_inv);
-              if (debug_bone) {
-                printf("VRMA debug bone %s: target rest identity, applying step1 normalization\n",
-                       debug_name);
-              }
               for (int k = 0; k < s->keyframe_count; k++) {
                 float *q = &s->output[k * 4];
                 float t1[4], t2[4], normalized[4];
