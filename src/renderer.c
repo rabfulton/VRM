@@ -54,6 +54,7 @@ static const char *shadow_vert_src =
     "uniform mat4 uBones[200];\n"
     "uniform bool uUseSkinning;\n"
     "uniform vec3 uShadowOffset;\n"
+    "uniform float uShadowScale;\n"
     "void main() {\n"
     "    mat4 skinMatrix;\n"
     "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
@@ -65,7 +66,7 @@ static const char *shadow_vert_src =
     "        skinMatrix = mat4(1.0);\n"
     "    }\n"
     "    vec4 worldPos = uModel * skinMatrix * vec4(aPos, 1.0);\n"
-    "    worldPos.xyz += uShadowOffset;\n"
+    "    worldPos.xyz = worldPos.xyz * uShadowScale + uShadowOffset;\n"
     "    gl_Position = uProj * uView * worldPos;\n"
     "}\n";
 
@@ -96,13 +97,13 @@ static const char *pbr_frag_src =
     "    }\n"
     "    vec3 normal = normalize(vNormal);\n"
     "    // Key light (upper right front)\n"
-    "    vec3 keyDir = normalize(vec3(0.5, 1.0, 0.8));\n"
-    "    float key = max(dot(normal, keyDir), 0.0) * 0.7;\n"
+    "    vec3 keyDir = normalize(vec3(0.5, 1.0, -0.8));\n"
+    "    float key = max(dot(normal, keyDir), 0.0) * 0.5;\n"
     "    // Fill light (left side, softer)\n"
-    "    vec3 fillDir = normalize(vec3(-0.7, 0.3, 0.5));\n"
-    "    float fill = max(dot(normal, fillDir), 0.0) * 0.4;\n"
+    "    vec3 fillDir = normalize(vec3(-0.7, 0.3, -0.5));\n"
+    "    float fill = max(dot(normal, fillDir), 0.0) * 0.3;\n"
     "    // Ambient\n"
-    "    float ambient = 0.5;\n"
+    "    float ambient = 0.4;\n"
     "    color.rgb *= (key + fill + ambient);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
     "    FragColor = vec4(color.rgb * color.a, color.a);\n"
@@ -190,6 +191,7 @@ bool renderer_init(Renderer *r) {
       r->u_shadow_use_skinning = glGetUniformLocation(r->shadow_program, "uUseSkinning");
       r->u_shadow_offset = glGetUniformLocation(r->shadow_program, "uShadowOffset");
       r->u_shadow_alpha = glGetUniformLocation(r->shadow_program, "uShadowAlpha");
+      r->u_shadow_scale = glGetUniformLocation(r->shadow_program, "uShadowScale");
     }
   }
   if (shadow_vert) glDeleteShader(shadow_vert);
@@ -315,9 +317,10 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     glUniformMatrix4fv(r->u_shadow_proj, 1, GL_FALSE, camera->proj[0]);
     
     /* Shadow offset: slightly back and down-right */
-    float shadow_offset[3] = {0.08f, -0.05f, -0.15f};
+    float shadow_offset[3] = {0.08f, 0.02f, -0.15f};
     glUniform3fv(r->u_shadow_offset, 1, shadow_offset);
-    glUniform1f(r->u_shadow_alpha, 0.3f);
+    glUniform1f(r->u_shadow_alpha, 0.15f);
+    glUniform1f(r->u_shadow_scale, 0.9f);
 
     glDepthMask(GL_FALSE);
 

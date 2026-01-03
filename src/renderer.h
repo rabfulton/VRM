@@ -35,6 +35,7 @@ typedef struct {
   GLint u_shadow_use_skinning;
   GLint u_shadow_offset;
   GLint u_shadow_alpha;
+  GLint u_shadow_scale;
 
   /* Loaded model */
   GltfModel *model;

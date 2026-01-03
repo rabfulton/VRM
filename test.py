@@ -13,7 +13,7 @@ def cmd(c):
 cmd({"action": "load", "path": "/home/rab/code/vrm/test.vrm"})
 cmd({"action": "set_visible", "visible": True})
 
-anims = sorted(glob.glob("/home/rab/code/vrm/VRMA_MotionPack/VRMA_0[1-7].vrma") +
+anims = sorted(glob.glob("/home/rab/code/vrm/VRMA_MotionPack/*.vrma") +
                glob.glob("/home/rab/code/vrm/VRMA_MotionPack/*.glb"))
 idx = 0
 
