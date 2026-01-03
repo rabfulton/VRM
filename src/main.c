@@ -12,6 +12,7 @@
 #include "gltf_loader.h"
 #include "animator.h"
 #include "ipc.h"
+#include "spring_bones.h"
 #include "../deps/cjson/cJSON.h"
 
 typedef struct {
@@ -94,6 +95,8 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
 
         if (gltf_load(&app.model, path->valuestring)) {
             app.model_loaded = true;
+            gltf_update_transforms(&app.model); /* Update transforms before spring init */
+            spring_bones_init(&app.model);
             renderer_set_model(&app.renderer, &app.model);
             animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
@@ -180,6 +183,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (gltf_load_animation(&app.model, path->valuestring)) {
             animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
+            spring_bones_reset(&app.model); /* Reset spring bones for new animation */
             ipc_respond(&app.ipc, id, true, NULL);
         } else {
             ipc_respond(&app.ipc, id, false, "Failed to load animation");
@@ -200,6 +204,26 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
     else if (strcmp(action, "set_animation") == 0) {
         cJSON *idx = cJSON_GetObjectItem(json, "index");
         if (idx) animator_set_animation(&app.animator, idx->valueint);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_spring") == 0) {
+        /* Tune spring bone global multipliers */
+        extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
+        cJSON *stiff = cJSON_GetObjectItem(json, "stiffness");
+        cJSON *drag = cJSON_GetObjectItem(json, "drag");
+        cJSON *grav = cJSON_GetObjectItem(json, "gravity");
+        
+        if (stiff) g_spring_stiffness = (float)stiff->valuedouble;
+        if (drag) g_spring_drag = (float)drag->valuedouble;
+        if (grav) g_spring_gravity = (float)grav->valuedouble;
+        
+        printf("Spring params: stiffness=%.2f drag=%.2f gravity=%.2f\n",
+               g_spring_stiffness, g_spring_drag, g_spring_gravity);
+        fflush(stdout);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "reset_spring") == 0) {
+        spring_bones_reset(&app.model);
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "quit") == 0) {
@@ -264,6 +288,13 @@ static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer user_d
     app.last_time = now;
 
     animator_update(&app.animator, dt);
+    
+    /* Update spring bones after animation */
+    if (app.model_loaded) {
+        gltf_update_transforms(&app.model);
+        spring_bones_update(&app.model, dt);
+        gltf_update_transforms(&app.model); /* Update again after spring bones modify rotations */
+    }
 
     gtk_widget_queue_draw(widget);
     return G_SOURCE_CONTINUE;
@@ -301,6 +332,9 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer use
         case GDK_KEY_t:
             app.always_on_top = !app.always_on_top;
             gtk_window_set_keep_above(GTK_WINDOW(app.window), app.always_on_top);
+            return TRUE;
+        case GDK_KEY_c:
+            renderer_toggle_shader(&app.renderer);
             return TRUE;
         case GDK_KEY_1:
             update_anim_correction_mode(0);
@@ -414,6 +448,7 @@ int main(int argc, char *argv[]) {
     gtk_widget_show_all(app.window);
 
     printf("VRM Overlay started. Press 'q' to quit, 't' for always-on-top\n");
+    printf("Press 'c' to toggle cel shading\n");
     printf("IPC socket: /tmp/vrm-overlay.sock\n");
 
     gtk_main();

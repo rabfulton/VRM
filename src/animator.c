@@ -126,6 +126,7 @@ static int find_keyframe(const GltfAnimSampler *s, float t) {
 static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
     for (int i = 0; i < model->node_count; i++) {
         GltfNode *node = &model->nodes[i];
+        if (node->is_spring_bone) continue; /* Don't reset spring bones */
         node->translation[0] = node->base_translation[0];
         node->translation[1] = node->base_translation[1];
         node->translation[2] = node->base_translation[2];
@@ -194,11 +195,19 @@ void animator_update(Animator *anim, float dt) {
 
     /* Loop */
     if (animation->duration > 0) {
+        int looped = 0;
         while (anim->time > animation->duration) {
             anim->time -= animation->duration;
+            looped = 1;
         }
         while (anim->time < 0) {
             anim->time += animation->duration;
+            looped = 1;
+        }
+        if (looped) {
+            /* Reset spring bones on loop to prevent oscillation */
+            extern void spring_bones_reset(GltfModel *model);
+            spring_bones_reset(anim->model);
         }
     }
 

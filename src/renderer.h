@@ -13,9 +13,6 @@ typedef struct OrbitCamera OrbitCamera;
 
 typedef struct {
   GLuint program;
-  GLuint shadow_program;
-
-  /* Main shader uniforms */
   GLint u_view;
   GLint u_proj;
   GLint u_model;
@@ -26,6 +23,18 @@ typedef struct {
   GLint u_has_base_color_tex;
   GLint u_alpha_mode;
   GLint u_alpha_cutoff;
+} ShaderProgram;
+
+typedef enum {
+  RENDERER_SHADER_PBR = 0,
+  RENDERER_SHADER_TOON = 1
+} RendererShaderMode;
+
+typedef struct {
+  ShaderProgram pbr;
+  ShaderProgram toon;
+  ShaderProgram *active;
+  GLuint shadow_program;
 
   /* Shadow shader uniforms */
   GLint u_shadow_view;
@@ -43,6 +52,7 @@ typedef struct {
   /* Bone matrices for skinning */
   float bone_matrices[200 * 16];
 
+  RendererShaderMode shader_mode;
   bool initialized;
 } Renderer;
 
@@ -51,5 +61,6 @@ void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
 void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world);
 void renderer_draw(Renderer *r, const OrbitCamera *camera);
+void renderer_toggle_shader(Renderer *r);
 
 #endif

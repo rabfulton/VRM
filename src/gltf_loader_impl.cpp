@@ -622,6 +622,98 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         printf("Loaded %d humanoid bone mappings\n", model->humanoid_bone_count);
       }
     }
+    
+    /* Load VRM spring bones */
+    if (vrm.Has("secondaryAnimation")) {
+      const auto &secondary = vrm.Get("secondaryAnimation");
+      
+      /* Parse collider groups first */
+      if (secondary.Has("colliderGroups") && secondary.Get("colliderGroups").IsArray()) {
+        const auto &cgroups = secondary.Get("colliderGroups");
+        model->spring_collider_count = (int)cgroups.ArrayLen();
+        model->spring_colliders = (SpringColliderGroup *)calloc(model->spring_collider_count, sizeof(SpringColliderGroup));
+        
+        for (size_t i = 0; i < cgroups.ArrayLen(); i++) {
+          const auto &cg = cgroups.Get((int)i);
+          SpringColliderGroup *group = &model->spring_colliders[i];
+          group->node = cg.Has("node") ? cg.Get("node").Get<int>() : -1;
+          
+          if (cg.Has("colliders") && cg.Get("colliders").IsArray()) {
+            const auto &cols = cg.Get("colliders");
+            group->collider_count = (int)cols.ArrayLen();
+            group->colliders = (SpringCollider *)calloc(group->collider_count, sizeof(SpringCollider));
+            
+            for (size_t j = 0; j < cols.ArrayLen(); j++) {
+              const auto &c = cols.Get((int)j);
+              SpringCollider *col = &group->colliders[j];
+              col->node = group->node;
+              col->radius = c.Has("radius") ? (float)c.Get("radius").Get<double>() : 0.05f;
+              if (c.Has("offset")) {
+                const auto &off = c.Get("offset");
+                col->offset[0] = off.Has("x") ? (float)off.Get("x").Get<double>() : 0;
+                col->offset[1] = off.Has("y") ? (float)off.Get("y").Get<double>() : 0;
+                col->offset[2] = off.Has("z") ? (float)off.Get("z").Get<double>() : 0;
+              }
+            }
+          }
+        }
+      }
+      
+      /* Parse bone groups */
+      if (secondary.Has("boneGroups") && secondary.Get("boneGroups").IsArray()) {
+        const auto &bgroups = secondary.Get("boneGroups");
+        model->spring_group_count = (int)bgroups.ArrayLen();
+        model->spring_groups = (SpringBoneGroup *)calloc(model->spring_group_count, sizeof(SpringBoneGroup));
+        
+        for (size_t i = 0; i < bgroups.ArrayLen(); i++) {
+          const auto &bg = bgroups.Get((int)i);
+          SpringBoneGroup *group = &model->spring_groups[i];
+          
+          group->stiffness = bg.Has("stiffiness") ? (float)bg.Get("stiffiness").Get<double>() : 0.5f;
+          group->drag = bg.Has("dragForce") ? (float)bg.Get("dragForce").Get<double>() : 0.4f;
+          group->gravity_power = bg.Has("gravityPower") ? (float)bg.Get("gravityPower").Get<double>() : 1.0f;
+          group->hit_radius = bg.Has("hitRadius") ? (float)bg.Get("hitRadius").Get<double>() : 0.02f;
+          
+          if (bg.Has("gravityDir")) {
+            const auto &gd = bg.Get("gravityDir");
+            group->gravity_dir[0] = gd.Has("x") ? (float)gd.Get("x").Get<double>() : 0;
+            group->gravity_dir[1] = gd.Has("y") ? (float)gd.Get("y").Get<double>() : -1;
+            group->gravity_dir[2] = gd.Has("z") ? (float)gd.Get("z").Get<double>() : 0;
+          } else {
+            group->gravity_dir[0] = 0; group->gravity_dir[1] = -1; group->gravity_dir[2] = 0;
+          }
+          
+          if (bg.Has("bones") && bg.Get("bones").IsArray()) {
+            const auto &bones = bg.Get("bones");
+            group->bone_count = (int)bones.ArrayLen();
+            group->bones = (int *)malloc(group->bone_count * sizeof(int));
+            for (size_t j = 0; j < bones.ArrayLen(); j++) {
+              group->bones[j] = bones.Get((int)j).Get<int>();
+            }
+          }
+          
+          if (bg.Has("colliderGroups") && bg.Get("colliderGroups").IsArray()) {
+            const auto &cgs = bg.Get("colliderGroups");
+            group->collider_group_count = (int)cgs.ArrayLen();
+            group->collider_groups = (int *)malloc(group->collider_group_count * sizeof(int));
+            for (size_t j = 0; j < cgs.ArrayLen(); j++) {
+              group->collider_groups[j] = cgs.Get((int)j).Get<int>();
+            }
+          }
+          
+          /* Mark spring bone nodes */
+          for (int j = 0; j < group->bone_count; j++) {
+            int node_idx = group->bones[j];
+            if (node_idx >= 0 && node_idx < model->node_count) {
+              model->nodes[node_idx].is_spring_bone = 1;
+            }
+          }
+        }
+      }
+      
+      printf("Loaded %d spring bone groups, %d collider groups\n", 
+             model->spring_group_count, model->spring_collider_count);
+    }
   }
 
   model->loaded = true;

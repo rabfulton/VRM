@@ -93,6 +93,8 @@ typedef struct {
   float base_translation[3];
   float base_rotation[4];
   float base_scale[3];
+  
+  int is_spring_bone; /* 1 if this is a spring bone (don't reset in animator) */
 
   /* Computed world matrix */
   float world_matrix[16];
@@ -141,6 +143,42 @@ typedef struct {
   int node_mask_count;
 } GltfAnimation;
 
+/* Spring bone collider */
+typedef struct {
+  int node;           /* Node index the collider is attached to */
+  float offset[3];    /* Local offset from node */
+  float radius;       /* Sphere radius */
+} SpringCollider;
+
+/* Spring bone collider group */
+typedef struct {
+  int node;           /* Node the group is attached to */
+  SpringCollider *colliders;
+  int collider_count;
+} SpringColliderGroup;
+
+/* Spring bone joint (runtime state) */
+typedef struct {
+  int node;           /* Node index */
+  float curr_pos[3];  /* Current tail position (world) */
+  float prev_pos[3];  /* Previous tail position (world) */
+  float bone_length;  /* Length of this bone segment */
+} SpringJoint;
+
+/* Spring bone group */
+typedef struct {
+  float stiffness;    /* Spring stiffness (0-1) */
+  float drag;         /* Drag force (0-1) */
+  float gravity_power;
+  float gravity_dir[3];
+  float hit_radius;   /* Collision radius */
+  int *bones;         /* Node indices of bones in chain */
+  int bone_count;
+  int *collider_groups; /* Indices into collider groups array */
+  int collider_group_count;
+  SpringJoint *joints;  /* Runtime joint state */
+} SpringBoneGroup;
+
 /* Complete glTF model */
 typedef struct {
   GltfMesh *meshes;
@@ -178,6 +216,12 @@ typedef struct {
   char (*humanoid_names)[32];  /* Array of bone names */
   int *humanoid_bones;         /* Array of node indices */
   int humanoid_bone_count;
+
+  /* VRM spring bones */
+  SpringBoneGroup *spring_groups;
+  int spring_group_count;
+  SpringColliderGroup *spring_colliders;
+  int spring_collider_count;
 
   bool loaded;
 } GltfModel;

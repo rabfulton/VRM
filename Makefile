@@ -10,7 +10,7 @@ INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb
 
 LDFLAGS = $(shell pkg-config --libs gtk+-3.0 epoxy) -lm -lstdc++
 
-C_SRC = src/main.c src/renderer.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/renderer.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c src/spring_bones.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp
 
 C_OBJ = $(C_SRC:.c=.o)
