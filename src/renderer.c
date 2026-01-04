@@ -292,6 +292,9 @@ static bool init_shader_program(ShaderProgram *program, const char *frag_src) {
 bool renderer_init(Renderer *r) {
   memset(r, 0, sizeof(Renderer));
 
+  /* Identity model transform */
+  r->model_transform[0] = r->model_transform[5] = r->model_transform[10] = r->model_transform[15] = 1.0f;
+
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_DEPTH_TEST);
@@ -471,6 +474,9 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
 
   if (!r->model || !r->model->loaded) return;
 
+  mat4 mt;
+  memcpy(mt, r->model_transform, sizeof(mat4));
+
   /* === Draw outline pass for anime mode (back faces extruded) === */
   if (r->shader_mode == RENDERER_SHADER_ANIME && r->outline_program) {
     glUseProgram(r->outline_program);
@@ -487,12 +493,15 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       GltfNode *node = &r->model->nodes[i];
       if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
 
+      mat4 combined;
+      glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
         renderer_update_bones(r, node->skin_index, node->world_matrix);
         glUniformMatrix4fv(r->u_outline_bones, 200, GL_FALSE, r->bone_matrices);
       }
       glUniform1i(r->u_outline_use_skinning, node->skin_index >= 0 ? 1 : 0);
-      glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, node->world_matrix);
+      glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, (float*)combined);
 
       GltfMesh *mesh = &r->model->meshes[node->mesh_index];
       for (int j = 0; j < mesh->primitive_count; j++) {
@@ -529,12 +538,15 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       GltfNode *node = &r->model->nodes[i];
       if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
 
+      mat4 combined;
+      glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
         renderer_update_bones(r, node->skin_index, node->world_matrix);
         glUniformMatrix4fv(r->u_shadow_bones, 200, GL_FALSE, r->bone_matrices);
       }
       glUniform1i(r->u_shadow_use_skinning, node->skin_index >= 0 ? 1 : 0);
-      glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, node->world_matrix);
+      glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float*)combined);
 
       GltfMesh *mesh = &r->model->meshes[node->mesh_index];
       for (int j = 0; j < mesh->primitive_count; j++) {
@@ -559,12 +571,15 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     GltfNode *node = &r->model->nodes[i];
     if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
 
+    mat4 combined;
+    glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+
     if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
       renderer_update_bones(r, node->skin_index, node->world_matrix);
       glUniformMatrix4fv(program->u_bones, 200, GL_FALSE, r->bone_matrices);
     }
 
-    glUniformMatrix4fv(program->u_model, 1, GL_FALSE, node->world_matrix);
+    glUniformMatrix4fv(program->u_model, 1, GL_FALSE, (float*)combined);
 
     GltfMesh *mesh = &r->model->meshes[node->mesh_index];
 
@@ -618,4 +633,17 @@ void renderer_toggle_shader(Renderer *r) {
     r->active = &r->anime;
     printf("Shader: PBR\n");
   }
+}
+
+void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg) {
+  /* Build transform: T * Ry * Rx * Rz (yaw, pitch, roll order) */
+  float cx = cosf(rot_deg[0] * 0.0174533f), sx = sinf(rot_deg[0] * 0.0174533f);
+  float cy = cosf(rot_deg[1] * 0.0174533f), sy = sinf(rot_deg[1] * 0.0174533f);
+  float cz = cosf(rot_deg[2] * 0.0174533f), sz = sinf(rot_deg[2] * 0.0174533f);
+  
+  float *m = r->model_transform;
+  m[0] = cy*cz + sy*sx*sz;  m[4] = -cy*sz + sy*sx*cz; m[8]  = sy*cx; m[12] = pos[0];
+  m[1] = cx*sz;             m[5] = cx*cz;             m[9]  = -sx;   m[13] = pos[1];
+  m[2] = -sy*cz + cy*sx*sz; m[6] = sy*sz + cy*sx*cz;  m[10] = cy*cx; m[14] = pos[2];
+  m[3] = 0;                 m[7] = 0;                 m[11] = 0;     m[15] = 1;
 }

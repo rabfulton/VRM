@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* These functions are implemented in gltf_loader_impl.cpp */
 extern bool gltf_load_impl(GltfModel *model, const char *path);
@@ -113,4 +114,137 @@ int gltf_find_node(const GltfModel *model, const char *name) {
     }
   }
   return -1;
+}
+
+void gltf_get_screen_bounds(const GltfModel *model, const float *view, const float *proj,
+                            float *out_ndc_w, float *out_ndc_h) {
+  float min_x = 1e9f, max_x = -1e9f;
+  float min_y = 1e9f, max_y = -1e9f;
+
+  /* Compute view-projection matrix */
+  float vp[16];
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      float sum = 0;
+      for (int k = 0; k < 4; k++) {
+        sum += proj[k * 4 + row] * view[col * 4 + k];
+      }
+      vp[col * 4 + row] = sum;
+    }
+  }
+
+  /* Project all node positions (skeleton joints) */
+  for (int i = 0; i < model->node_count; i++) {
+    float *m = model->nodes[i].world_matrix;
+    float wx = m[12], wy = m[13], wz = m[14];
+
+    /* Transform to clip space */
+    float cx = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12];
+    float cy = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13];
+    float cw = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
+
+    if (cw > 0.001f) {
+      float ndcx = cx / cw;
+      float ndcy = cy / cw;
+      if (ndcx < min_x) min_x = ndcx;
+      if (ndcx > max_x) max_x = ndcx;
+      if (ndcy < min_y) min_y = ndcy;
+      if (ndcy > max_y) max_y = ndcy;
+    }
+  }
+
+  /* Return NDC range (add margin for mesh beyond bones) */
+  *out_ndc_w = (max_x - min_x) * 1.2f;
+  *out_ndc_h = (max_y - min_y) * 1.2f;
+}
+
+/* Forward declaration for animation sampling */
+extern void animator_sample_frame(GltfModel *model, int anim_idx, float time);
+
+/* Compute world-space bounding box for animation (camera-independent) */
+static void compute_world_bounds(GltfModel *model, float *out_min, float *out_max) {
+  out_min[0] = out_min[1] = out_min[2] = 1e9f;
+  out_max[0] = out_max[1] = out_max[2] = -1e9f;
+  
+  for (int i = 0; i < model->node_count; i++) {
+    float *m = model->nodes[i].world_matrix;
+    float x = m[12], y = m[13], z = m[14];
+    if (x < out_min[0]) out_min[0] = x;
+    if (y < out_min[1]) out_min[1] = y;
+    if (z < out_min[2]) out_min[2] = z;
+    if (x > out_max[0]) out_max[0] = x;
+    if (y > out_max[1]) out_max[1] = y;
+    if (z > out_max[2]) out_max[2] = z;
+  }
+}
+
+void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
+                                   const float *view, const float *proj,
+                                   float *out_ndc_w, float *out_ndc_h) {
+  (void)view; (void)proj; /* Now computing world bounds, not NDC */
+  *out_ndc_w = 0.5f;
+  *out_ndc_h = 1.0f;
+  
+  if (!model || !anim_path || model->animation_count == 0) return;
+  
+  /* Build cache filename */
+  char cache_path[512];
+  snprintf(cache_path, sizeof(cache_path), "%s.bounds", anim_path);
+  
+  float world_w, world_h;
+  
+  /* Check if cache is valid */
+  struct stat anim_stat, cache_stat;
+  if (stat(anim_path, &anim_stat) == 0 && stat(cache_path, &cache_stat) == 0) {
+    if (cache_stat.st_mtime >= anim_stat.st_mtime) {
+      FILE *f = fopen(cache_path, "r");
+      if (f) {
+        if (fscanf(f, "%f %f", &world_w, &world_h) == 2) {
+          fclose(f);
+          *out_ndc_w = world_w;
+          *out_ndc_h = world_h;
+          return;
+        }
+        fclose(f);
+      }
+    }
+  }
+  
+  /* Sample animation and compute world-space bounds */
+  GltfAnimation *anim = &model->animations[0];
+  float duration = anim->duration > 0 ? anim->duration : 1.0f;
+  int samples = (int)(duration * 30);
+  if (samples < 10) samples = 10;
+  if (samples > 300) samples = 300;
+  
+  float global_min[3] = {1e9f, 1e9f, 1e9f};
+  float global_max[3] = {-1e9f, -1e9f, -1e9f};
+  
+  for (int i = 0; i <= samples; i++) {
+    float t = (float)i / samples * duration;
+    animator_sample_frame(model, 0, t);
+    gltf_update_transforms(model);
+    
+    float frame_min[3], frame_max[3];
+    compute_world_bounds(model, frame_min, frame_max);
+    
+    for (int j = 0; j < 3; j++) {
+      if (frame_min[j] < global_min[j]) global_min[j] = frame_min[j];
+      if (frame_max[j] > global_max[j]) global_max[j] = frame_max[j];
+    }
+  }
+  
+  /* Store world-space extents (add margin for mesh beyond bones) */
+  world_w = (global_max[0] - global_min[0]) * 1.3f;
+  world_h = (global_max[1] - global_min[1]) * 1.3f;
+  
+  *out_ndc_w = world_w;
+  *out_ndc_h = world_h;
+  
+  /* Write cache */
+  FILE *f = fopen(cache_path, "w");
+  if (f) {
+    fprintf(f, "%f %f\n", world_w, world_h);
+    fclose(f);
+  }
 }

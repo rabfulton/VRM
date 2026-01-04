@@ -1243,6 +1243,22 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       }
     }
     
+    /* Try VRM humanoid name directly (animation uses humanoid names as node names) */
+    if (!anim_to_model_node.count(i)) {
+      auto it = model_humanoid_map.find(name);
+      if (it != model_humanoid_map.end()) {
+        anim_to_model_node[i] = it->second;
+        const auto &node = anim_gltf.nodes[i];
+        if (node.rotation.size() == 4) {
+          anim_local_rest[i] = {(float)node.rotation[0], (float)node.rotation[1],
+                                (float)node.rotation[2], (float)node.rotation[3]};
+          normalize_quat(anim_local_rest[i].data());
+        } else {
+          anim_local_rest[i] = {0.0f, 0.0f, 0.0f, 1.0f};
+        }
+      }
+    }
+    
     /* Try direct name match */
     if (!anim_to_model_node.count(i)) {
       auto it = model_node_map.find(name);
@@ -1420,6 +1436,30 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       else if (channel.target_path == "rotation") c->path = GLTF_PATH_ROTATION;
       else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
       else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
+
+      /* Skip root (hips) translation if it looks like world-space or wrong scale */
+      if (c->path == GLTF_PATH_TRANSLATION && c->target_node >= 0) {
+        int hips_node = -1;
+        for (int h = 0; h < model->humanoid_bone_count; h++) {
+          if (strcmp(model->humanoid_names[h], "hips") == 0) {
+            hips_node = model->humanoid_bones[h];
+            break;
+          }
+        }
+        if (c->target_node == hips_node && c->sampler_index >= 0) {
+          /* Check first translation value */
+          GltfAnimSampler *s = &a->samplers[c->sampler_index];
+          if (s->output && s->keyframe_count > 0) {
+            float ty = s->output[1]; /* Y component */
+            float model_hips_y = model->nodes[hips_node].base_translation[1];
+            /* If animation hips Y is way off (negative or >2x model), skip translation */
+            if (ty < -1.0f || fabsf(ty - model_hips_y) > 2.0f) {
+              printf("Skipping root translation (anim Y=%.2f, model Y=%.2f)\n", ty, model_hips_y);
+              c->target_node = -1; /* Disable this channel */
+            }
+          }
+        }
+      }
 
       if (c->target_node >= 0 && c->target_node < a->node_mask_count) {
         if (c->path == GLTF_PATH_TRANSLATION) a->node_mask[c->target_node] |= 1;

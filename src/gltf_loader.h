@@ -241,4 +241,13 @@ bool gltf_load_animation(GltfModel *model, const char *anim_path);
 /* Get a node by name (returns -1 if not found) */
 int gltf_find_node(const GltfModel *model, const char *name);
 
+/* Compute screen-space bounding box from skeleton (returns NDC extents) */
+void gltf_get_screen_bounds(const GltfModel *model, const float *view, const float *proj,
+                            float *out_ndc_w, float *out_ndc_h);
+
+/* Compute max bounds over entire animation, with caching */
+void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
+                                   const float *view, const float *proj,
+                                   float *out_ndc_w, float *out_ndc_h);
+
 #endif /* GLTF_LOADER_H */

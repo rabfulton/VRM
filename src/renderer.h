@@ -64,6 +64,9 @@ typedef struct {
   /* Bone matrices for skinning */
   float bone_matrices[200 * 16];
 
+  /* Model transform (position + rotation) */
+  float model_transform[16];
+
   RendererShaderMode shader_mode;
   bool initialized;
 } Renderer;
@@ -73,6 +76,7 @@ void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
 void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world);
 void renderer_draw(Renderer *r, const OrbitCamera *camera);
+void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg);
 void renderer_toggle_shader(Renderer *r);
 
 #endif

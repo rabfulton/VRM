@@ -6,6 +6,7 @@
 #include <epoxy/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "renderer.h"
 #include "camera.h"
@@ -13,6 +14,7 @@
 #include "animator.h"
 #include "ipc.h"
 #include "spring_bones.h"
+#include "ui_library/ui.h"
 #include "../deps/cjson/cJSON.h"
 
 typedef struct {
@@ -29,13 +31,94 @@ typedef struct {
     int msaa_samples;
     int fb_width;
     int fb_height;
+    ui_interface_t *ui;
+    int32_t pie_menu_id;
     gboolean visible;
     gboolean always_on_top;
     gboolean model_loaded;
+    gboolean auto_resize;
+    float cached_world_w, cached_world_h; /* World-space bounds */
     gint64 last_time;
+    float model_position[3];  /* x, y, z offset */
+    float model_rotation[3];  /* pitch, yaw, roll in degrees */
 } VrmApp;
 
 static VrmApp app = {0};
+
+display_t display = {0};
+mouse_t mouse = {0};
+gl_buffer_t gl_buffer_default = {0};
+
+static void ui_update_display_metrics(GtkWidget *widget) {
+    GdkScreen *screen = gtk_widget_get_screen(widget);
+    double dpi = gdk_screen_get_resolution(screen);
+    int scale = gtk_widget_get_scale_factor(widget);
+    if (dpi <= 0.0) {
+        dpi = 96.0 * (double)scale;
+    }
+    display.h_dpi = (float)dpi;
+    display.v_dpi = (float)dpi;
+    display.d_dpi = (float)dpi;
+    display.width = gtk_widget_get_allocated_width(widget);
+    display.height = gtk_widget_get_allocated_height(widget);
+}
+
+static void on_pie_select(int idx) {
+    printf("UI pie selection: %d\n", idx);
+}
+
+static void ui_init_overlay(VrmApp *state) {
+    if (state->ui) return;
+    state->ui = ui_init(NULL);
+    if (!state->ui) return;
+    ui_load_font(state->ui, "src/ui_library/fonts/BeVietnamPro-Regular.ttf", 18);
+
+    float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
+    float radius = 120.0f * (dpi / 96.0f);
+    element_data items[4];
+    items[0].b = (ui_button_t){.str = "One", .w = 70, .h = 30, .state = 0};
+    items[1].b = (ui_button_t){.str = "Two", .w = 70, .h = 30, .state = 0};
+    items[2].b = (ui_button_t){.str = "Three", .w = 70, .h = 30, .state = 0};
+    items[3].b = (ui_button_t){.str = "Four", .w = 70, .h = 30, .state = 0};
+
+    ui_pie_menu_t pie = {
+        .type = UI_BUTTON_ROUND,
+        .count = 4,
+        .radius = radius,
+        .elements = items
+    };
+    state->pie_menu_id = ui_element_init(state->ui, &pie, 0, UI_PIE_MENU);
+    ui_set_callback(state->ui, state->pie_menu_id, on_pie_select);
+}
+
+static void update_window_for_zoom(void) {
+    if (!app.auto_resize || !app.model_loaded) return;
+    if (app.cached_world_w <= 0 || app.cached_world_h <= 0) return;
+    
+    /* Convert world size to screen pixels based on camera distance and FOV */
+    /* Screen size ≈ world_size / distance * focal_length * base_pixels */
+    float fov = 0.785f; /* 45 degrees in radians */
+    float scale = 1.0f / (app.camera.distance * tanf(fov * 0.5f));
+    
+    int base = 300; /* Base pixels per unit at scale=1 */
+    int w = (int)(app.cached_world_w * scale * base);
+    int h = (int)(app.cached_world_h * scale * base);
+    
+    if (w < 100) w = 100;
+    if (h < 100) h = 100;
+    if (w > 2000) w = 2000;
+    if (h > 3000) h = 3000;
+    gtk_window_resize(GTK_WINDOW(app.window), w, h);
+}
+
+static void compute_and_cache_bounds(const char *anim_path) {
+    if (!app.model_loaded) return;
+    camera_update(&app.camera);
+    gltf_compute_animation_bounds(&app.model, anim_path,
+                                  (float*)app.camera.view, (float*)app.camera.proj,
+                                  &app.cached_world_w, &app.cached_world_h);
+    update_window_for_zoom();
+}
 
 static void msaa_cleanup(VrmApp *state) {
     if (state->msaa_color) {
@@ -94,6 +177,7 @@ static void update_anim_correction_mode(int mode) {
        Keep the hotkeys for testing, but default is rotY 180. */
     app.model.anim_correction_mode = mode;
     if (mode == 0) {
+        /* No correction - identity quaternion but still process */
         app.model.anim_global_correction[0] = 0.0f;
         app.model.anim_global_correction[1] = 0.0f;
         app.model.anim_global_correction[2] = 0.0f;
@@ -104,7 +188,9 @@ static void update_anim_correction_mode(int mode) {
         app.model.anim_global_correction[1] = app.model.anim_global_auto_correction[1];
         app.model.anim_global_correction[2] = app.model.anim_global_auto_correction[2];
         app.model.anim_global_correction[3] = app.model.anim_global_auto_correction[3];
-        printf("Anim correction: auto\n");
+        printf("Anim correction: auto (%.2f,%.2f,%.2f,%.2f)\n",
+               app.model.anim_global_correction[0], app.model.anim_global_correction[1],
+               app.model.anim_global_correction[2], app.model.anim_global_correction[3]);
     } else if (mode == 2) {
         app.model.anim_global_correction[0] = 1.0f;
         app.model.anim_global_correction[1] = 0.0f;
@@ -124,6 +210,7 @@ static void update_anim_correction_mode(int mode) {
         app.model.anim_global_correction[3] = 0.0f;
         printf("Anim correction: rotZ 180\n");
     }
+    fflush(stdout);
 }
 
 /* IPC command handler */
@@ -213,6 +300,13 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             app.camera.target[1] = (float)cJSON_GetArrayItem(tg, 1)->valuedouble;
             app.camera.target[2] = (float)cJSON_GetArrayItem(tg, 2)->valuedouble;
         }
+        update_window_for_zoom();
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_auto_resize") == 0) {
+        cJSON *en = cJSON_GetObjectItem(json, "enabled");
+        app.auto_resize = en ? cJSON_IsTrue(en) : TRUE;
+        update_window_for_zoom();
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_blendshape") == 0) {
@@ -241,7 +335,8 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (gltf_load_animation(&app.model, path->valuestring)) {
             animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
-            spring_bones_reset(&app.model); /* Reset spring bones for new animation */
+            spring_bones_reset(&app.model);
+            if (app.auto_resize) compute_and_cache_bounds(path->valuestring);
             ipc_respond(&app.ipc, id, true, NULL);
         } else {
             ipc_respond(&app.ipc, id, false, "Failed to load animation");
@@ -279,6 +374,31 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         animator_set_loop_blend(&app.animator, d);
         ipc_respond(&app.ipc, id, true, NULL);
     }
+    else if (strcmp(action, "set_smooth_loop") == 0) {
+        cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
+        animator_set_smooth_loop(&app.animator, enabled && cJSON_IsTrue(enabled));
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_position") == 0) {
+        cJSON *x = cJSON_GetObjectItem(json, "x");
+        cJSON *y = cJSON_GetObjectItem(json, "y");
+        cJSON *z = cJSON_GetObjectItem(json, "z");
+        if (x) app.model_position[0] = (float)x->valuedouble;
+        if (y) app.model_position[1] = (float)y->valuedouble;
+        if (z) app.model_position[2] = (float)z->valuedouble;
+        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_rotation") == 0) {
+        cJSON *pitch = cJSON_GetObjectItem(json, "pitch");
+        cJSON *yaw = cJSON_GetObjectItem(json, "yaw");
+        cJSON *roll = cJSON_GetObjectItem(json, "roll");
+        if (pitch) app.model_rotation[0] = (float)pitch->valuedouble;
+        if (yaw) app.model_rotation[1] = (float)yaw->valuedouble;
+        if (roll) app.model_rotation[2] = (float)roll->valuedouble;
+        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
     else if (strcmp(action, "set_spring") == 0) {
         /* Tune spring bone global multipliers */
         extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
@@ -297,6 +417,11 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
     }
     else if (strcmp(action, "reset_spring") == 0) {
         spring_bones_reset(&app.model);
+        ipc_respond(&app.ipc, id, true, NULL);
+    }
+    else if (strcmp(action, "set_anim_correction") == 0) {
+        cJSON *m = cJSON_GetObjectItem(json, "mode");
+        if (m) update_anim_correction_mode(m->valueint);
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "quit") == 0) {
@@ -338,6 +463,9 @@ static void on_realize(GtkGLArea *area, gpointer user_data) {
     app.camera.azimuth = 3.14f;   /* Face the model */
 
     animator_init(&app.animator);
+
+    ui_update_display_metrics(GTK_WIDGET(area));
+    ui_init_overlay(&app);
 }
 
 static gboolean on_render(GtkGLArea *area, GdkGLContext *context, gpointer user_data) {
@@ -366,6 +494,10 @@ static gboolean on_render(GtkGLArea *area, GdkGLContext *context, gpointer user_
         glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)target_fbo);
     }
 
+    if (app.ui) {
+        ui_render(app.ui);
+    }
+
     return TRUE;
 }
 
@@ -374,6 +506,7 @@ static void on_resize(GtkGLArea *area, gint width, gint height, gpointer user_da
     glViewport(0, 0, width, height);
     app.camera.aspect = (float)width / (float)height;
     msaa_resize(&app, width, height);
+    ui_update_display_metrics(GTK_WIDGET(area));
 }
 
 static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer user_data) {
@@ -384,6 +517,9 @@ static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer user_d
 
     float dt = (float)(now - app.last_time) / 1000000.0f; /* microseconds to seconds */
     app.last_time = now;
+    if (dt > 0.0f) {
+        display.frame_rate = 1.0f / dt;
+    }
 
     animator_update(&app.animator, dt);
     
@@ -391,7 +527,7 @@ static gboolean on_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer user_d
     if (app.model_loaded) {
         gltf_update_transforms(&app.model);
         spring_bones_update(&app.model, dt);
-        gltf_update_transforms(&app.model); /* Update again after spring bones modify rotations */
+        gltf_update_transforms(&app.model);
     }
 
     gtk_widget_queue_draw(widget);
@@ -458,10 +594,17 @@ static gboolean is_dragging = FALSE;
 
 static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data) {
     (void)widget; (void)user_data;
+    mouse.x = (int32_t)event->x;
+    mouse.y = (int32_t)event->y;
     if (event->button == 1) {
         is_dragging = TRUE;
+        mouse.button_l = 1;
         drag_start_x = event->x;
         drag_start_y = event->y;
+        return TRUE;
+    }
+    if (event->button == 3) {
+        mouse.button_r = 1;
         return TRUE;
     }
     return FALSE;
@@ -471,6 +614,11 @@ static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event, gpoi
     (void)widget; (void)user_data;
     if (event->button == 1) {
         is_dragging = FALSE;
+        mouse.button_l = 0;
+        return TRUE;
+    }
+    if (event->button == 3) {
+        mouse.button_r = 0;
         return TRUE;
     }
     return FALSE;
@@ -478,6 +626,8 @@ static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event, gpoi
 
 static gboolean on_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data) {
     (void)widget; (void)user_data;
+    mouse.x = (int32_t)event->x;
+    mouse.y = (int32_t)event->y;
     if (is_dragging) {
         app.camera.azimuth += (float)(event->x - drag_start_x) * 0.01f;
         app.camera.polar += (float)(event->y - drag_start_y) * 0.01f;
@@ -499,6 +649,8 @@ static gboolean on_scroll(GtkWidget *widget, GdkEventScroll *event, gpointer use
     }
     if (app.camera.distance < 0.5f) app.camera.distance = 0.5f;
     if (app.camera.distance > 10.0f) app.camera.distance = 10.0f;
+    /* Bounds are camera-dependent, scale cached values proportionally */
+    update_window_for_zoom();
     return TRUE;
 }
 

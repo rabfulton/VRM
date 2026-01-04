@@ -37,6 +37,8 @@ void animator_set_time(Animator *anim, float t);
 void animator_set_animation(Animator *anim, int index);
 void animator_blend_to(Animator *anim, int index, float duration);
 void animator_set_loop_blend(Animator *anim, float duration);
+void animator_set_smooth_loop(Animator *anim, bool enabled);
 void animator_cleanup(Animator *anim);
+void animator_sample_frame(GltfModel *model, int anim_idx, float time);
 
 #endif

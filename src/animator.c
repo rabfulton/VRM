@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 static float loop_blend_duration = 0.0f;
+static bool smooth_loop = false;
 
 void animator_init(Animator *anim) {
     memset(anim, 0, sizeof(Animator));
@@ -100,11 +101,11 @@ static void quat_rotate_vec(const float *q, const float *v, float *out) {
 }
 
 static void apply_global_anim_correction(GltfModel *model, GltfAnimation *anim) {
-    if (!model || !anim || model->anim_correction_mode == 0) return;
-    float corr[4] = {model->anim_global_correction[0],
-                     model->anim_global_correction[1],
-                     model->anim_global_correction[2],
-                     model->anim_global_correction[3]};
+    if (!model || !anim) return;
+    /* Check if correction quaternion is identity - skip if so */
+    float *corr = model->anim_global_correction;
+    if (corr[0] == 0.0f && corr[1] == 0.0f && corr[2] == 0.0f && corr[3] == 1.0f) return;
+    
     float corr_inv[4];
     quat_inv(corr, corr_inv);
     for (int i = 0; i < model->node_count; i++) {
@@ -274,11 +275,11 @@ void animator_update(Animator *anim, float dt) {
             while (anim->time > animation->duration) {
                 anim->time -= animation->duration;
             }
-            spring_bones_reset(model);
+            if (!smooth_loop) spring_bones_reset(model);
         }
         while (anim->time < 0) {
             anim->time += animation->duration;
-            spring_bones_reset(model);
+            if (!smooth_loop) spring_bones_reset(model);
         }
     }
 
@@ -353,4 +354,14 @@ void animator_blend_to(Animator *anim, int index, float duration) {
 void animator_set_loop_blend(Animator *anim, float duration) {
     (void)anim;
     loop_blend_duration = duration >= 0.0f ? duration : 0.0f;
+}
+
+void animator_set_smooth_loop(Animator *anim, bool enabled) {
+    (void)anim;
+    smooth_loop = enabled;
+}
+
+void animator_sample_frame(GltfModel *model, int anim_idx, float time) {
+    if (!model || anim_idx < 0 || anim_idx >= model->animation_count) return;
+    sample_animation(model, &model->animations[anim_idx], time);
 }

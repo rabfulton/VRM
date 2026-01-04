@@ -6,11 +6,11 @@ CFLAGS = -std=c99 -Wall -Wextra -g -O2 -MMD -MP
 CXXFLAGS = -std=c++20 -Wall -Wextra -g -O2 -MMD -MP
 CFLAGS += $(shell pkg-config --cflags gtk+-3.0 epoxy)
 CXXFLAGS += $(shell pkg-config --cflags gtk+-3.0 epoxy)
-INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb
+INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb -Isrc/ui_library
 
 LDFLAGS = $(shell pkg-config --libs gtk+-3.0 epoxy) -lm -lstdc++
 
-C_SRC = src/main.c src/renderer.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c src/spring_bones.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/renderer.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c src/spring_bones.c src/ui_library/ui.c src/ui_library/import.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp
 
 C_OBJ = $(C_SRC:.c=.o)
