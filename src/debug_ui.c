@@ -34,6 +34,7 @@ static const char *ui_pie_menu_labels[UI_PIE_MAX_ELEMENT] = {
 
 static ui_interface_t *debug_ui = NULL;
 static void (*spring_reset_fn)(void) = NULL;
+static void (*spring_save_fn)(void) = NULL;
 static int32_t spring_menu_id = -1;
 static uint32_t spring_param_ids[SPRING_PARAM_MAX_ELEMENT] = {0};
 static int spring_close_guard = 0;
@@ -56,6 +57,10 @@ void debug_ui_set_interface(ui_interface_t *ui) {
 
 void debug_ui_set_spring_reset(void (*fn)(void)) {
     spring_reset_fn = fn;
+}
+
+void debug_ui_set_spring_save(void (*fn)(void)) {
+    spring_save_fn = fn;
 }
 
 int debug_ui_consume_close_guard(void) {
@@ -107,6 +112,9 @@ static void on_spring_gravity(int id) {
 static void on_spring_menu_save(int id) {
     (void)id;
     printf("UI debug: spring menu save pressed\n");
+    if (spring_save_fn) spring_save_fn();
+    spring_menu_close_pending = 1;
+    ui_close_request = 1;
 }
 
 static void on_spring_menu_close(int id) {
@@ -202,7 +210,7 @@ static void springs_menu(void) {
     uint32_t save_id = (uint32_t)ui_element_init(debug_ui, &save_btn, 0, UI_BUTTON_ROUND);
     ui_set_element_flags(debug_ui, save_id, UI_ACTION_ON_PRESS);
     ui_set_callback(debug_ui, save_id, on_spring_menu_save);
-
+    ui_set_align(debug_ui, UI_RIGHT);
     ui_button_t close_btn = {.str = "Close", .w = 0, .h = 0, .state = 0};
     uint32_t close_id = (uint32_t)ui_element_init(debug_ui, &close_btn, 0, UI_BUTTON_ROUND);
     ui_set_element_flags(debug_ui, close_id, UI_ACTION_ON_RELEASE);

@@ -7,6 +7,7 @@ typedef struct ui_interface_t ui_interface_t;
 
 void debug_ui_set_interface(ui_interface_t *ui);
 void debug_ui_set_spring_reset(void (*fn)(void));
+void debug_ui_set_spring_save(void (*fn)(void));
 int debug_ui_consume_close_guard(void);
 int debug_ui_consume_close_request(void);
 void debug_ui_prepare_for_close(void);

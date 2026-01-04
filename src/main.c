@@ -15,6 +15,7 @@
 #include "animator.h"
 #include "ipc.h"
 #include "spring_bones.h"
+#include "anim_config.h"
 #include "ui_library/ui.h"
 #include "debug_ui.h"
 #include "../deps/cjson/cJSON.h"
@@ -40,6 +41,8 @@ typedef struct {
     float cached_world_w, cached_world_h;
     double last_time;
     float model_position[3], model_rotation[3];
+    char current_anim_path[512];
+    bool has_current_anim;
 } VrmApp;
 
 static VrmApp app = {0};
@@ -47,12 +50,14 @@ static VrmApp app = {0};
 display_t display = {0};
 mouse_t mouse = {0};
 gl_buffer_t gl_buffer_default = {0};
+extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 
 static void update_ui_window_layout(void);
 static bool model_hit_test(int x, int y);
 static void show_ui_window(void);
 static void hide_ui_window(void);
 static void reset_springs_from_ui(void);
+static void save_springs_to_config(void);
 
 static void update_display_metrics_for_window(PlatformWindow *win) {
     int win_w = 0, win_h = 0;
@@ -70,6 +75,20 @@ static void update_display_metrics_for_window(PlatformWindow *win) {
 
 static void reset_springs_from_ui(void) {
     if (app.model_loaded) spring_bones_reset(&app.model);
+}
+
+static void save_springs_to_config(void) {
+    if (!app.has_current_anim) return;
+    AnimConfig cfg = {0};
+    cfg.spring_stiffness = g_spring_stiffness;
+    cfg.spring_drag = g_spring_drag;
+    cfg.spring_gravity = g_spring_gravity;
+    cfg.has_spring_stiffness = true;
+    cfg.has_spring_drag = true;
+    cfg.has_spring_gravity = true;
+    if (!anim_config_save(app.current_anim_path, &cfg)) {
+        printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
+    }
 }
 
 static void msaa_cleanup(VrmApp *s) {
@@ -221,6 +240,19 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (gltf_load_animation(&app.model, path->valuestring)) {
             animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
+            app.has_current_anim = false;
+            app.current_anim_path[0] = '\0';
+            snprintf(app.current_anim_path, sizeof(app.current_anim_path), "%s", path->valuestring);
+            app.has_current_anim = true;
+            g_spring_stiffness = 1.0f;
+            g_spring_drag = 1.0f;
+            g_spring_gravity = 1.0f;
+            AnimConfig cfg = {0};
+            if (anim_config_load(app.current_anim_path, &cfg)) {
+                if (cfg.has_spring_stiffness) g_spring_stiffness = cfg.spring_stiffness;
+                if (cfg.has_spring_drag) g_spring_drag = cfg.spring_drag;
+                if (cfg.has_spring_gravity) g_spring_gravity = cfg.spring_gravity;
+            }
             spring_bones_reset(&app.model);
             if (app.auto_resize) compute_and_cache_bounds(path->valuestring);
             ipc_respond(&app.ipc, id, true, NULL);
@@ -455,6 +487,9 @@ static void update_ui_window_layout(void) {
 
     platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width, &app.ui_fb_height);
     update_display_metrics_for_window(app.ui_window);
+    int win_w = 0, win_h = 0;
+    platform_get_window_size(app.ui_window, &win_w, &win_h);
+    platform_set_input_region(app.ui_window, 0, 0, win_w, win_h);
 }
 
 static bool model_hit_test(int x, int y) {
@@ -503,6 +538,7 @@ static void hide_ui_window(void) {
     app.ui_pending_close = false;
     mouse.button_l = 0;
     mouse.button_r = 0;
+    platform_clear_input_region(app.ui_window);
     platform_hide_window(app.ui_window);
 }
 
@@ -513,6 +549,7 @@ static void ui_init_overlay(VrmApp *s) {
     ui_load_font(s->ui, "src/ui_library/fonts/BeVietnamPro-Regular.ttf", 18);
     debug_ui_set_interface(s->ui);
     debug_ui_set_spring_reset(reset_springs_from_ui);
+    debug_ui_set_spring_save(save_springs_to_config);
 
     s->pie_menu_id = -1;
 }
