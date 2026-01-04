@@ -171,6 +171,10 @@ void platform_make_context_current(PlatformWindow *win) {
     glfwMakeContextCurrent(win->glfw);
 }
 
+void platform_get_cursor_pos(PlatformWindow *win, double *x, double *y) {
+    glfwGetCursorPos(win->glfw, x, y);
+}
+
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb) {
     win->cb = *cb;
 }

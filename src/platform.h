@@ -31,6 +31,7 @@ void platform_get_content_scale(PlatformWindow *win, float *xscale, float *yscal
 void platform_get_window_pos(PlatformWindow *win, int *x, int *y);
 void platform_get_primary_workarea(int *x, int *y, int *w, int *h);
 void platform_make_context_current(PlatformWindow *win);
+void platform_get_cursor_pos(PlatformWindow *win, double *x, double *y);
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb);
 
 /* Window properties */

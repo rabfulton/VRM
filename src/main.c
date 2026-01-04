@@ -32,6 +32,8 @@ typedef struct {
     ui_interface_t *ui;
     int32_t pie_menu_id;
     bool ui_visible;
+    bool ui_force_pie_open;
+    bool ui_pending_close;
     bool visible, always_on_top, model_loaded, auto_resize, running;
     float cached_world_w, cached_world_h;
     double last_time;
@@ -157,7 +159,6 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             renderer_set_model(&app.renderer, &app.model); animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
             update_ui_window_layout();
-            rebuild_pie_menu(&app);
             printf("Loaded: %s (%d animations)\n", path->valuestring, app.model.animation_count);
             ipc_respond(&app.ipc, id, true, NULL);
         } else { ipc_respond(&app.ipc, id, false, "Failed to load VRM"); }
@@ -313,7 +314,11 @@ static void on_mouse_move(double x, double y, void *user) {
 }
 
 static void on_mouse_button(int button, int action, void *user) {
-    (void)user;
+    PlatformWindow *win = (PlatformWindow *)user;
+    double cx = 0.0, cy = 0.0;
+    platform_get_cursor_pos(win, &cx, &cy);
+    mouse.x = (int32_t)cx;
+    mouse.y = (int32_t)cy;
     if (button == PLATFORM_MOUSE_LEFT) {
         mouse.button_l = action;
         is_dragging = action;
@@ -340,11 +345,19 @@ static void on_ui_mouse_move(double x, double y, void *user) {
 }
 
 static void on_ui_mouse_button(int button, int action, void *user) {
-    (void)user;
+    PlatformWindow *win = (PlatformWindow *)user;
+    double cx = 0.0, cy = 0.0;
+    platform_get_cursor_pos(win, &cx, &cy);
+    mouse.x = (int32_t)cx;
+    mouse.y = (int32_t)cy;
     if (button == PLATFORM_MOUSE_LEFT) {
         mouse.button_l = action;
     } else if (button == PLATFORM_MOUSE_RIGHT) {
         mouse.button_r = action;
+        mouse.button_l = action;
+    }
+    if (!action && app.ui_visible) {
+        app.ui_pending_close = true;
     }
 }
 
@@ -397,9 +410,9 @@ static void estimate_button_size(int font_px, const char **labels, int count, in
         int w = estimate_text_width_px(labels[i], font_px);
         if (w > max_w) max_w = w;
     }
-    int pad = (int)ceilf(font_px * 0.5f);
-    *out_w = max_w + pad * 2;
-    *out_h = (int)ceilf(font_px * 1.6f) + pad;
+    int pad = (int)ceilf(font_px * 0.25f);
+    *out_w = max_w + pad;
+    *out_h = (int)ceilf(font_px * 1.2f) + pad;
 }
 
 static float compute_model_radius_px(void) {
@@ -419,7 +432,7 @@ static float compute_model_radius_px(void) {
     float h = (max_y - min_y) * sy;
     float radius = 0.5f * (w > h ? w : h);
     if (radius < fallback) radius = fallback;
-    return radius;
+    return radius * 0.75f;
 }
 
 static void on_pie_select(int idx) { printf("UI pie selection: %d\n", idx); }
@@ -475,38 +488,48 @@ static bool model_hit_test(int x, int y) {
 static void show_ui_window(void) {
     if (!app.ui_window) return;
     app.ui_visible = true;
+    app.ui_force_pie_open = true;
     rebuild_pie_menu(&app);
     update_ui_window_layout();
     platform_show_window(app.ui_window);
+
+    int mx = 0, my = 0, ux = 0, uy = 0;
+    platform_get_window_pos(app.window, &mx, &my);
+    platform_get_window_pos(app.ui_window, &ux, &uy);
+    mouse.x = (int32_t)(mouse.x + (mx - ux));
+    mouse.y = (int32_t)(mouse.y + (my - uy));
 }
 
 static void hide_ui_window(void) {
     if (!app.ui_window) return;
     app.ui_visible = false;
+    app.ui_force_pie_open = false;
+    app.ui_pending_close = false;
+    mouse.button_l = 0;
+    mouse.button_r = 0;
     platform_hide_window(app.ui_window);
 }
 
 static void rebuild_pie_menu(VrmApp *s) {
     if (!s->ui) return;
-    if (s->pie_menu_id > 0) {
-        ui_element_delete(s->ui, (uint32_t)s->pie_menu_id);
-        s->pie_menu_id = -1;
-    }
+    if (s->pie_menu_id > 0) return;
 
-    const char *labels[] = { "Adjust Springs", "Adjust Axis", "Save", "stats" };
+    const char *labels[] = { "Adjust Springs", "Adjust Axis", "Save", "stats", "load Model", "Animation" };
     float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
     int font_px = (int)ceilf(18.0f * (dpi / 96.0f));
     int button_w = 0, button_h = 0;
     estimate_button_size(font_px, labels, 4, &button_w, &button_h);
     float radius = compute_model_radius_px();
 
-    element_data items[4];
+    element_data items[6];
     items[0].b = (ui_button_t){.str = "Adjust Springs", .w = button_w, .h = button_h, .state = 0};
     items[1].b = (ui_button_t){.str = "Adjust Axis", .w = button_w, .h = button_h, .state = 0};
     items[2].b = (ui_button_t){.str = "Save", .w = button_w, .h = button_h, .state = 0};
     items[3].b = (ui_button_t){.str = "stats", .w = button_w, .h = button_h, .state = 0};
-
-    ui_pie_menu_t pie = { .type = UI_BUTTON_ROUND, .count = 4, .radius = radius, .elements = items };
+    items[4].b = (ui_button_t){.str = "load Model", .w = button_w, .h = button_h, .state = 0};
+    items[5].b = (ui_button_t){.str = "Animation", .w = button_w, .h = button_h, .state = 0};
+    
+    ui_pie_menu_t pie = { .type = UI_BUTTON_ROUND, .count = 6, .radius = radius, .elements = items };
     s->pie_menu_id = ui_element_init(s->ui, &pie, 0, UI_PIE_MENU);
     ui_set_callback(s->ui, s->pie_menu_id, on_pie_select);
 }
@@ -518,7 +541,6 @@ static void ui_init_overlay(VrmApp *s) {
     ui_load_font(s->ui, "src/ui_library/fonts/BeVietnamPro-Regular.ttf", 18);
 
     s->pie_menu_id = -1;
-    rebuild_pie_menu(s);
 }
 
 int main(int argc, char *argv[]) {
@@ -533,6 +555,7 @@ int main(int argc, char *argv[]) {
     app.ui_window = platform_create_shared_window(800, 1200, "VRM Overlay UI", true, false, app.window);
     if (!app.ui_window) { fprintf(stderr, "Failed to create UI window\n"); return 1; }
     app.ui_visible = false;
+    app.ui_pending_close = false;
     platform_hide_window(app.ui_window);
 
     platform_make_context_current(app.window);
@@ -564,8 +587,8 @@ int main(int argc, char *argv[]) {
     ui_init_overlay(&app);
     platform_make_context_current(app.window);
 
-    PlatformCallbacks cb = { on_resize, on_mouse_move, on_mouse_button, on_scroll, on_key, NULL };
-    PlatformCallbacks ui_cb = { on_ui_resize, on_ui_mouse_move, on_ui_mouse_button, on_ui_scroll, on_ui_key, NULL };
+    PlatformCallbacks cb = { on_resize, on_mouse_move, on_mouse_button, on_scroll, on_key, app.window };
+    PlatformCallbacks ui_cb = { on_ui_resize, on_ui_mouse_move, on_ui_mouse_button, on_ui_scroll, on_ui_key, app.ui_window };
     platform_set_callbacks(app.window, &cb);
     platform_set_callbacks(app.ui_window, &ui_cb);
 
@@ -630,7 +653,21 @@ int main(int argc, char *argv[]) {
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             update_display_metrics_for_window(app.ui_window);
-            ui_render(app.ui);
+            if (app.ui_force_pie_open) {
+                mouse.button_r = 1;
+                ui_render(app.ui);
+                mouse.button_r = 0;
+                app.ui_force_pie_open = false;
+            } else {
+                ui_render(app.ui);
+            }
+            if (app.ui_pending_close) {
+                int hit = ui_get_element_id(app.ui, mouse.x, mouse.y);
+                if (hit < 0) {
+                    hide_ui_window();
+                }
+                app.ui_pending_close = false;
+            }
             platform_swap_buffers(app.ui_window);
         }
     }
