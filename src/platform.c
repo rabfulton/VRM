@@ -9,12 +9,10 @@
 #include <stdlib.h>
 #include "platform.h"
 
-#ifdef GLFW_EXPOSE_NATIVE_X11
 #define GLFW_EXPOSE_NATIVE_X11
 #include <GLFW/glfw3native.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/shape.h>
-#endif
 
 struct PlatformWindow {
     GLFWwindow *glfw;
@@ -85,10 +83,8 @@ PlatformWindow *platform_create_window(int width, int height, const char *title,
     glfwSetScrollCallback(glfw, glfw_scroll_cb);
     glfwSetKeyCallback(glfw, glfw_key_cb);
 
-#ifdef GLFW_EXPOSE_NATIVE_X11
     win->x_display = glfwGetX11Display();
     win->x_window = glfwGetX11Window(glfw);
-#endif
 
     return win;
 }
@@ -113,6 +109,10 @@ void platform_swap_buffers(PlatformWindow *win) {
 
 void platform_get_framebuffer_size(PlatformWindow *win, int *w, int *h) {
     glfwGetFramebufferSize(win->glfw, w, h);
+}
+
+void platform_get_window_size(PlatformWindow *win, int *w, int *h) {
+    glfwGetWindowSize(win->glfw, w, h);
 }
 
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb) {
@@ -145,23 +145,15 @@ double platform_get_time(void) {
 
 /* X11 input region for click-through */
 void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h) {
-#ifdef GLFW_EXPOSE_NATIVE_X11
     if (!win->x_display || !win->x_window) return;
     XRectangle rect = { (short)x, (short)y, (unsigned short)w, (unsigned short)h };
     Region region = XCreateRegion();
     XUnionRectWithRegion(&rect, region, region);
     XShapeCombineRegion(win->x_display, win->x_window, ShapeInput, 0, 0, region, ShapeSet);
     XDestroyRegion(region);
-#else
-    (void)win; (void)x; (void)y; (void)w; (void)h;
-#endif
 }
 
 void platform_clear_input_region(PlatformWindow *win) {
-#ifdef GLFW_EXPOSE_NATIVE_X11
     if (!win->x_display || !win->x_window) return;
     XShapeCombineMask(win->x_display, win->x_window, ShapeInput, 0, 0, None, ShapeSet);
-#else
-    (void)win;
-#endif
 }

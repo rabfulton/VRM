@@ -25,6 +25,7 @@ bool platform_should_close(PlatformWindow *win);
 void platform_poll_events(void);
 void platform_swap_buffers(PlatformWindow *win);
 void platform_get_framebuffer_size(PlatformWindow *win, int *w, int *h);
+void platform_get_window_size(PlatformWindow *win, int *w, int *h);
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb);
 
 /* Window properties */

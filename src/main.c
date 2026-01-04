@@ -73,7 +73,10 @@ static void update_window_for_zoom(void) {
     if (!app.auto_resize || !app.model_loaded || app.cached_world_w <= 0) return;
     float fov = 0.785f, scale = 1.0f / (app.camera.distance * tanf(fov * 0.5f));
     int base = 300, w = (int)(app.cached_world_w * scale * base), h = (int)(app.cached_world_h * scale * base);
-    if (w < 100) w = 100; if (h < 100) h = 100; if (w > 2000) w = 2000; if (h > 3000) h = 3000;
+    if (w < 100) w = 100;
+    if (h < 100) h = 100;
+    if (w > 2000) w = 2000;
+    if (h > 3000) h = 3000;
     platform_resize_window(app.window, w, h);
 }
 
@@ -100,8 +103,16 @@ static void update_input_region(void) {
     /* Project model bounds to screen and set input region */
     camera_update(&app.camera);
     float min_x, min_y, max_x, max_y;
-    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj, app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
-    int x = (int)min_x, y = (int)min_y, w = (int)(max_x - min_x), h = (int)(max_y - min_y);
+    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+                              app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
+    int win_w = 0, win_h = 0;
+    platform_get_window_size(app.window, &win_w, &win_h);
+    float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
+    float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
+    int x = (int)(min_x * sx);
+    int y = (int)(min_y * sy);
+    int w = (int)((max_x - min_x) * sx);
+    int h = (int)((max_y - min_y) * sy);
     if (w > 0 && h > 0) platform_set_input_region(app.window, x, y, w, h);
     else platform_clear_input_region(app.window);
 }
