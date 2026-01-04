@@ -837,7 +837,7 @@ int32_t ui_get_element_id(ui_interface_t *ui, int32_t x, int32_t y){
 	int32_t *bounds;
 	ui_element_t *e = ui->elements;
 
-	for (int i = 0; i < ui->active_elements; ++i, ++e){
+	for (uint32_t i = 0; i < ui->active_elements; ++i, ++e){
 		bounds = e->bounds;
 		if (e->flags & UI_HIDDEN){
 			// ++e;
@@ -886,7 +886,7 @@ int ui_element_delete(ui_interface_t *ui, uint32_t uid){
 		#ifdef DEBUG_DELETING
 			log("delete tab group\n");
 		#endif
-		int i = 1;
+		uint32_t i = 1;
 		count = 1;
 		while ((e + i)->type != UI_TABS_END && (e + i)->group_tag >= e->group_tag){
 			#ifdef DEBUG_DELETING
@@ -962,7 +962,7 @@ int ui_element_delete(ui_interface_t *ui, uint32_t uid){
 	#endif
 	// Fix each parent of the elements which were moved
 	// If parent id > lowest elent removed, parent_id -= number deleted
-	for (int i = id; i < ui->active_elements; ++i){
+	for (uint32_t i = id; i < ui->active_elements; ++i){
 		if (ui->elements[i].parent > id){
 			ui->elements[i].parent -= count;
 		}
@@ -1251,7 +1251,7 @@ static void ui_tabs_finalise(ui_interface_t *ui, uint16_t id){
 	widest += pad;
 	tallest -= header_height;
 	
-	int width = th->w > widest ? th->w : widest;
+	uint32_t width = th->w > widest ? th->w : widest;
 
 	// create rectangle for header 
 	e->num_verts =
@@ -1267,7 +1267,7 @@ static void ui_tabs_finalise(ui_interface_t *ui, uint16_t id){
 	b.x = a.x + tri_width;	b.y = a.y;
 	c.x = b.x;				c.y = b.y - t_height;
 
-	for (int i = 0; i < th->no_of_tabs; ++i){
+	for (uint32_t i = 0; i < th->no_of_tabs; ++i){
 		tab_col = i == th->active_tab - 1 ? ts : td;
 		e->num_verts +=
 			ui_make_triangle(e->index + e->num_verts, a, b, c, tab_col);
@@ -2169,7 +2169,7 @@ static void ui_menu_label_create(ui_interface_t *ui, uint32_t id, ui_label_t *l)
 	}
 	int w, h;
 
-	int vert_count = ui_string_vert_count(l->str);
+	uint32_t vert_count = ui_string_vert_count(l->str);
 	vert_count += RECTANGLE_VERTS;
 	e->index = ui_buffer_init(vert_count * sizeof(ui_vertex_t));
 
@@ -2249,7 +2249,7 @@ static int ui_menu_open(ui_interface_t *ui, uint32_t id){
 	ui_group_header_toggle(ui, id + 1);
 	// Check if other menus are open and if so toggle them
 	ui_element_t *e = ui->elements;
-	for (int i = 0; i < ui->active_elements; ++i, ++e){
+	for (uint32_t i = 0; i < ui->active_elements; ++i, ++e){
 		if (e->type == UI_MENU_ROOT && e->array_index != id){
 			if (ui_menu_get_toggle_status(ui, i)){
 				ui_group_header_toggle(ui, i + 1);
@@ -2271,7 +2271,7 @@ static int ui_menu_monitor(ui_interface_t *ui, uint32_t id){
 		return 0;
 	}
 	// find the open menu
-	for (int i = 0; i < ui->active_elements; ++i, ++e){
+	for (uint32_t i = 0; i < ui->active_elements; ++i, ++e){
 		if (e->type == UI_MENU_ROOT){
 			if (ui_menu_get_toggle_status(ui, i)){
 				menu_id = (e + 2)->uuid;		// Fist element in the menu
@@ -2467,7 +2467,7 @@ static void ui_get_content_size(ui_element_t *e, int *w, int *h, int tag){
 static void ui_group_header_toggle(ui_interface_t *ui, uint16_t id){
 
 	ui_element_t *e = &ui->elements[id];
-	uint32_t tag = e->group_tag;
+	int32_t tag = e->group_tag;
 	int *bounds = e->bounds;
 
 	bounds[2] = e->content_region[2];
@@ -2530,7 +2530,7 @@ static void ui_reflow(ui_interface_t *ui, int *bounds){
 	int x1 = bounds[0];
 	int x2 = bounds[2];
 
-	for (int i = 0; i < ui->active_elements; ++i){
+	for (uint32_t i = 0; i < ui->active_elements; ++i){
 		// Visible and moveable 
 		if ((e->flags & UI_MOVABLE) && !(e->flags & UI_HIDDEN)){
 			if (e->bounds[1] > y){
@@ -3481,7 +3481,7 @@ static int ui_list_box_open(ui_interface_t *ui, uint32_t id){
 	float ft = UI_FRAME_RATE / 3.0f;
 	ui_element_t *e = &ui->elements[id + 1];
 	uint32_t size = e->num_verts;
-	uint32_t alpha;
+	uint32_t alpha = 0;
 	ui_buffer_reserve(&ui->dynamic_buffer, size * sizeof(ui_vertex_t));
 	ui_vertex_t *src = e->index;
 	ui_vertex_t *dst = ui->dynamic_buffer + ui->num_dynamic_verts;
@@ -4171,7 +4171,7 @@ void ui_matrix_set_states(ui_interface_t *ui, uint32_t uid, uint8_t *data){
 	buf += RECTANGLE_VERTS;
 	int count;
 	uint32_t col;
-	int vertex_count;
+	int vertex_count = 0;
 	switch(m->button.shape){
 		case CIRCLE:
 			vertex_count = CIRCLE_SEG_VERTS(SEGMENTS);
@@ -4209,7 +4209,7 @@ void ui_matrix_set_button(ui_interface_t *ui, uint32_t uid, int row, int column,
 	assert(row <= m->rows);
 	assert(column <= m->columns);
 
-	int vertex_count;
+	int vertex_count = 0;
 	switch(m->button.shape){
 		case CIRCLE:
 			vertex_count = CIRCLE_SEG_VERTS(SEGMENTS);
@@ -7814,7 +7814,7 @@ static void ui_strpad(char *dst, char *str, int desired_length){
 	while (desired_length--){
 		*dst++ = ' ';
 	}
-	dst = '\0';
+	*dst = '\0';
 }
 // finds the null byte in a cstring and appends str
 static void ui_strcat(char *dest, char *src, int dest_len){
@@ -8819,6 +8819,12 @@ void ui_set_active_font(ui_interface_t *ui, uint16_t font_id){
 	ui->active_font = font_id;
 }
 
+static int ui_next_pow2(int v) {
+	int p = 1;
+	while (p < v) p <<= 1;
+	return p;
+}
+
 // Uses Sean Barretts STB library to Generate a buffer using a true type font
 // https://github.com/nothings/stb/blob/master/stb_truetype.h
 void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size){
@@ -8849,10 +8855,19 @@ void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size){
 	int width = 0;
 	int height = 0;
 	int current_rows = 0;
+	float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
+	float dpi_scale = dpi / 96.0f;
+	int base_w = ui_next_pow2((int)ceilf((float)FONT_TEXTURE_W * dpi_scale));
+	int base_h = ui_next_pow2((int)ceilf((float)FONT_TEXTURE_H * dpi_scale));
+	if (base_w < FONT_TEXTURE_W) base_w = FONT_TEXTURE_W;
+	if (base_h < FONT_TEXTURE_H) base_h = FONT_TEXTURE_H;
+	int size_px = (int)ceilf((float)size * dpi_scale);
+	if (size_px < 1) size_px = 1;
+	GEOM_UV = 1.0f / (float)base_w;
 
 	if (i > 0){
 		// allocate a bigger buffer to accommodate the extra font
-		pixels = malloc((i + 1) * FONT_TEXTURE_W * FONT_TEXTURE_H);
+		pixels = malloc((i + 1) * base_w * base_h);
 		int t_width, t_height;
 
 		gpu_get_texture_size(ui->texture_id, &t_width, &t_height, 1);
@@ -8869,27 +8884,27 @@ void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size){
 			count++;
 		}
 
-		buf_offset = t_height - count / FONT_TEXTURE_W;
+		buf_offset = t_height - count / base_w;
 		++buf_offset;
 		// buff_offset correspods to used rows + 1 here		
 		current_rows = buf_offset;
-		width = FONT_TEXTURE_W;
+		width = base_w;
 		// edited dec 2022 changed max_fonts to i
-		height = FONT_TEXTURE_H * i - buf_offset;
+		height = base_h * i - buf_offset;
 
-		buf_offset *= FONT_TEXTURE_W;
+		buf_offset *= base_w;
 
 	}
 	else {
 		int waste = 6;
-		width = FONT_TEXTURE_W;
-		height = FONT_TEXTURE_H - waste;
-		pixels = malloc(FONT_TEXTURE_W * FONT_TEXTURE_H);
+		width = base_w;
+		height = base_h - waste;
+		pixels = malloc(base_w * base_h);
 		// wastefully add some lines for geometry, I think wee need 4 for msaa
-		for ( int i = 0; i < FONT_TEXTURE_W * waste; ++i){
+		for ( int i = 0; i < base_w * waste; ++i){
 			pixels[i] = 255;
 		}
-		buf_offset = waste * FONT_TEXTURE_W;
+		buf_offset = waste * base_w;
 		current_rows = waste;
 	}
 
@@ -8906,13 +8921,13 @@ void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size){
 	fclose(fp);
 
 	stbtt_bakedchar *chardata = malloc(256 * sizeof(stbtt_bakedchar));
-	int rows_used = stbtt_BakeFontBitmap(data, 0, size, pixels + buf_offset, width, height, 32, 255 - 32, chardata);
+	int rows_used = stbtt_BakeFontBitmap(data, 0, size_px, pixels + buf_offset, width, height, 32, 255 - 32, chardata);
 	if (rows_used <= 0){
 		// todo should handle this and add more space
 		log("ERROR: Failed to load font not enough room in texture");
 		return;
 	}
-	int texture_height = FONT_TEXTURE_H + FONT_TEXTURE_H * ((current_rows + rows_used) / FONT_TEXTURE_H);
+	int texture_height = base_h + base_h * ((current_rows + rows_used) / base_h);
 
 	glyph_t *glyphs = ui->font[i].glyphs + 32;
 	stbtt_bakedchar *cd = chardata;
@@ -8933,18 +8948,18 @@ void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size){
 	stbtt_fontinfo font_info;
 	int ascent, descent, line_gap;
 	stbtt_InitFont(&font_info, data, 0);
-	float scale = stbtt_ScaleForPixelHeight(&font_info, size);
+	float scale = stbtt_ScaleForPixelHeight(&font_info, size_px);
 	stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &line_gap);
 	int line_height = ROUND(scale * ((ascent - descent) + line_gap));
 
-	ui->font[i].size = size;
+	ui->font[i].size = size_px;
 	ui->font[i].line_gap = scale * line_gap;
 	ui->font[i].ascent = ascent * scale;
 	ui->font[i].descent = descent * scale;
 	ui->font[i].line_height = line_height;
 	ui->font[i].num_glyphs = 255 - 32;
 	ui->font[i].base_height = line_height - scale * (line_gap - descent);
-	ui->font[i].texture_width = FONT_TEXTURE_W;
+	ui->font[i].texture_width = base_w;
 	for (; i >= 0; --i){
 		ui->font[i].texture_height = texture_height;
 	}
@@ -9247,11 +9262,6 @@ static int ui_find_array_index(ui_interface_t *ui, uint32_t uuid){
 }
 
 // open a directory for reading and return a list of directory entries containing its contents
-
-
-
-
-
 
 
 

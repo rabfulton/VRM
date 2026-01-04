@@ -20,6 +20,7 @@
 
 typedef struct {
     PlatformWindow *window;
+    PlatformWindow *ui_window;
     Renderer renderer;
     OrbitCamera camera;
     GltfModel model;
@@ -27,8 +28,10 @@ typedef struct {
     IpcServer ipc;
     GLuint msaa_fbo, msaa_color, msaa_depth;
     int msaa_samples, fb_width, fb_height;
+    int ui_fb_width, ui_fb_height;
     ui_interface_t *ui;
     int32_t pie_menu_id;
+    bool ui_visible;
     bool visible, always_on_top, model_loaded, auto_resize, running;
     float cached_world_w, cached_world_h;
     double last_time;
@@ -40,6 +43,26 @@ static VrmApp app = {0};
 display_t display = {0};
 mouse_t mouse = {0};
 gl_buffer_t gl_buffer_default = {0};
+
+static void update_ui_window_layout(void);
+static void rebuild_pie_menu(VrmApp *s);
+static bool model_hit_test(int x, int y);
+static void show_ui_window(void);
+static void hide_ui_window(void);
+
+static void update_display_metrics_for_window(PlatformWindow *win) {
+    int win_w = 0, win_h = 0;
+    float sx = 1.0f, sy = 1.0f;
+    platform_get_window_size(win, &win_w, &win_h);
+    platform_get_content_scale(win, &sx, &sy);
+    if (sx <= 0.0f) sx = 1.0f;
+    if (sy <= 0.0f) sy = 1.0f;
+    display.width = win_w;
+    display.height = win_h;
+    display.h_dpi = 96.0f * sx;
+    display.v_dpi = 96.0f * sy;
+    display.d_dpi = 96.0f * (sx > sy ? sx : sy);
+}
 
 static void msaa_cleanup(VrmApp *s) {
     if (s->msaa_color) { glDeleteRenderbuffers(1, &s->msaa_color); s->msaa_color = 0; }
@@ -78,6 +101,7 @@ static void update_window_for_zoom(void) {
     if (w > 2000) w = 2000;
     if (h > 3000) h = 3000;
     platform_resize_window(app.window, w, h);
+    update_ui_window_layout();
 }
 
 static void compute_and_cache_bounds(const char *anim_path) {
@@ -121,6 +145,7 @@ static void update_input_region(void) {
 static void on_ipc_command(const char *action, void *params, int id, void *user_data) {
     (void)user_data;
     cJSON *json = (cJSON *)params;
+    platform_make_context_current(app.window);
 
     if (strcmp(action, "ping") == 0) { ipc_respond(&app.ipc, id, true, NULL); }
     else if (strcmp(action, "load") == 0) {
@@ -131,6 +156,8 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             app.model_loaded = true; gltf_update_transforms(&app.model); spring_bones_init(&app.model);
             renderer_set_model(&app.renderer, &app.model); animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
+            update_ui_window_layout();
+            rebuild_pie_menu(&app);
             printf("Loaded: %s (%d animations)\n", path->valuestring, app.model.animation_count);
             ipc_respond(&app.ipc, id, true, NULL);
         } else { ipc_respond(&app.ipc, id, false, "Failed to load VRM"); }
@@ -141,7 +168,12 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
     }
     else if (strcmp(action, "set_visible") == 0) {
         cJSON *vis = cJSON_GetObjectItem(json, "visible");
-        if (vis) { app.visible = cJSON_IsTrue(vis); if (app.visible) platform_show_window(app.window); else platform_hide_window(app.window); }
+        if (vis) {
+            app.visible = cJSON_IsTrue(vis);
+            if (app.visible) platform_show_window(app.window);
+            else platform_hide_window(app.window);
+            if (!app.visible) hide_ui_window();
+        }
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_window") == 0) {
@@ -149,6 +181,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         cJSON *w = cJSON_GetObjectItem(json, "width"), *h = cJSON_GetObjectItem(json, "height");
         if (x && y) platform_move_window(app.window, x->valueint, y->valueint);
         if (w && h) platform_resize_window(app.window, w->valueint, h->valueint);
+        update_ui_window_layout();
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_camera") == 0) {
@@ -255,7 +288,16 @@ static void on_resize(int w, int h, void *user) {
     glViewport(0, 0, w, h);
     app.camera.aspect = (float)w / (float)h;
     msaa_resize(&app, w, h);
-    display.width = w; display.height = h;
+    app.fb_width = w;
+    app.fb_height = h;
+    update_display_metrics_for_window(app.window);
+    update_ui_window_layout();
+    if (app.ui_window) {
+        int fbw = 0, fbh = 0;
+        platform_get_framebuffer_size(app.ui_window, &fbw, &fbh);
+        app.ui_fb_width = fbw;
+        app.ui_fb_height = fbh;
+    }
 }
 
 static void on_mouse_move(double x, double y, void *user) {
@@ -278,7 +320,40 @@ static void on_mouse_button(int button, int action, void *user) {
         if (action) { drag_start_x = mouse.x; drag_start_y = mouse.y; }
     } else if (button == PLATFORM_MOUSE_RIGHT) {
         mouse.button_r = action;
+        if (action && model_hit_test(mouse.x, mouse.y)) {
+            show_ui_window();
+        }
     }
+}
+
+static void on_ui_resize(int w, int h, void *user) {
+    (void)user;
+    app.ui_fb_width = w;
+    app.ui_fb_height = h;
+    update_display_metrics_for_window(app.ui_window);
+}
+
+static void on_ui_mouse_move(double x, double y, void *user) {
+    (void)user;
+    mouse.x = (int32_t)x;
+    mouse.y = (int32_t)y;
+}
+
+static void on_ui_mouse_button(int button, int action, void *user) {
+    (void)user;
+    if (button == PLATFORM_MOUSE_LEFT) {
+        mouse.button_l = action;
+    } else if (button == PLATFORM_MOUSE_RIGHT) {
+        mouse.button_r = action;
+    }
+}
+
+static void on_ui_scroll(double dx, double dy, void *user) {
+    (void)user; (void)dx; (void)dy;
+}
+
+static void on_ui_key(int key, int action, void *user) {
+    (void)key; (void)action; (void)user;
 }
 
 static void on_scroll(double dx, double dy, void *user) {
@@ -295,7 +370,11 @@ static void on_key(int key, int action, void *user) {
     if (!action) return;
     switch (key) {
         case PLATFORM_KEY_ESCAPE: case PLATFORM_KEY_Q: app.running = false; break;
-        case PLATFORM_KEY_T: app.always_on_top = !app.always_on_top; platform_set_always_on_top(app.window, app.always_on_top); break;
+        case PLATFORM_KEY_T:
+            app.always_on_top = !app.always_on_top;
+            platform_set_always_on_top(app.window, app.always_on_top);
+            if (app.ui_window) platform_set_always_on_top(app.ui_window, app.always_on_top);
+            break;
         case PLATFORM_KEY_C: renderer_toggle_shader(&app.renderer); break;
         case PLATFORM_KEY_1: update_anim_correction_mode(0); break;
         case PLATFORM_KEY_2: update_anim_correction_mode(1); break;
@@ -305,22 +384,141 @@ static void on_key(int key, int action, void *user) {
     }
 }
 
+static int estimate_text_width_px(const char *text, int font_px) {
+    int len = 0;
+    const char *p = text;
+    while (p && *p++) len++;
+    return (int)ceilf((float)len * font_px * 0.6f);
+}
+
+static void estimate_button_size(int font_px, const char **labels, int count, int *out_w, int *out_h) {
+    int max_w = 0;
+    for (int i = 0; i < count; i++) {
+        int w = estimate_text_width_px(labels[i], font_px);
+        if (w > max_w) max_w = w;
+    }
+    int pad = (int)ceilf(font_px * 0.5f);
+    *out_w = max_w + pad * 2;
+    *out_h = (int)ceilf(font_px * 1.6f) + pad;
+}
+
+static float compute_model_radius_px(void) {
+    float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
+    float fallback = 120.0f * (dpi / 96.0f);
+    if (!app.model_loaded || app.fb_width <= 0 || app.fb_height <= 0) return fallback;
+
+    float min_x, min_y, max_x, max_y;
+    camera_update(&app.camera);
+    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+                              app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
+    int win_w = 0, win_h = 0;
+    platform_get_window_size(app.window, &win_w, &win_h);
+    float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
+    float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
+    float w = (max_x - min_x) * sx;
+    float h = (max_y - min_y) * sy;
+    float radius = 0.5f * (w > h ? w : h);
+    if (radius < fallback) radius = fallback;
+    return radius;
+}
+
 static void on_pie_select(int idx) { printf("UI pie selection: %d\n", idx); }
+
+static void update_ui_window_layout(void) {
+    if (!app.ui_window || !app.ui_visible) return;
+
+    int mw = 0, mh = 0, mx = 0, my = 0;
+    platform_get_window_size(app.window, &mw, &mh);
+    platform_get_window_pos(app.window, &mx, &my);
+
+    int ui_w = mw * 2;
+    int ui_h = mh * 2;
+
+    int uix = mx - mw / 2;
+    int uiy = my - mh / 2;
+
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    platform_get_primary_workarea(&wx, &wy, &ww, &wh);
+    if (ww > 0 && wh > 0) {
+        if (ui_w > ww) ui_w = ww;
+        if (ui_h > wh) ui_h = wh;
+        if (uix < wx) uix = wx;
+        if (uiy < wy) uiy = wy;
+        if (uix + ui_w > wx + ww) uix = wx + ww - ui_w;
+        if (uiy + ui_h > wy + wh) uiy = wy + wh - ui_h;
+    }
+
+    platform_resize_window(app.ui_window, ui_w, ui_h);
+    platform_move_window(app.ui_window, uix, uiy);
+
+    platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width, &app.ui_fb_height);
+    update_display_metrics_for_window(app.ui_window);
+}
+
+static bool model_hit_test(int x, int y) {
+    if (!app.model_loaded || app.fb_width <= 0 || app.fb_height <= 0) return false;
+    float min_x, min_y, max_x, max_y;
+    camera_update(&app.camera);
+    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+                              app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
+    int win_w = 0, win_h = 0;
+    platform_get_window_size(app.window, &win_w, &win_h);
+    float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
+    float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
+    int bx0 = (int)(min_x * sx);
+    int by0 = (int)(min_y * sy);
+    int bx1 = (int)(max_x * sx);
+    int by1 = (int)(max_y * sy);
+    return x >= bx0 && x <= bx1 && y >= by0 && y <= by1;
+}
+
+static void show_ui_window(void) {
+    if (!app.ui_window) return;
+    app.ui_visible = true;
+    rebuild_pie_menu(&app);
+    update_ui_window_layout();
+    platform_show_window(app.ui_window);
+}
+
+static void hide_ui_window(void) {
+    if (!app.ui_window) return;
+    app.ui_visible = false;
+    platform_hide_window(app.ui_window);
+}
+
+static void rebuild_pie_menu(VrmApp *s) {
+    if (!s->ui) return;
+    if (s->pie_menu_id > 0) {
+        ui_element_delete(s->ui, (uint32_t)s->pie_menu_id);
+        s->pie_menu_id = -1;
+    }
+
+    const char *labels[] = { "Adjust Springs", "Adjust Axis", "Save", "stats" };
+    float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
+    int font_px = (int)ceilf(18.0f * (dpi / 96.0f));
+    int button_w = 0, button_h = 0;
+    estimate_button_size(font_px, labels, 4, &button_w, &button_h);
+    float radius = compute_model_radius_px();
+
+    element_data items[4];
+    items[0].b = (ui_button_t){.str = "Adjust Springs", .w = button_w, .h = button_h, .state = 0};
+    items[1].b = (ui_button_t){.str = "Adjust Axis", .w = button_w, .h = button_h, .state = 0};
+    items[2].b = (ui_button_t){.str = "Save", .w = button_w, .h = button_h, .state = 0};
+    items[3].b = (ui_button_t){.str = "stats", .w = button_w, .h = button_h, .state = 0};
+
+    ui_pie_menu_t pie = { .type = UI_BUTTON_ROUND, .count = 4, .radius = radius, .elements = items };
+    s->pie_menu_id = ui_element_init(s->ui, &pie, 0, UI_PIE_MENU);
+    ui_set_callback(s->ui, s->pie_menu_id, on_pie_select);
+}
 
 static void ui_init_overlay(VrmApp *s) {
     if (s->ui) return;
     s->ui = ui_init(NULL);
     if (!s->ui) return;
     ui_load_font(s->ui, "src/ui_library/fonts/BeVietnamPro-Regular.ttf", 18);
-    float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f, radius = 120.0f * (dpi / 96.0f);
-    element_data items[4];
-    items[0].b = (ui_button_t){.str = "One", .w = 70, .h = 30, .state = 0};
-    items[1].b = (ui_button_t){.str = "Two", .w = 70, .h = 30, .state = 0};
-    items[2].b = (ui_button_t){.str = "Three", .w = 70, .h = 30, .state = 0};
-    items[3].b = (ui_button_t){.str = "Four", .w = 70, .h = 30, .state = 0};
-    ui_pie_menu_t pie = { .type = UI_BUTTON_ROUND, .count = 4, .radius = radius, .elements = items };
-    s->pie_menu_id = ui_element_init(s->ui, &pie, 0, UI_PIE_MENU);
-    ui_set_callback(s->ui, s->pie_menu_id, on_pie_select);
+
+    s->pie_menu_id = -1;
+    rebuild_pie_menu(s);
 }
 
 int main(int argc, char *argv[]) {
@@ -331,6 +529,13 @@ int main(int argc, char *argv[]) {
 
     app.window = platform_create_window(400, 600, "VRM Overlay", true, false);
     if (!app.window) { fprintf(stderr, "Failed to create window\n"); return 1; }
+
+    app.ui_window = platform_create_shared_window(800, 1200, "VRM Overlay UI", true, false, app.window);
+    if (!app.ui_window) { fprintf(stderr, "Failed to create UI window\n"); return 1; }
+    app.ui_visible = false;
+    platform_hide_window(app.ui_window);
+
+    platform_make_context_current(app.window);
 
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
     if (!renderer_init(&app.renderer)) { fprintf(stderr, "Failed to init renderer\n"); return 1; }
@@ -343,8 +548,10 @@ int main(int argc, char *argv[]) {
     int w, h;
     platform_get_framebuffer_size(app.window, &w, &h);
     msaa_resize(&app, w, h);
-    display.width = w; display.height = h;
-    display.h_dpi = display.v_dpi = display.d_dpi = 96.0f;
+    app.fb_width = w;
+    app.fb_height = h;
+    update_display_metrics_for_window(app.window);
+    update_ui_window_layout();
 
     camera_init(&app.camera);
     app.camera.distance = 3.0f; app.camera.target[1] = 0.8f;
@@ -352,10 +559,15 @@ int main(int argc, char *argv[]) {
     app.camera.aspect = (float)w / (float)h;
 
     animator_init(&app.animator);
+    platform_make_context_current(app.ui_window);
+    update_display_metrics_for_window(app.ui_window);
     ui_init_overlay(&app);
+    platform_make_context_current(app.window);
 
     PlatformCallbacks cb = { on_resize, on_mouse_move, on_mouse_button, on_scroll, on_key, NULL };
+    PlatformCallbacks ui_cb = { on_ui_resize, on_ui_mouse_move, on_ui_mouse_button, on_ui_scroll, on_ui_key, NULL };
     platform_set_callbacks(app.window, &cb);
+    platform_set_callbacks(app.ui_window, &ui_cb);
 
     app.visible = true; app.running = true;
     app.last_time = platform_get_time();
@@ -366,6 +578,7 @@ int main(int argc, char *argv[]) {
     fflush(stdout);
 
     while (app.running && !platform_should_close(app.window)) {
+        platform_make_context_current(app.window);
         platform_poll_events();
         ipc_poll(&app.ipc);
 
@@ -383,6 +596,7 @@ int main(int argc, char *argv[]) {
 
         update_input_region();
 
+        platform_make_context_current(app.window);
         if (app.msaa_fbo) glBindFramebuffer(GL_FRAMEBUFFER, app.msaa_fbo);
         else glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -406,14 +620,25 @@ int main(int argc, char *argv[]) {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
-        if (app.ui) ui_render(app.ui);
-
         platform_swap_buffers(app.window);
+
+        if (app.ui_window && app.ui && app.ui_visible) {
+            platform_make_context_current(app.ui_window);
+            platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width, &app.ui_fb_height);
+            glViewport(0, 0, app.ui_fb_width, app.ui_fb_height);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            update_display_metrics_for_window(app.ui_window);
+            ui_render(app.ui);
+            platform_swap_buffers(app.ui_window);
+        }
     }
 
     gltf_unload(&app.model);
     renderer_cleanup(&app.renderer);
     ipc_cleanup(&app.ipc);
+    if (app.ui_window) platform_destroy_window(app.ui_window);
     platform_destroy_window(app.window);
     return 0;
 }

@@ -23,6 +23,8 @@ struct PlatformWindow {
 #endif
 };
 
+static int glfw_inited = 0;
+
 static void glfw_error_cb(int err, const char *desc) {
     fprintf(stderr, "GLFW error %d: %s\n", err, desc);
 }
@@ -55,11 +57,10 @@ static void glfw_key_cb(GLFWwindow *w, int key, int scancode, int action, int mo
 }
 
 PlatformWindow *platform_create_window(int width, int height, const char *title, bool transparent, bool decorated) {
-    static int glfw_init = 0;
-    if (!glfw_init) {
+    if (!glfw_inited) {
         glfwSetErrorCallback(glfw_error_cb);
         if (!glfwInit()) return NULL;
-        glfw_init = 1;
+        glfw_inited = 1;
     }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -69,6 +70,40 @@ PlatformWindow *platform_create_window(int width, int height, const char *title,
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
 
     GLFWwindow *glfw = glfwCreateWindow(width, height, title, NULL, NULL);
+    if (!glfw) return NULL;
+
+    PlatformWindow *win = calloc(1, sizeof(PlatformWindow));
+    win->glfw = glfw;
+    glfwSetWindowUserPointer(glfw, win);
+    glfwMakeContextCurrent(glfw);
+    glfwSwapInterval(1);
+
+    glfwSetFramebufferSizeCallback(glfw, glfw_resize_cb);
+    glfwSetCursorPosCallback(glfw, glfw_cursor_cb);
+    glfwSetMouseButtonCallback(glfw, glfw_mouse_cb);
+    glfwSetScrollCallback(glfw, glfw_scroll_cb);
+    glfwSetKeyCallback(glfw, glfw_key_cb);
+
+    win->x_display = glfwGetX11Display();
+    win->x_window = glfwGetX11Window(glfw);
+
+    return win;
+}
+
+PlatformWindow *platform_create_shared_window(int width, int height, const char *title, bool transparent, bool decorated, PlatformWindow *share) {
+    if (!glfw_inited) {
+        glfwSetErrorCallback(glfw_error_cb);
+        if (!glfwInit()) return NULL;
+        glfw_inited = 1;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_DECORATED, decorated ? GLFW_TRUE : GLFW_FALSE);
+    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
+
+    GLFWwindow *glfw = glfwCreateWindow(width, height, title, NULL, share ? share->glfw : NULL);
     if (!glfw) return NULL;
 
     PlatformWindow *win = calloc(1, sizeof(PlatformWindow));
@@ -113,6 +148,27 @@ void platform_get_framebuffer_size(PlatformWindow *win, int *w, int *h) {
 
 void platform_get_window_size(PlatformWindow *win, int *w, int *h) {
     glfwGetWindowSize(win->glfw, w, h);
+}
+
+void platform_get_content_scale(PlatformWindow *win, float *xscale, float *yscale) {
+    glfwGetWindowContentScale(win->glfw, xscale, yscale);
+}
+
+void platform_get_window_pos(PlatformWindow *win, int *x, int *y) {
+    glfwGetWindowPos(win->glfw, x, y);
+}
+
+void platform_get_primary_workarea(int *x, int *y, int *w, int *h) {
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    if (!monitor) {
+        *x = 0; *y = 0; *w = 0; *h = 0;
+        return;
+    }
+    glfwGetMonitorWorkarea(monitor, x, y, w, h);
+}
+
+void platform_make_context_current(PlatformWindow *win) {
+    glfwMakeContextCurrent(win->glfw);
 }
 
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb) {
