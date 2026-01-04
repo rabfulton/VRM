@@ -245,6 +245,11 @@ int gltf_find_node(const GltfModel *model, const char *name);
 void gltf_get_screen_bounds(const GltfModel *model, const float *view, const float *proj,
                             float *out_ndc_w, float *out_ndc_h);
 
+/* Compute screen-space bounding box in pixels (for input regions) */
+void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const float *proj,
+                               int screen_w, int screen_h,
+                               float *out_min_x, float *out_min_y, float *out_max_x, float *out_max_y);
+
 /* Compute max bounds over entire animation, with caching */
 void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
                                    const float *view, const float *proj,

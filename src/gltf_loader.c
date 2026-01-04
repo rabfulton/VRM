@@ -158,6 +158,39 @@ void gltf_get_screen_bounds(const GltfModel *model, const float *view, const flo
   *out_ndc_h = (max_y - min_y) * 1.2f;
 }
 
+void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const float *proj,
+                               int screen_w, int screen_h,
+                               float *out_min_x, float *out_min_y, float *out_max_x, float *out_max_y) {
+  float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
+  float vp[16];
+  for (int col = 0; col < 4; col++) {
+    for (int row = 0; row < 4; row++) {
+      float sum = 0;
+      for (int k = 0; k < 4; k++) sum += proj[k * 4 + row] * view[col * 4 + k];
+      vp[col * 4 + row] = sum;
+    }
+  }
+  for (int i = 0; i < model->node_count; i++) {
+    float *m = model->nodes[i].world_matrix;
+    float wx = m[12], wy = m[13], wz = m[14];
+    float cx = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12];
+    float cy = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13];
+    float cw = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
+    if (cw > 0.001f) {
+      float ndcx = cx / cw, ndcy = cy / cw;
+      if (ndcx < min_x) min_x = ndcx; if (ndcx > max_x) max_x = ndcx;
+      if (ndcy < min_y) min_y = ndcy; if (ndcy > max_y) max_y = ndcy;
+    }
+  }
+  /* Add margin and convert NDC to screen pixels (Y flipped) */
+  float margin = 0.1f;
+  min_x -= margin; max_x += margin; min_y -= margin; max_y += margin;
+  *out_min_x = (min_x * 0.5f + 0.5f) * screen_w;
+  *out_max_x = (max_x * 0.5f + 0.5f) * screen_w;
+  *out_min_y = (1.0f - (max_y * 0.5f + 0.5f)) * screen_h;
+  *out_max_y = (1.0f - (min_y * 0.5f + 0.5f)) * screen_h;
+}
+
 /* Forward declaration for animation sampling */
 extern void animator_sample_frame(GltfModel *model, int anim_idx, float time);
 
