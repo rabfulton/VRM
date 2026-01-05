@@ -1,5 +1,5 @@
 #include "anim_config.h"
-#include <stdlib.h> 
+#include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +17,7 @@ static void trim_spaces(char *s) {
     }
 }
 
-static bool build_cfg_path(const char *anim_path, char *out_path, size_t out_size) {
+bool anim_config_build_path(const char *anim_path, char *out_path, size_t out_size) {
     if (!anim_path || !out_path || out_size == 0) return false;
     const char *slash = strrchr(anim_path, '/');
     const char *dot = strrchr(anim_path, '.');
@@ -33,12 +33,24 @@ static bool build_cfg_path(const char *anim_path, char *out_path, size_t out_siz
     return true;
 }
 
+typedef struct {
+    char key[128];
+    char value[128];
+} KvPair;
+
+static int kv_find(KvPair *pairs, int count, const char *key) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(pairs[i].key, key) == 0) return i;
+    }
+    return -1;
+}
+
 bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
     if (!out_cfg) return false;
     memset(out_cfg, 0, sizeof(*out_cfg));
 
     char cfg_path[PATH_MAX];
-    if (!build_cfg_path(anim_path, cfg_path, sizeof(cfg_path))) return false;
+    if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path))) return false;
 
     FILE *f = fopen(cfg_path, "r");
     if (!f) return false;
@@ -68,6 +80,12 @@ bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
         } else if (strcmp(key, "spring.gravity") == 0) {
             out_cfg->spring_gravity = fval;
             out_cfg->has_spring_gravity = true;
+        } else if (strcmp(key, "bounds.world_w") == 0) {
+            out_cfg->bounds_world_w = fval;
+            out_cfg->has_bounds_world_w = true;
+        } else if (strcmp(key, "bounds.world_h") == 0) {
+            out_cfg->bounds_world_h = fval;
+            out_cfg->has_bounds_world_h = true;
         }
     }
     fclose(f);
@@ -77,14 +95,103 @@ bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
 bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
     if (!cfg) return false;
     char cfg_path[PATH_MAX];
-    if (!build_cfg_path(anim_path, cfg_path, sizeof(cfg_path))) return false;
+    if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path))) return false;
 
-    FILE *f = fopen(cfg_path, "w");
+    KvPair pairs[128];
+    int pair_count = 0;
+
+    FILE *f = fopen(cfg_path, "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            line[strcspn(line, "\r\n")] = '\0';
+            trim_spaces(line);
+            if (line[0] == '\0' || line[0] == '#') continue;
+            char *eq = strchr(line, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            char *key = line;
+            char *val = eq + 1;
+            trim_spaces(key);
+            trim_spaces(val);
+            if (key[0] == '\0' || val[0] == '\0') continue;
+            if (pair_count >= (int)(sizeof(pairs) / sizeof(pairs[0]))) break;
+            if (strlen(key) >= sizeof(pairs[pair_count].key)) {
+                fprintf(stderr, "WARN: Skipping long config key: %s\n", key);
+                continue;
+            }
+            if (strlen(val) >= sizeof(pairs[pair_count].value)) {
+                fprintf(stderr, "WARN: Skipping long config value for key %s\n", key);
+                continue;
+            }
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", key);
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+        fclose(f);
+    }
+
+    if (cfg->has_spring_stiffness) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_stiffness);
+        int idx = kv_find(pairs, pair_count, "spring.stiffness");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.stiffness");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_drag) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_drag);
+        int idx = kv_find(pairs, pair_count, "spring.drag");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.drag");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_gravity) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_gravity);
+        int idx = kv_find(pairs, pair_count, "spring.gravity");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.gravity");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_bounds_world_w) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->bounds_world_w);
+        int idx = kv_find(pairs, pair_count, "bounds.world_w");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "bounds.world_w");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_bounds_world_h) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->bounds_world_h);
+        int idx = kv_find(pairs, pair_count, "bounds.world_h");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "bounds.world_h");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+
+    f = fopen(cfg_path, "w");
     if (!f) return false;
-
-    fprintf(f, "spring.stiffness=%.3f\n", cfg->spring_stiffness);
-    fprintf(f, "spring.drag=%.3f\n", cfg->spring_drag);
-    fprintf(f, "spring.gravity=%.3f\n", cfg->spring_gravity);
+    for (int i = 0; i < pair_count; i++) {
+        fprintf(f, "%s=%s\n", pairs[i].key, pairs[i].value);
+    }
     fclose(f);
     return true;
 }

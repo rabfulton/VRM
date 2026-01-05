@@ -12,6 +12,7 @@
  */
 
 #include "gltf_loader.h"
+#include "anim_config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -178,8 +179,10 @@ void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const 
     float cw = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
     if (cw > 0.001f) {
       float ndcx = cx / cw, ndcy = cy / cw;
-      if (ndcx < min_x) min_x = ndcx; if (ndcx > max_x) max_x = ndcx;
-      if (ndcy < min_y) min_y = ndcy; if (ndcy > max_y) max_y = ndcy;
+      if (ndcx < min_x) min_x = ndcx;
+      if (ndcx > max_x) max_x = ndcx;
+      if (ndcy < min_y) min_y = ndcy;
+      if (ndcy > max_y) max_y = ndcy;
     }
   }
   /* Add margin and convert NDC to screen pixels (Y flipped) */
@@ -220,25 +223,23 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   
   if (!model || !anim_path || model->animation_count == 0) return;
   
-  /* Build cache filename */
-  char cache_path[512];
-  snprintf(cache_path, sizeof(cache_path), "%s.bounds", anim_path);
+  /* Build config filename */
+  char cfg_path[512];
+  if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path))) return;
   
   float world_w, world_h;
   
-  /* Check if cache is valid */
-  struct stat anim_stat, cache_stat;
-  if (stat(anim_path, &anim_stat) == 0 && stat(cache_path, &cache_stat) == 0) {
-    if (cache_stat.st_mtime >= anim_stat.st_mtime) {
-      FILE *f = fopen(cache_path, "r");
-      if (f) {
-        if (fscanf(f, "%f %f", &world_w, &world_h) == 2) {
-          fclose(f);
-          *out_ndc_w = world_w;
-          *out_ndc_h = world_h;
+  /* Check if config cache is valid */
+  struct stat anim_stat, cfg_stat;
+  if (stat(anim_path, &anim_stat) == 0 && stat(cfg_path, &cfg_stat) == 0) {
+    if (cfg_stat.st_mtime >= anim_stat.st_mtime) {
+      AnimConfig cfg = {0};
+      if (anim_config_load(anim_path, &cfg)) {
+        if (cfg.has_bounds_world_w && cfg.has_bounds_world_h) {
+          *out_ndc_w = cfg.bounds_world_w;
+          *out_ndc_h = cfg.bounds_world_h;
           return;
         }
-        fclose(f);
       }
     }
   }
@@ -274,10 +275,11 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   *out_ndc_w = world_w;
   *out_ndc_h = world_h;
   
-  /* Write cache */
-  FILE *f = fopen(cache_path, "w");
-  if (f) {
-    fprintf(f, "%f %f\n", world_w, world_h);
-    fclose(f);
-  }
+  /* Write cache to config */
+  AnimConfig cfg = {0};
+  cfg.bounds_world_w = world_w;
+  cfg.bounds_world_h = world_h;
+  cfg.has_bounds_world_w = true;
+  cfg.has_bounds_world_h = true;
+  anim_config_save(anim_path, &cfg);
 }

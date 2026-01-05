@@ -593,6 +593,8 @@ int main(int argc, char *argv[]) {
     app.camera.aspect = (float)w / (float)h;
 
     animator_init(&app.animator);
+    animator_set_loop_blend(&app.animator, 0.0f);
+    animator_set_smooth_loop(&app.animator, true);
     platform_make_context_current(app.ui_window);
     update_display_metrics_for_window(app.ui_window);
     ui_init_overlay(&app);
