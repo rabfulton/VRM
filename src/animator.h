@@ -63,6 +63,7 @@ void animator_pause(Animator *anim);
 void animator_set_time(Animator *anim, float t);
 void animator_set_animation(Animator *anim, int index);
 void animator_blend_to(Animator *anim, int index, float duration, int loop_remaining);
+float animator_compute_auto_blend_time(Animator *anim, int to_anim);
 int animator_compute_loop_remaining(Animator *anim, int index);
 void animator_cleanup(Animator *anim);
 void animator_sample_frame(GltfModel *model, int anim_idx, float time);

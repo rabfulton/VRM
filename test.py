@@ -48,12 +48,10 @@ def cmd(c):
     time.sleep(0.05)
     return sock.recv(4096)
 
-cmd({"action": "load", "path": "/home/rab/code/vrm/test1.vrm"})
+cmd({"action": "load", "path": "/home/rab/code/vrm/test2.vrm"})
 cmd({"action": "set_visible", "visible": True})
 
-anims = sorted(glob.glob("/home/rab/code/vrm/VRMA_MotionPack/*.vrma") +
-               glob.glob("/home/rab/code/vrm/VRMA_MotionPack/*.glb") +
-               glob.glob("/home/rab/code/vrm/animation/*.vrma") +
+anims = sorted(glob.glob("/home/rab/code/vrm/animation/*.vrma") +
                glob.glob("/home/rab/code/vrm/animation/*.glb"))
 idx = 0
 
@@ -61,7 +59,7 @@ idx = 0
 stiff, drag, grav = 1.0, 1.0, 1.0
 
 # Blend params
-blend_dur = 2.0
+blend_dur = "auto"
 
 # Axis correction mode
 axis_mode = 3  # Default rotY 180
@@ -80,8 +78,8 @@ def show_spring():
     cmd({"action": "set_spring", "stiffness": stiff, "drag": drag, "gravity": grav})
     print(f"  Spring: stiff={stiff:.1f} drag={drag:.1f} grav={grav:.1f}")
 
-def show_blend():
-    print(f"  Blend: duration={blend_dur:.2f}s")
+#def show_blend():
+    #print(f"  Blend: duration={blend_dur:.2f}s")
 
 def set_axis(mode):
     global axis_mode
@@ -98,7 +96,7 @@ try:
     print("9/0 - Adjust spring drag")
     print("-/= - Adjust spring gravity")
     show_spring()
-    show_blend()
+    #show_blend()
     play(idx)
     while True:
         if select.select([sys.stdin], [], [], 0.1)[0]:
@@ -107,8 +105,8 @@ try:
             elif k in "nN ": idx = (idx + 1) % len(anims); play(idx)
             elif k in "pP": idx = (idx - 1) % len(anims); play(idx)
             elif k in "bB": idx = (idx + 1) % len(anims); play(idx, blend=True)
-            elif k == '[': blend_dur = max(0.05, blend_dur - 0.1); show_blend()
-            elif k == ']': blend_dur = min(10.0, blend_dur + 0.1); show_blend()
+            elif k == '[': blend_dur = max(0.05, blend_dur - 0.1);
+            elif k == ']': blend_dur = min(10.0, blend_dur + 0.1);
             # Axis correction keys
             elif k == 'x': set_axis(2)
             elif k == 'y': set_axis(3)

@@ -350,7 +350,14 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             if (!loop_specified) {
                 loop_remaining = animator_compute_loop_remaining(&app.animator, idx->valueint);
             }
-            float blend_time = dur ? (float)dur->valuedouble : g_anim_blend_time_default;
+            float blend_time;
+            if (dur && cJSON_IsString(dur) && strcmp(dur->valuestring, "auto") == 0) {
+                blend_time = animator_compute_auto_blend_time(&app.animator, idx->valueint);
+            } else if (dur && cJSON_IsNumber(dur)) {
+                blend_time = (float)dur->valuedouble;
+            } else {
+                blend_time = g_anim_blend_time_default;
+            }
             animator_blend_to(&app.animator, idx->valueint, blend_time, loop_remaining);
         }
         ipc_respond(&app.ipc, id, true, NULL);

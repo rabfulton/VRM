@@ -509,7 +509,8 @@ void animator_update(Animator *anim, float dt) {
                     if (remaining > 0) remaining--;
                     sample_animation(model, animation, animation->duration);
                     gltf_update_transforms(model);
-                    animator_blend_to(anim, anim->current_animation, g_anim_blend_time_default, remaining);
+                    float loop_blend_time = animator_compute_auto_blend_time(anim, anim->current_animation);
+                    animator_blend_to(anim, anim->current_animation, loop_blend_time, remaining);
                     anim->next_anim_time = 0.0f;
                     anim->loop_blend_active = true;
                     return;
@@ -591,6 +592,89 @@ static void snapshot_pose(Animator *anim) {
         memcpy(&anim->snap_rotations[i * 4], node->rotation, 4 * sizeof(float));
         memcpy(&anim->snap_scales[i * 3], node->scale, 3 * sizeof(float));
     }
+}
+
+/* Compute quaternion angular distance in radians */
+static float quat_angle_distance(const float *q1, const float *q2) {
+    float dot = q1[0]*q2[0] + q1[1]*q2[1] + q1[2]*q2[2] + q1[3]*q2[3];
+    if (dot < 0.0f) dot = -dot; /* Handle quaternion double-cover */
+    if (dot > 1.0f) dot = 1.0f;
+    return 2.0f * acosf(dot);
+}
+
+/* Compute blend time based on pose difference */
+float animator_compute_auto_blend_time(Animator *anim, int to_anim) {
+    if (!anim || !anim->model) return g_anim_blend_time_default;
+    GltfModel *model = anim->model;
+    if (to_anim < 0 || to_anim >= model->animation_count) return g_anim_blend_time_default;
+    
+    int n = model->node_count;
+    if (n <= 0) return g_anim_blend_time_default;
+    
+    /* Save current pose */
+    float *saved_t = malloc((size_t)n * 3 * sizeof(float));
+    float *saved_r = malloc((size_t)n * 4 * sizeof(float));
+    float *saved_s = malloc((size_t)n * 3 * sizeof(float));
+    if (!saved_t || !saved_r || !saved_s) {
+        free(saved_t);
+        free(saved_r);
+        free(saved_s);
+        return g_anim_blend_time_default;
+    }
+    copy_pose_arrays(model, saved_t, saved_r, saved_s);
+    
+    /* Sample target animation at t=0 */
+    GltfAnimation *target = &model->animations[to_anim];
+    sample_animation(model, target, 0.0f);
+    
+    /* Find max pose distance (translation/rotation/scale) */
+    const float rot_weight = 0.5f;
+    const float scale_weight = 0.5f;
+    float max_dist = 0.0f;
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        uint8_t mask = target->node_mask ? ((i < target->node_mask_count) ? target->node_mask[i] : 0) : 7;
+        if (mask == 0) continue;
+
+        float trans_dist = 0.0f;
+        float rot_dist = 0.0f;
+        float scale_dist = 0.0f;
+
+        if (mask & 1) {
+            float dx = saved_t[i * 3 + 0] - node->translation[0];
+            float dy = saved_t[i * 3 + 1] - node->translation[1];
+            float dz = saved_t[i * 3 + 2] - node->translation[2];
+            trans_dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        }
+        if (mask & 2) {
+            rot_dist = quat_angle_distance(&saved_r[i * 4], node->rotation);
+        }
+        if (mask & 4) {
+            float sx = fabsf(saved_s[i * 3 + 0] - node->scale[0]);
+            float sy = fabsf(saved_s[i * 3 + 1] - node->scale[1]);
+            float sz = fabsf(saved_s[i * 3 + 2] - node->scale[2]);
+            scale_dist = fmaxf(sx, fmaxf(sy, sz));
+        }
+
+        float dist = fmaxf(trans_dist, fmaxf(rot_dist * rot_weight, scale_dist * scale_weight));
+        if (dist > max_dist) max_dist = dist;
+    }
+    
+    /* Restore original pose */
+    restore_pose_arrays(model, saved_t, saved_r, saved_s);
+    gltf_update_transforms(model);
+    free(saved_t);
+    free(saved_r);
+    free(saved_s);
+    
+    /* Map distance to blend time */
+    float blend_time = max_dist * 9.0f;
+    if (blend_time < 0.45f) blend_time = 0.45f;
+    if (blend_time > 6.0f) blend_time = 6.0f;
+    
+    printf("Auto blend time: max_dist=%.3f -> %.2fs\n", max_dist, blend_time);
+    
+    return blend_time;
 }
 
 void animator_blend_to(Animator *anim, int index, float duration, int loop_remaining) {

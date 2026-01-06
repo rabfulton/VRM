@@ -224,7 +224,9 @@ static const char *toon_frag_src =
     "    vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);\n"
     "    vec3 lightDir = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float ndotl = max(dot(normal, lightDir), 0.0);\n"
+    /* Lower the shade values make the dark bands darker */
     "    float shade = 0.25;\n"
+    /* Raise the NdotL thresholds (more of the model falls into darker bands) */
     "    if (ndotl > 0.8) {\n"
     "        shade = 1.0;\n"
     "    } else if (ndotl > 0.5) {\n"
@@ -902,7 +904,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
       glUniform1i(r->u_shadow_comp_tex, 0);
       glUniform2f(r->u_shadow_comp_screen, (float)fb_width, (float)fb_height);
-      glUniform2f(r->u_shadow_comp_offset, -25.0f, -5.0f);
+      glUniform2f(r->u_shadow_comp_offset, -100.0f, -5.0f);
       glUniform1f(r->u_shadow_comp_alpha, 0.4f);
 
       glDisable(GL_DEPTH_TEST);
