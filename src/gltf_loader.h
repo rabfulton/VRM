@@ -76,6 +76,7 @@ typedef struct {
   float alpha_cutoff;
 
   bool double_sided;
+  bool alpha_write_depth;
 } GltfMaterial;
 
 /* Texture */

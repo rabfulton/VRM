@@ -17,10 +17,33 @@ Controls:
   q             - Quit
 """
 
-import json, socket, glob, os, sys, tty, termios, select, time
+import json, socket, glob, os, sys, tty, termios, select, time, subprocess
 
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.connect("/tmp/vrm-overlay.sock")
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SOCK_PATH = "/tmp/vrm-overlay.sock"
+OVERLAY_BIN = os.path.join(ROOT, "vrm-overlay")
+
+overlay_proc = subprocess.Popen([OVERLAY_BIN], cwd=ROOT)
+
+def connect_ipc(path, timeout=10.0):
+    deadline = time.time() + timeout
+    last_err = None
+    while time.time() < deadline:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(path)
+            return s
+        except (FileNotFoundError, ConnectionRefusedError, OSError) as e:
+            last_err = e
+            s.close()
+            time.sleep(0.1)
+    raise RuntimeError(f"Failed to connect to IPC socket {path}: {last_err}")
+
+try:
+    sock = connect_ipc(SOCK_PATH)
+except Exception:
+    overlay_proc.terminate()
+    raise
 
 def cmd(c):
     sock.send((json.dumps(c) + "\n").encode())
@@ -118,4 +141,16 @@ try:
     print(f"axis: {axis_names[axis_mode]}")
 finally:
     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old)
-    sock.close()
+    try:
+        cmd({"action": "shutdown"})
+    except Exception:
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
+    if overlay_proc.poll() is None:
+        try:
+            overlay_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            overlay_proc.terminate()

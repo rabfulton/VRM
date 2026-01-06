@@ -345,7 +345,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (m) update_anim_correction_mode(m->valueint);
         ipc_respond(&app.ipc, id, true, NULL);
     }
-    else if (strcmp(action, "quit") == 0) { ipc_respond(&app.ipc, id, true, NULL); app.running = false; }
+    else if (strcmp(action, "shutdown") == 0) { ipc_respond(&app.ipc, id, true, NULL); app.running = false; }
     else { ipc_respond(&app.ipc, id, false, "Unknown action"); }
 }
 

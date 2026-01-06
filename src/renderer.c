@@ -160,7 +160,7 @@ static const char *pbr_frag_src =
     "    float ambient = 0.4;\n"
     "    color.rgb *= (key + fill + ambient);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
-    "    FragColor = vec4(color.rgb * color.a, color.a);\n"
+    "    FragColor = color;\n"
     "}\n";
 
 static const char *toon_frag_src =
@@ -200,7 +200,7 @@ static const char *toon_frag_src =
     "    color.rgb *= (shade + ambient);\n"
     "    color.rgb = mix(color.rgb, vec3(1.0), rim * rimStrength);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
-    "    FragColor = vec4(color.rgb * color.a, color.a);\n"
+    "    FragColor = color;\n"
     "}\n";
 
 /* Anime-style cel shader with smooth color bands and specular highlights */
@@ -240,7 +240,7 @@ static const char *anime_frag_src =
     "    rim = smoothstep(0.6, 0.8, rim);\n"
     "    color.rgb += vec3(0.15) * rim;\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
-    "    FragColor = vec4(color.rgb * color.a, color.a);\n"
+    "    FragColor = color;\n"
     "}\n";
 
 /* Outline vertex shader - extrudes along normals */
@@ -378,7 +378,7 @@ bool renderer_init(Renderer *r) {
   r->model_transform[0] = r->model_transform[5] = r->model_transform[10] = r->model_transform[15] = 1.0f;
 
   glEnable(GL_BLEND);
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LESS);
   glEnable(GL_MULTISAMPLE);
@@ -851,7 +851,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count) 
                           ? &r->model->materials[prim->material_index] : NULL;
       if (mat && mat->alpha_mode == 2) {
-        glDepthMask(GL_FALSE);
+        glDepthMask(mat->alpha_write_depth ? GL_TRUE : GL_FALSE);
         if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
           if (prim->joint_palette_count > 0) {
             renderer_update_bones(r, node->skin_index, node->world_matrix, prim);

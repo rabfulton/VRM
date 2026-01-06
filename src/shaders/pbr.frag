@@ -30,5 +30,5 @@ void main() {
     }
 
     // Premultiplied alpha output
-    FragColor = vec4(color.rgb * color.a, color.a);
+    FragColor = color;
 }

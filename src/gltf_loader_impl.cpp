@@ -533,6 +533,38 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
       }
 
       m->double_sided = mat.doubleSided;
+      m->alpha_write_depth = false;
+    }
+  }
+
+  /* Apply VRM material overrides (MToon) */
+  if (gltf.extensions.count("VRM")) {
+    const auto &vrm = gltf.extensions.at("VRM");
+    if (vrm.Has("materialProperties")) {
+      const auto &props = vrm.Get("materialProperties");
+      size_t count = props.ArrayLen();
+      for (size_t i = 0; i < count; i++) {
+        const auto &mp = props.Get(i);
+        if (i >= (size_t)model->material_count) break;
+        GltfMaterial *m = &model->materials[i];
+        if (mp.Has("floatProperties")) {
+          const auto &fp = mp.Get("floatProperties");
+          if (fp.Has("_BlendMode")) {
+            int blend_mode = (int)fp.Get("_BlendMode").GetNumberAsDouble();
+            if (blend_mode == 3) {
+              m->alpha_write_depth = true;
+            }
+          }
+          if (fp.Has("_CullMode")) {
+            int cull_mode = (int)fp.Get("_CullMode").GetNumberAsDouble();
+            if (cull_mode == 0) {
+              m->double_sided = true;
+            } else if (cull_mode == 2) {
+              m->double_sided = false;
+            }
+          }
+        }
+      }
     }
   }
 
