@@ -87,7 +87,7 @@ bool renderer_init(Renderer *r);
 void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
 void renderer_draw(Renderer *r, const OrbitCamera *camera);
-void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg);
+void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg, float scale);
 void renderer_toggle_shader(Renderer *r);
 
 #endif

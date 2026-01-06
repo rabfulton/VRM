@@ -167,6 +167,27 @@ void platform_get_primary_workarea(int *x, int *y, int *w, int *h) {
     glfwGetMonitorWorkarea(monitor, x, y, w, h);
 }
 
+void platform_get_window_workarea(PlatformWindow *win, int *x, int *y, int *w, int *h) {
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    glfwGetWindowPos(win->glfw, &wx, &wy);
+    glfwGetWindowSize(win->glfw, &ww, &wh);
+    int cx = wx + ww / 2;
+    int cy = wy + wh / 2;
+
+    int count = 0;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    for (int i = 0; i < count; i++) {
+        int mx = 0, my = 0, mw = 0, mh = 0;
+        glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+        if (cx >= mx && cx < mx + mw && cy >= my && cy < my + mh) {
+            *x = mx; *y = my; *w = mw; *h = mh;
+            return;
+        }
+    }
+
+    platform_get_primary_workarea(x, y, w, h);
+}
+
 void platform_make_context_current(PlatformWindow *win) {
     glfwMakeContextCurrent(win->glfw);
 }
@@ -216,4 +237,24 @@ void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h) 
 void platform_clear_input_region(PlatformWindow *win) {
     if (!win->x_display || !win->x_window) return;
     XShapeCombineMask(win->x_display, win->x_window, ShapeInput, 0, 0, None, ShapeSet);
+}
+
+void platform_set_input_regions(PlatformWindow *win, const PlatformRect *rects, int rect_count) {
+    if (!win->x_display || !win->x_window) return;
+    if (!rects || rect_count <= 0) {
+        platform_clear_input_region(win);
+        return;
+    }
+    Region region = XCreateRegion();
+    for (int i = 0; i < rect_count; i++) {
+        XRectangle rect = {
+            (short)rects[i].x,
+            (short)rects[i].y,
+            (unsigned short)rects[i].w,
+            (unsigned short)rects[i].h
+        };
+        XUnionRectWithRegion(&rect, region, region);
+    }
+    XShapeCombineRegion(win->x_display, win->x_window, ShapeInput, 0, 0, region, ShapeSet);
+    XDestroyRegion(region);
 }

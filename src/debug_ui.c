@@ -31,7 +31,6 @@ typedef enum {
 
 typedef enum {
     ANIM_PARAM_BLEND_TIME = 0,
-    ANIM_PARAM_INERTIAL_RATIO,
     ANIM_PARAM_GROUP_ROOT,
     ANIM_PARAM_GROUP_SPINE,
     ANIM_PARAM_GROUP_HEAD,
@@ -64,6 +63,7 @@ static uint32_t anim_param_ids[ANIM_PARAM_MAX_ELEMENT] = {0};
 static int spring_close_guard = 0;
 static int anim_close_guard = 0;
 static int ui_close_request = 0;
+static int ui_force_close_request = 0;
 static int spring_menu_close_pending = 0;
 static int anim_menu_close_pending = 0;
 
@@ -108,6 +108,28 @@ int debug_ui_consume_close_request(void) {
     return request;
 }
 
+int debug_ui_consume_force_close_request(void) {
+    int request = ui_force_close_request;
+    ui_force_close_request = 0;
+    return request;
+}
+
+int debug_ui_has_open_panels(void) {
+    return spring_menu_id >= 0 || anim_menu_id >= 0;
+}
+
+int debug_ui_get_panel_ids(int32_t *ids, int max_ids) {
+    int count = 0;
+    if (!ids || max_ids <= 0) return 0;
+    if (spring_menu_id >= 0 && count < max_ids) {
+        ids[count++] = spring_menu_id;
+    }
+    if (anim_menu_id >= 0 && count < max_ids) {
+        ids[count++] = anim_menu_id;
+    }
+    return count;
+}
+
 void debug_ui_prepare_for_close(void) {
     if (spring_menu_close_pending) {
         spring_menu_close_pending = 0;
@@ -135,6 +157,7 @@ void debug_ui_reset_menus(void) {
     spring_menu_close_pending = 0;
     anim_menu_close_pending = 0;
     ui_close_request = 0;
+    ui_force_close_request = 0;
     spring_close_guard = 0;
     anim_close_guard = 0;
     if (debug_ui && spring_menu_id >= 0) {
@@ -188,9 +211,6 @@ void debug_ui_sync_anim_params(void) {
     if (!debug_ui || anim_menu_id < 0) return;
     if (anim_param_ids[ANIM_PARAM_BLEND_TIME]) {
         ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], g_anim_blend_time_default);
-    }
-    if (anim_param_ids[ANIM_PARAM_INERTIAL_RATIO]) {
-        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], g_anim_inertial_half_life_ratio);
     }
     if (anim_param_ids[ANIM_PARAM_GROUP_ROOT]) {
         ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ROOT], g_anim_blend_group_factors[BLEND_GROUP_ROOT]);
@@ -307,12 +327,6 @@ static void on_anim_blend_time(int id) {
     g_anim_blend_time_default = clampf(v, 0.05f, 3.0f);
 }
 
-static void on_anim_inertial_ratio(int id) {
-    if (!debug_ui) return;
-    float v = ui_read_parameter(debug_ui, (uint32_t)id);
-    g_anim_inertial_half_life_ratio = clampf(v, 0.05f, 1.0f);
-}
-
 static void on_anim_group_root(int id) {
     if (!debug_ui) return;
     float v = ui_read_parameter(debug_ui, (uint32_t)id);
@@ -386,6 +400,7 @@ static void on_pie_select(int idx) {
         case UI_PIE_CLOSE:
             printf("UI pie selection: Close\n");
             ui_close_request = 1;
+            ui_force_close_request = 1;
             break;
         case UI_PIE_STATS:
             printf("UI pie selection: stats\n");
@@ -412,9 +427,9 @@ static void springs_menu(void) {
 
     ui_header_t header = {.w = 0, .h = 0, .state = 1, .title = "Spring Constants"};
     spring_menu_id = ui_group_start(debug_ui, &header);
+    ui_set_element_flags(debug_ui, (uint32_t)spring_menu_id, UI_MOVABLE);
     printf("UI debug: springs menu opened (menu_id=%d)\n", spring_menu_id);
 
-    ui_set_element_flags(debug_ui, (uint32_t)spring_menu_id, UI_MOVABLE);
     ui_position_element(debug_ui, (uint32_t)spring_menu_id, 50, 50);
     ui_set_align(debug_ui, UI_BELOW);
 
@@ -556,9 +571,9 @@ static void animation_menu(void) {
 
     ui_header_t header = {.w = 0, .h = 0, .state = 1, .title = "Animation Blend"};
     anim_menu_id = ui_group_start(debug_ui, &header);
+    ui_set_element_flags(debug_ui, (uint32_t)anim_menu_id, UI_MOVABLE);
     printf("UI debug: animation menu opened (menu_id=%d)\n", anim_menu_id);
 
-    ui_set_element_flags(debug_ui, (uint32_t)anim_menu_id, UI_MOVABLE);
     ui_position_element(debug_ui, (uint32_t)anim_menu_id, 50, 50);
     ui_set_align(debug_ui, UI_BELOW);
 
@@ -574,19 +589,6 @@ static void animation_menu(void) {
     anim_param_ids[ANIM_PARAM_BLEND_TIME] = (uint32_t)ui_element_init(debug_ui, &blend_time, 0, UI_PARAMETER);
     ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], UI_ACTION_ON_PRESS);
     ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], on_anim_blend_time);
-
-    ui_parameter_t inertial = {
-        .w = 440.0f,
-        .value = g_anim_inertial_half_life_ratio,
-        .start_val = 0.05f,
-        .end_val = 1.0f,
-        .step_size = 0.05f,
-        .steps_per_pixel = 0.2f,
-        .title = "Inertial Half-life Ratio"
-    };
-    anim_param_ids[ANIM_PARAM_INERTIAL_RATIO] = (uint32_t)ui_element_init(debug_ui, &inertial, 0, UI_PARAMETER);
-    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], UI_ACTION_ON_PRESS);
-    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], on_anim_inertial_ratio);
 
     ui_parameter_t group_root = {
         .w = 440.0f,

@@ -11,7 +11,6 @@
 #include <stdio.h>
 
 float g_anim_blend_time_default = 3.0f;
-float g_anim_inertial_half_life_ratio = 0.25f;
 float g_anim_blend_group_factors[BLEND_GROUP_COUNT] = {
     1.0f, /* root */
     1.0f, /* spine */
@@ -47,34 +46,8 @@ void animator_cleanup(Animator *anim) {
     anim->snap_scales = NULL;
     anim->snap_node_count = 0;
 
-    free(anim->prev_translations);
-    free(anim->prev_rotations);
-    free(anim->vel_translations);
-    free(anim->vel_rotations);
-    free(anim->prev_vel_translations);
-    free(anim->prev_vel_rotations);
-    free(anim->acc_translations);
-    free(anim->acc_rotations);
-    free(anim->off_translations);
-    free(anim->off_rotations);
-    free(anim->inertial_vel_trans);
-    free(anim->inertial_vel_rot);
     free(anim->blend_time_factors);
-    anim->prev_translations = NULL;
-    anim->prev_rotations = NULL;
-    anim->vel_translations = NULL;
-    anim->vel_rotations = NULL;
-    anim->prev_vel_translations = NULL;
-    anim->prev_vel_rotations = NULL;
-    anim->acc_translations = NULL;
-    anim->acc_rotations = NULL;
-    anim->off_translations = NULL;
-    anim->off_rotations = NULL;
-    anim->inertial_vel_trans = NULL;
-    anim->inertial_vel_rot = NULL;
     anim->blend_time_factors = NULL;
-    anim->motion_node_count = 0;
-    anim->motion_initialized = false;
     anim->blend_node_count = 0;
 }
 
@@ -292,6 +265,7 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
         if (s->keyframe_count < 2) continue;
 
         GltfNode *node = &model->nodes[ch->target_node];
+        //if (node->is_spring_bone) continue;
 
         /* Clamp time */
         float ct = t;
@@ -329,202 +303,6 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
     apply_global_anim_correction(model, anim);
 }
 
-static void quat_log_vec3(const float *q, float *out) {
-    float v[3] = {q[0], q[1], q[2]};
-    float v_len = sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-    if (v_len < 1e-8f) {
-        out[0] = 0.0f;
-        out[1] = 0.0f;
-        out[2] = 0.0f;
-        return;
-    }
-    float angle = atan2f(v_len, q[3]) * 2.0f;
-    float inv_len = 1.0f / v_len;
-    out[0] = v[0] * inv_len * (angle * 0.5f);
-    out[1] = v[1] * inv_len * (angle * 0.5f);
-    out[2] = v[2] * inv_len * (angle * 0.5f);
-}
-
-static void quat_exp_vec3(const float *v, float *out) {
-    float v_len = sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-    if (v_len < 1e-8f) {
-        out[0] = 0.0f;
-        out[1] = 0.0f;
-        out[2] = 0.0f;
-        out[3] = 1.0f;
-        return;
-    }
-    float angle = v_len * 2.0f;
-    float inv_len = 1.0f / v_len;
-    float s = sinf(angle * 0.5f);
-    out[0] = v[0] * inv_len * s;
-    out[1] = v[1] * inv_len * s;
-    out[2] = v[2] * inv_len * s;
-    out[3] = cosf(angle * 0.5f);
-}
-
-static void ensure_motion_cache(Animator *anim) {
-    GltfModel *model = anim->model;
-    int n = model->node_count;
-
-    if (anim->motion_node_count >= n) return;
-
-    free(anim->prev_translations);
-    free(anim->prev_rotations);
-    free(anim->vel_translations);
-    free(anim->vel_rotations);
-    free(anim->prev_vel_translations);
-    free(anim->prev_vel_rotations);
-    free(anim->acc_translations);
-    free(anim->acc_rotations);
-    free(anim->off_translations);
-    free(anim->off_rotations);
-    free(anim->inertial_vel_trans);
-    free(anim->inertial_vel_rot);
-
-    anim->prev_translations = calloc((size_t)n * 3, sizeof(float));
-    anim->prev_rotations = calloc((size_t)n * 4, sizeof(float));
-    anim->vel_translations = calloc((size_t)n * 3, sizeof(float));
-    anim->vel_rotations = calloc((size_t)n * 3, sizeof(float));
-    anim->prev_vel_translations = calloc((size_t)n * 3, sizeof(float));
-    anim->prev_vel_rotations = calloc((size_t)n * 3, sizeof(float));
-    anim->acc_translations = calloc((size_t)n * 3, sizeof(float));
-    anim->acc_rotations = calloc((size_t)n * 3, sizeof(float));
-    anim->off_translations = calloc((size_t)n * 3, sizeof(float));
-    anim->off_rotations = calloc((size_t)n * 3, sizeof(float));
-    anim->inertial_vel_trans = calloc((size_t)n * 3, sizeof(float));
-    anim->inertial_vel_rot = calloc((size_t)n * 3, sizeof(float));
-    anim->motion_node_count = n;
-    anim->motion_initialized = false;
-}
-
-static void reset_inertial_offsets(Animator *anim) {
-    if (!anim->model) return;
-    ensure_motion_cache(anim);
-
-    int n = anim->model->node_count;
-    memset(anim->off_translations, 0, (size_t)n * 3 * sizeof(float));
-    memset(anim->off_rotations, 0, (size_t)n * 3 * sizeof(float));
-    if (anim->motion_initialized) {
-        memcpy(anim->inertial_vel_trans, anim->vel_translations, (size_t)n * 3 * sizeof(float));
-        memcpy(anim->inertial_vel_rot, anim->vel_rotations, (size_t)n * 3 * sizeof(float));
-    } else {
-        memset(anim->inertial_vel_trans, 0, (size_t)n * 3 * sizeof(float));
-        memset(anim->inertial_vel_rot, 0, (size_t)n * 3 * sizeof(float));
-    }
-}
-
-static void apply_inertial_offsets(Animator *anim, float dt, float half_life) {
-    if (!anim->model || !anim->motion_initialized) return;
-    if (dt <= 0.0f) return;
-
-    if (half_life <= 0.0f) return;
-    float decay = powf(0.5f, dt / half_life);
-
-    GltfModel *model = anim->model;
-    int n = model->node_count;
-    for (int i = 0; i < n; i++) {
-        GltfNode *node = &model->nodes[i];
-        if (node->is_spring_bone) continue;
-
-        float *off_t = &anim->off_translations[i * 3];
-        float *off_r = &anim->off_rotations[i * 3];
-        float *vel_t = &anim->inertial_vel_trans[i * 3];
-        float *vel_r = &anim->inertial_vel_rot[i * 3];
-
-        off_t[0] = off_t[0] * decay + vel_t[0] * dt;
-        off_t[1] = off_t[1] * decay + vel_t[1] * dt;
-        off_t[2] = off_t[2] * decay + vel_t[2] * dt;
-        vel_t[0] *= decay;
-        vel_t[1] *= decay;
-        vel_t[2] *= decay;
-
-        off_r[0] = off_r[0] * decay + vel_r[0] * dt * 0.5f;
-        off_r[1] = off_r[1] * decay + vel_r[1] * dt * 0.5f;
-        off_r[2] = off_r[2] * decay + vel_r[2] * dt * 0.5f;
-        vel_r[0] *= decay;
-        vel_r[1] *= decay;
-        vel_r[2] *= decay;
-
-        node->translation[0] += off_t[0];
-        node->translation[1] += off_t[1];
-        node->translation[2] += off_t[2];
-
-        float q_off[4];
-        float q_out[4];
-        quat_exp_vec3(off_r, q_off);
-        quat_mul(q_off, node->rotation, q_out);
-        memcpy(node->rotation, q_out, sizeof(float) * 4);
-    }
-}
-
-static void update_motion_cache(Animator *anim, float dt) {
-    if (!anim->model || dt <= 0.0f) return;
-    ensure_motion_cache(anim);
-
-    GltfModel *model = anim->model;
-    int n = model->node_count;
-
-    if (!anim->motion_initialized) {
-        for (int i = 0; i < n; i++) {
-            GltfNode *node = &model->nodes[i];
-            memcpy(&anim->prev_translations[i * 3], node->translation, 3 * sizeof(float));
-            memcpy(&anim->prev_rotations[i * 4], node->rotation, 4 * sizeof(float));
-        }
-        anim->motion_initialized = true;
-        return;
-    }
-
-    for (int i = 0; i < n; i++) {
-        GltfNode *node = &model->nodes[i];
-        float *prev_t = &anim->prev_translations[i * 3];
-        float *prev_r = &anim->prev_rotations[i * 4];
-        float *vel_t = &anim->vel_translations[i * 3];
-        float *vel_r = &anim->vel_rotations[i * 3];
-        float *prev_vel_t = &anim->prev_vel_translations[i * 3];
-        float *prev_vel_r = &anim->prev_vel_rotations[i * 3];
-        float *acc_t = &anim->acc_translations[i * 3];
-        float *acc_r = &anim->acc_rotations[i * 3];
-
-        if (node->is_spring_bone) {
-            vel_t[0] = vel_t[1] = vel_t[2] = 0.0f;
-            vel_r[0] = vel_r[1] = vel_r[2] = 0.0f;
-            acc_t[0] = acc_t[1] = acc_t[2] = 0.0f;
-            acc_r[0] = acc_r[1] = acc_r[2] = 0.0f;
-            memcpy(prev_t, node->translation, 3 * sizeof(float));
-            memcpy(prev_r, node->rotation, 4 * sizeof(float));
-            memcpy(prev_vel_t, vel_t, 3 * sizeof(float));
-            memcpy(prev_vel_r, vel_r, 3 * sizeof(float));
-            continue;
-        }
-
-        vel_t[0] = (node->translation[0] - prev_t[0]) / dt;
-        vel_t[1] = (node->translation[1] - prev_t[1]) / dt;
-        vel_t[2] = (node->translation[2] - prev_t[2]) / dt;
-
-        float inv_prev[4];
-        float q_delta[4];
-        quat_inv(prev_r, inv_prev);
-        quat_mul(node->rotation, inv_prev, q_delta);
-        float logv[3];
-        quat_log_vec3(q_delta, logv);
-        vel_r[0] = (2.0f * logv[0]) / dt;
-        vel_r[1] = (2.0f * logv[1]) / dt;
-        vel_r[2] = (2.0f * logv[2]) / dt;
-
-        acc_t[0] = (vel_t[0] - prev_vel_t[0]) / dt;
-        acc_t[1] = (vel_t[1] - prev_vel_t[1]) / dt;
-        acc_t[2] = (vel_t[2] - prev_vel_t[2]) / dt;
-        acc_r[0] = (vel_r[0] - prev_vel_r[0]) / dt;
-        acc_r[1] = (vel_r[1] - prev_vel_r[1]) / dt;
-        acc_r[2] = (vel_r[2] - prev_vel_r[2]) / dt;
-
-        memcpy(prev_t, node->translation, 3 * sizeof(float));
-        memcpy(prev_r, node->rotation, 4 * sizeof(float));
-        memcpy(prev_vel_t, vel_t, 3 * sizeof(float));
-        memcpy(prev_vel_r, vel_r, 3 * sizeof(float));
-    }
-}
 
 static void copy_pose_arrays(GltfModel *model, float *t, float *r, float *s) {
     int n = model->node_count;
@@ -702,7 +480,6 @@ void animator_update(Animator *anim, float dt) {
             node->scale[2] = lerp(ss[2], node->scale[2], bone_t);
         }
 
-        /* Inertialization disabled: blend should be pure A->B easing. */
 
         if (!anim->loop_blend_active) {
             anim->next_anim_time += dt * anim->speed;
@@ -714,7 +491,6 @@ void animator_update(Animator *anim, float dt) {
         }
 
         gltf_update_transforms(model);
-        update_motion_cache(anim, dt);
         return;
     }
 
@@ -761,7 +537,6 @@ void animator_update(Animator *anim, float dt) {
 
     sample_animation(model, animation, anim->time);
     gltf_update_transforms(model);
-    update_motion_cache(anim, dt);
 }
 
 void animator_play(Animator *anim, float speed) {
@@ -833,7 +608,6 @@ void animator_blend_to(Animator *anim, int index, float duration, int loop_remai
     
     snapshot_pose(anim);
     ensure_blend_factors(anim);
-    reset_inertial_offsets(anim);
     anim->next_animation = index;
     anim->blend_time = 0.0f;
     anim->blend_duration = duration;

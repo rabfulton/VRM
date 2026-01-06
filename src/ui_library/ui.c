@@ -8649,7 +8649,7 @@ static void ui_update_active_element(ui_interface_t *ui, uint16_t id){
 	// -------------------------------------------------------------------
 	if (MOUSE_M && (ui->action_flags & MIDDLE_HELD)){
 		if (flags & UI_MOVABLE){
-			// ui_move_element(ui, id, offset_x, offset_y);
+			ui_move_element(ui, id, offset_x, offset_y);
 		}
 	}
 	if (MOUSE_L && (ui->action_flags & LEFT_HELD)){
@@ -8711,9 +8711,9 @@ static void ui_update_active_element(ui_interface_t *ui, uint16_t id){
 
 static void ui_element_dectivate(ui_interface_t *ui, uint16_t id){
 
-	char test[64];
-	ui_get_element_type_as_string(ui, id, test);
-	printf("deactivating %s\n", test);
+	//char test[64];
+	//ui_get_element_type_as_string(ui, id, test);
+	//printf("deactivating %s\n", test);
 	if (ui->elements[id].type == UI_BUTTON || 
 			ui->elements[id].type == UI_BUTTON_ROUND){
 		ui_button_col_swap(ui, id, 0);
@@ -8742,9 +8742,9 @@ static void ui_element_activate(ui_interface_t *ui, uint16_t id){
 
 	ui->selected_element = id;
 	ui_element_t *e = &ui->elements[id];
-	char test[64];
-	ui_get_element_type_as_string(ui, id, test);
-	printf("activating %s %d\n", test, ui->action_flags & LEFT_HELD);
+	//char test[64];
+	//ui_get_element_type_as_string(ui, id, test);
+	//printf("activating %s %d\n", test, ui->action_flags & LEFT_HELD);
 	// single instance mouse over evemts
 	switch (ui->elements[id].type){
 		case UI_BUTTON:
@@ -9269,8 +9269,6 @@ static int ui_find_array_index(ui_interface_t *ui, uint32_t uuid){
 }
 
 // open a directory for reading and return a list of directory entries containing its contents
-
-
 
 
 

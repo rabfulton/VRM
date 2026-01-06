@@ -48,7 +48,7 @@ def cmd(c):
     time.sleep(0.05)
     return sock.recv(4096)
 
-cmd({"action": "load", "path": "/home/rab/code/vrm/test.vrm"})
+cmd({"action": "load", "path": "/home/rab/code/vrm/test1.vrm"})
 cmd({"action": "set_visible", "visible": True})
 
 anims = sorted(glob.glob("/home/rab/code/vrm/VRMA_MotionPack/*.vrma") +
@@ -72,7 +72,7 @@ def play(i, blend=False):
     if blend:
         cmd({"action": "blend_to", "index": 0, "duration": blend_dur, "loop": True})
     else:
-        cmd({"action": "blend_to", "index": 0, "duration": 3.0, "loop": True})
+        cmd({"action": "blend_to", "index": 0, "duration": 1.5, "loop": True})
     cmd({"action": "play"})
     print(f"[{i+1}/{len(anims)}] {os.path.basename(anims[i])}" + (" (blended)" if blend else ""))
 

@@ -30,6 +30,7 @@ void platform_get_window_size(PlatformWindow *win, int *w, int *h);
 void platform_get_content_scale(PlatformWindow *win, float *xscale, float *yscale);
 void platform_get_window_pos(PlatformWindow *win, int *x, int *y);
 void platform_get_primary_workarea(int *x, int *y, int *w, int *h);
+void platform_get_window_workarea(PlatformWindow *win, int *x, int *y, int *w, int *h);
 void platform_make_context_current(PlatformWindow *win);
 void platform_get_cursor_pos(PlatformWindow *win, double *x, double *y);
 void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb);
@@ -44,6 +45,15 @@ void platform_hide_window(PlatformWindow *win);
 /* Input region (click-through) */
 void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h);
 void platform_clear_input_region(PlatformWindow *win);
+
+typedef struct {
+    int x;
+    int y;
+    int w;
+    int h;
+} PlatformRect;
+
+void platform_set_input_regions(PlatformWindow *win, const PlatformRect *rects, int rect_count);
 
 /* Time */
 double platform_get_time(void);

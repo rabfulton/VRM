@@ -16,6 +16,7 @@
 #include "ipc.h"
 #include "spring_bones.h"
 #include "anim_config.h"
+#include "settings.h"
 #include "ui_library/ui.h"
 #include "debug_ui.h"
 #include "../deps/cjson/cJSON.h"
@@ -41,11 +42,13 @@ typedef struct {
     float cached_world_w, cached_world_h;
     double last_time;
     float model_position[3], model_rotation[3];
+    float model_scale;
     char current_anim_path[512];
     bool has_current_anim;
 } VrmApp;
 
 static VrmApp app = {0};
+static const char *SETTINGS_PATH = "settings.cfg";
 
 display_t display = {0};
 mouse_t mouse = {0};
@@ -55,6 +58,8 @@ extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness, g_spring_cloth_drag, g_spring_cloth_gravity, g_spring_cloth_taper;
 
 static void update_ui_window_layout(void);
+static void update_model_from_drag(int dx, int dy);
+static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
 static void show_ui_window(void);
 static void hide_ui_window(void);
@@ -134,7 +139,9 @@ static void msaa_resize(VrmApp *s, int w, int h) {
 static void update_window_for_zoom(void) {
     if (!app.auto_resize || !app.model_loaded || app.cached_world_w <= 0) return;
     float fov = 0.785f, scale = 1.0f / (app.camera.distance * tanf(fov * 0.5f));
-    int base = 300, w = (int)(app.cached_world_w * scale * base), h = (int)(app.cached_world_h * scale * base);
+    float model_scale = app.model_scale > 0.0f ? app.model_scale : 1.0f;
+    int base = 300, w = (int)(app.cached_world_w * model_scale * scale * base),
+        h = (int)(app.cached_world_h * model_scale * scale * base);
     if (w < 100) w = 100;
     if (h < 100) h = 100;
     if (w > 2000) w = 2000;
@@ -166,7 +173,9 @@ static void update_input_region(void) {
     /* Project model bounds to screen and set input region */
     camera_update(&app.camera);
     float min_x, min_y, max_x, max_y;
-    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+    float view_model[16];
+    build_view_with_model_transform(view_model);
+    gltf_get_screen_bounds_px(&app.model, view_model, (float*)app.camera.proj,
                               app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
     int win_w = 0, win_h = 0;
     platform_get_window_size(app.window, &win_w, &win_h);
@@ -340,7 +349,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (x) app.model_position[0] = (float)x->valuedouble;
         if (y) app.model_position[1] = (float)y->valuedouble;
         if (z) app.model_position[2] = (float)z->valuedouble;
-        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation);
+        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_rotation") == 0) {
@@ -348,7 +357,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (pitch) app.model_rotation[0] = (float)pitch->valuedouble;
         if (yaw) app.model_rotation[1] = (float)yaw->valuedouble;
         if (roll) app.model_rotation[2] = (float)roll->valuedouble;
-        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation);
+        renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_spring") == 0) {
@@ -373,6 +382,9 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
 /* Platform callbacks */
 static double drag_start_x, drag_start_y;
 static bool is_dragging = false;
+static bool is_model_dragging = false;
+static int model_drag_start_x = 0, model_drag_start_y = 0;
+static float model_drag_start_pos[3] = {0.0f, 0.0f, 0.0f};
 
 static void on_resize(int w, int h, void *user) {
     (void)user;
@@ -394,7 +406,14 @@ static void on_resize(int w, int h, void *user) {
 static void on_mouse_move(double x, double y, void *user) {
     (void)user;
     mouse.x = (int32_t)x; mouse.y = (int32_t)y;
-    if (is_dragging) {
+    if (is_model_dragging) {
+        int dx = mouse.x - model_drag_start_x;
+        int dy = mouse.y - model_drag_start_y;
+        app.model_position[0] = model_drag_start_pos[0];
+        app.model_position[1] = model_drag_start_pos[1];
+        app.model_position[2] = model_drag_start_pos[2];
+        update_model_from_drag(dx, dy);
+    } else if (is_dragging) {
         app.camera.azimuth += (float)(x - drag_start_x) * 0.01f;
         app.camera.polar += (float)(y - drag_start_y) * 0.01f;
         if (app.camera.polar < 0.1f) app.camera.polar = 0.1f;
@@ -411,13 +430,26 @@ static void on_mouse_button(int button, int action, void *user) {
     mouse.y = (int32_t)cy;
     if (button == PLATFORM_MOUSE_LEFT) {
         mouse.button_l = action;
-        is_dragging = action;
-        if (action) { drag_start_x = mouse.x; drag_start_y = mouse.y; }
+        if (action && model_hit_test(mouse.x, mouse.y)) {
+            is_model_dragging = true;
+            model_drag_start_x = mouse.x;
+            model_drag_start_y = mouse.y;
+            model_drag_start_pos[0] = app.model_position[0];
+            model_drag_start_pos[1] = app.model_position[1];
+            model_drag_start_pos[2] = app.model_position[2];
+        }
+        if (!action) {
+            is_model_dragging = false;
+        }
     } else if (button == PLATFORM_MOUSE_RIGHT) {
         mouse.button_r = action;
         if (action && model_hit_test(mouse.x, mouse.y)) {
             show_ui_window();
         }
+    } else if (button == PLATFORM_MOUSE_MIDDLE) {
+        mouse.button_m = action;
+        is_dragging = action;
+        if (action) { drag_start_x = mouse.x; drag_start_y = mouse.y; }
     }
 }
 
@@ -444,12 +476,14 @@ static void on_ui_mouse_button(int button, int action, void *user) {
         mouse.button_l = action;
     } else if (button == PLATFORM_MOUSE_RIGHT) {
         mouse.button_r = action;
+    } else if (button == PLATFORM_MOUSE_MIDDLE) {
+        mouse.button_m = action;
     }
     if (app.ui && app.ui_visible) {
         int hit = ui_get_element_id(app.ui, mouse.x, mouse.y);
         printf("UI debug: ui_mouse_button btn=%d action=%d hit=%d\n", button, action, hit);
     }
-    if (!action && app.ui_visible) {
+    if (!action && app.ui_visible && button == PLATFORM_MOUSE_LEFT) {
         app.ui_pending_close = true;
     }
 }
@@ -464,10 +498,11 @@ static void on_ui_key(int key, int action, void *user) {
 
 static void on_scroll(double dx, double dy, void *user) {
     (void)user; (void)dx;
-    if (dy > 0) app.camera.distance *= 0.9f;
-    else if (dy < 0) app.camera.distance *= 1.1f;
-    if (app.camera.distance < 0.5f) app.camera.distance = 0.5f;
-    if (app.camera.distance > 10.0f) app.camera.distance = 10.0f;
+    if (dy > 0) app.model_scale *= 1.1f;
+    else if (dy < 0) app.model_scale *= 0.9f;
+    if (app.model_scale < 0.1f) app.model_scale = 0.1f;
+    if (app.model_scale > 10.0f) app.model_scale = 10.0f;
+    renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
     update_window_for_zoom();
 }
 
@@ -503,7 +538,9 @@ static float compute_model_radius_px(void) {
 
     float min_x, min_y, max_x, max_y;
     camera_update(&app.camera);
-    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+    float view_model[16];
+    build_view_with_model_transform(view_model);
+    gltf_get_screen_bounds_px(&app.model, view_model, (float*)app.camera.proj,
                               app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
     int win_w = 0, win_h = 0;
     platform_get_window_size(app.window, &win_w, &win_h);
@@ -516,28 +553,36 @@ static float compute_model_radius_px(void) {
     return radius * 0.75f;
 }
 
+static void update_main_window_layout(void) {
+    if (!app.window) return;
+
+    int wx = 0, wy = 0, ww = 0, wh = 0;
+    platform_get_window_workarea(app.window, &wx, &wy, &ww, &wh);
+    if (ww > 0 && wh > 0) {
+        platform_resize_window(app.window, ww, wh);
+        platform_move_window(app.window, wx, wy);
+    }
+}
+
 static void update_ui_window_layout(void) {
     if (!app.ui_window || !app.ui_visible) return;
 
-    int mw = 0, mh = 0, mx = 0, my = 0;
-    platform_get_window_size(app.window, &mw, &mh);
-    platform_get_window_pos(app.window, &mx, &my);
-
-    int ui_w = mw * 2;
-    int ui_h = mh * 2;
-
-    int uix = mx - mw / 2;
-    int uiy = my - mh / 2;
-
     int wx = 0, wy = 0, ww = 0, wh = 0;
-    platform_get_primary_workarea(&wx, &wy, &ww, &wh);
+    platform_get_window_workarea(app.window, &wx, &wy, &ww, &wh);
+    int ui_w = 0, ui_h = 0, uix = 0, uiy = 0;
     if (ww > 0 && wh > 0) {
-        if (ui_w > ww) ui_w = ww;
-        if (ui_h > wh) ui_h = wh;
-        if (uix < wx) uix = wx;
-        if (uiy < wy) uiy = wy;
-        if (uix + ui_w > wx + ww) uix = wx + ww - ui_w;
-        if (uiy + ui_h > wy + wh) uiy = wy + wh - ui_h;
+        ui_w = ww;
+        ui_h = wh;
+        uix = wx;
+        uiy = wy;
+    } else {
+        int mw = 0, mh = 0, mx = 0, my = 0;
+        platform_get_window_size(app.window, &mw, &mh);
+        platform_get_window_pos(app.window, &mx, &my);
+        ui_w = mw * 2;
+        ui_h = mh * 2;
+        uix = mx - mw / 2;
+        uiy = my - mh / 2;
     }
 
     platform_resize_window(app.ui_window, ui_w, ui_h);
@@ -545,16 +590,82 @@ static void update_ui_window_layout(void) {
 
     platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width, &app.ui_fb_height);
     update_display_metrics_for_window(app.ui_window);
+}
+
+static void update_ui_input_region(void) {
+    if (!app.ui_window || !app.ui || !app.ui_visible) return;
+
+    PlatformRect rects[8];
+    int rect_count = 0;
+
+    int32_t panel_ids[4];
+    int panel_count = debug_ui_get_panel_ids(panel_ids, 4);
+    for (int i = 0; i < panel_count && rect_count < (int)(sizeof(rects) / sizeof(rects[0])); i++) {
+        int x = 0, y = 0;
+        if (ui_get_element_position(app.ui, (uint32_t)panel_ids[i], &x, &y) == 0) {
+            int w = ui_get_element_width(app.ui, (uint32_t)panel_ids[i]);
+            int h = ui_get_element_height(app.ui, (uint32_t)panel_ids[i]);
+            if (w > 0 && h > 0) {
+                rects[rect_count++] = (PlatformRect){ x, y, w, h };
+            }
+        }
+    }
+
+    if (app.pie_menu_id >= 0 && rect_count < (int)(sizeof(rects) / sizeof(rects[0]))) {
+        int x = 0, y = 0;
+        if (ui_get_element_position(app.ui, (uint32_t)app.pie_menu_id, &x, &y) == 0) {
+            int w = ui_get_element_width(app.ui, (uint32_t)app.pie_menu_id);
+            int h = ui_get_element_height(app.ui, (uint32_t)app.pie_menu_id);
+            if (w > 0 && h > 0) {
+                rects[rect_count++] = (PlatformRect){ x, y, w, h };
+            }
+        }
+    }
+
+    if (rect_count > 0) {
+        platform_set_input_regions(app.ui_window, rects, rect_count);
+    } else {
+        platform_clear_input_region(app.ui_window);
+    }
+}
+
+static void update_model_from_drag(int dx, int dy) {
+    if (!app.model_loaded) return;
     int win_w = 0, win_h = 0;
-    platform_get_window_size(app.ui_window, &win_w, &win_h);
-    platform_set_input_region(app.ui_window, 0, 0, win_w, win_h);
+    platform_get_window_size(app.window, &win_w, &win_h);
+    if (win_w <= 0 || win_h <= 0) return;
+
+    float view_h = 2.0f * app.camera.distance * tanf(app.camera.fov * 0.5f);
+    float view_w = view_h * app.camera.aspect;
+    float world_per_px_x = view_w / (float)win_w;
+    float world_per_px_y = view_h / (float)win_h;
+
+    app.model_position[0] += -dx * world_per_px_x;
+    app.model_position[1] += -dy * world_per_px_y;
+    renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
+}
+
+static void build_view_with_model_transform(float out_view[16]) {
+    float *view = (float *)app.camera.view;
+    float *model = app.renderer.model_transform;
+    for (int col = 0; col < 4; col++) {
+        for (int row = 0; row < 4; row++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                sum += view[k * 4 + row] * model[col * 4 + k];
+            }
+            out_view[col * 4 + row] = sum;
+        }
+    }
 }
 
 static bool model_hit_test(int x, int y) {
     if (!app.model_loaded || app.fb_width <= 0 || app.fb_height <= 0) return false;
     float min_x, min_y, max_x, max_y;
     camera_update(&app.camera);
-    gltf_get_screen_bounds_px(&app.model, (float*)app.camera.view, (float*)app.camera.proj,
+    float view_model[16];
+    build_view_with_model_transform(view_model);
+    gltf_get_screen_bounds_px(&app.model, view_model, (float*)app.camera.proj,
                               app.fb_width, app.fb_height, &min_x, &min_y, &max_x, &max_y);
     int win_w = 0, win_h = 0;
     platform_get_window_size(app.window, &win_w, &win_h);
@@ -632,6 +743,8 @@ int main(int argc, char *argv[]) {
 
     platform_make_context_current(app.window);
 
+    update_main_window_layout();
+
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
     if (!renderer_init(&app.renderer)) { fprintf(stderr, "Failed to init renderer\n"); return 1; }
 
@@ -650,6 +763,32 @@ int main(int argc, char *argv[]) {
 
     camera_init(&app.camera);
     app.camera.distance = 3.0f; app.camera.target[1] = 0.8f;
+    app.model_scale = 1.0f;
+    {
+        Settings settings = {0};
+        if (settings_load(SETTINGS_PATH, &settings)) {
+            if (settings.has_camera_distance) {
+                float saved_distance = settings.camera_distance;
+                if (saved_distance < 0.5f) saved_distance = 0.5f;
+                if (saved_distance > 10.0f) saved_distance = 10.0f;
+                app.camera.distance = saved_distance;
+            }
+            if (settings.has_model_scale) {
+                float saved_scale = settings.model_scale;
+                if (saved_scale < 0.1f) saved_scale = 0.1f;
+                if (saved_scale > 10.0f) saved_scale = 10.0f;
+                app.model_scale = saved_scale;
+            }
+            if (settings.has_model_position) {
+                app.model_position[0] = settings.model_position[0];
+                app.model_position[1] = settings.model_position[1];
+                app.model_position[2] = settings.model_position[2];
+            }
+            if (settings.has_model_position || settings.has_model_scale) {
+                renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
+            }
+        }
+    }
     app.camera.polar = 1.57f; app.camera.azimuth = 3.14f;
     app.camera.aspect = (float)w / (float)h;
 
@@ -738,8 +877,13 @@ int main(int argc, char *argv[]) {
             } else {
                 ui_render(app.ui);
             }
+            update_ui_input_region();
             if (app.ui_pending_close) {
                 app.ui_pending_close = false;
+                if (!debug_ui_has_open_panels()) {
+                    printf("UI debug: auto-closing UI (no panels)\n");
+                    hide_ui_window();
+                }
             }
             if (debug_ui_consume_close_request()) {
                 debug_ui_prepare_for_close();
@@ -747,12 +891,27 @@ int main(int argc, char *argv[]) {
                 mouse.button_r = 0;
                 mouse.button_m = 0;
                 ui_render(app.ui);
-                printf("UI debug: close request consumed\n");
-                hide_ui_window();
+                if (debug_ui_consume_force_close_request() || !debug_ui_has_open_panels()) {
+                    printf("UI debug: close request consumed\n");
+                    hide_ui_window();
+                } else {
+                    printf("UI debug: close request ignored (panels still open)\n");
+                }
             }
             platform_swap_buffers(app.ui_window);
         }
     }
+
+    Settings settings = {0};
+    settings.has_camera_distance = true;
+    settings.camera_distance = app.camera.distance;
+    settings.has_model_position = true;
+    settings.model_position[0] = app.model_position[0];
+    settings.model_position[1] = app.model_position[1];
+    settings.model_position[2] = app.model_position[2];
+    settings.has_model_scale = true;
+    settings.model_scale = app.model_scale;
+    settings_save(SETTINGS_PATH, &settings);
 
     gltf_unload(&app.model);
     renderer_cleanup(&app.renderer);

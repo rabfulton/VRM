@@ -903,15 +903,15 @@ void renderer_toggle_shader(Renderer *r) {
   }
 }
 
-void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg) {
+void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg, float scale) {
   /* Build transform: T * Ry * Rx * Rz (yaw, pitch, roll order) */
   float cx = cosf(rot_deg[0] * 0.0174533f), sx = sinf(rot_deg[0] * 0.0174533f);
   float cy = cosf(rot_deg[1] * 0.0174533f), sy = sinf(rot_deg[1] * 0.0174533f);
   float cz = cosf(rot_deg[2] * 0.0174533f), sz = sinf(rot_deg[2] * 0.0174533f);
   
   float *m = r->model_transform;
-  m[0] = cy*cz + sy*sx*sz;  m[4] = -cy*sz + sy*sx*cz; m[8]  = sy*cx; m[12] = pos[0];
-  m[1] = cx*sz;             m[5] = cx*cz;             m[9]  = -sx;   m[13] = pos[1];
-  m[2] = -sy*cz + cy*sx*sz; m[6] = sy*sz + cy*sx*cz;  m[10] = cy*cx; m[14] = pos[2];
+  m[0] = (cy*cz + sy*sx*sz) * scale;  m[4] = (-cy*sz + sy*sx*cz) * scale; m[8]  = (sy*cx) * scale; m[12] = pos[0];
+  m[1] = (cx*sz) * scale;             m[5] = (cx*cz) * scale;             m[9]  = (-sx) * scale;   m[13] = pos[1];
+  m[2] = (-sy*cz + cy*sx*sz) * scale; m[6] = (sy*sz + cy*sx*cz) * scale;  m[10] = (cy*cx) * scale; m[14] = pos[2];
   m[3] = 0;                 m[7] = 0;                 m[11] = 0;     m[15] = 1;
 }
