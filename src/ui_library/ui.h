@@ -256,7 +256,7 @@ typedef struct {
 
 typedef struct {
 	// need a text attributes struct(optional for user)
-	int width;
+	int width; // todo auto width
 	int selected;
 	char **items;
 	uint8_t no_of_items;

@@ -903,11 +903,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       glUniform1i(r->u_shadow_comp_tex, 0);
       glUniform2f(r->u_shadow_comp_screen, (float)fb_width, (float)fb_height);
       glUniform2f(r->u_shadow_comp_offset, -20.0f, 10.0f);
-      glUniform1f(r->u_shadow_comp_alpha, 0.25f);
+      glUniform1f(r->u_shadow_comp_alpha, 0.4f);
 
       glDisable(GL_DEPTH_TEST);
       glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       glBindVertexArray(r->shadow_quad_vao);
       glDrawArrays(GL_TRIANGLES, 0, 6);
       glBindVertexArray(0);

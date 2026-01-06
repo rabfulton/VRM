@@ -135,6 +135,7 @@ void debug_ui_prepare_for_close(void) {
         spring_menu_close_pending = 0;
         if (debug_ui && spring_menu_id >= 0) {
             ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
+            spring_menu_id = -1;
         }
         spring_menu_id = -1;
         for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
@@ -145,8 +146,9 @@ void debug_ui_prepare_for_close(void) {
         anim_menu_close_pending = 0;
         if (debug_ui && anim_menu_id >= 0) {
             ui_element_delete(debug_ui, (uint32_t)anim_menu_id);
+            anim_menu_id = -1;
         }
-        anim_menu_id = -1;
+        //anim_menu_id = -1;
         for (int i = 0; i < ANIM_PARAM_MAX_ELEMENT; i++) {
             anim_param_ids[i] = 0;
         }
@@ -162,6 +164,7 @@ void debug_ui_reset_menus(void) {
     anim_close_guard = 0;
     if (debug_ui && spring_menu_id >= 0) {
         ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
+        spring_menu_id = -1;
     }
     spring_menu_id = -1;
     for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
@@ -169,6 +172,7 @@ void debug_ui_reset_menus(void) {
     }
     if (debug_ui && anim_menu_id >= 0) {
         ui_element_delete(debug_ui, (uint32_t)anim_menu_id);
+        anim_menu_id = -1;
     }
     anim_menu_id = -1;
     for (int i = 0; i < ANIM_PARAM_MAX_ELEMENT; i++) {

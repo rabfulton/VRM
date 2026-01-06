@@ -562,6 +562,9 @@ int32_t ui_element_init(ui_interface_t *ui, void *data, uint16_t count, uint16_t
 	}
 	ui->modified = TEXT_MODIFIED | GEOM_MODIFIED | GEOM_SIZE_MODIFIED;
 	ui->active_elements += 1;
+	#ifdef LOG_ELEMENTS
+	    ui_log_elements(ui);
+	#endif
 	if (post_fn){
 		int ret_id = post_fn(ui, id);
 		return ret_id;
@@ -866,6 +869,7 @@ int32_t ui_get_element_id(ui_interface_t *ui, int32_t x, int32_t y){
 // External function not for array indices
 int ui_element_delete(ui_interface_t *ui, uint32_t uid){
 	
+	printf("UI_LIBRARY: Deleting element %d\n", uid);
 	int id = ui_find_array_index(ui, uid);
 	if (id == -1){
 		log("ERROR: Invalid UUID in ui_element_delete uid = %d\n", uid);
@@ -4365,7 +4369,7 @@ static int ui_pie_menu_activate(ui_interface_t *ui, uint32_t id){
 		ui_position_element(ui, e->uuid, pos.x, pos.y);
 		// e->flags &= !UI_HIDDEN;
 	}
-	printf("UI_LIBRARY: Actvate Pie Menu at: %d, %d\n", e->x, e->y);
+	//printf("UI_LIBRARY: Actvate Pie Menu at: %d, %d\n", e->x, e->y);
 	ui->action = ui_pie_menu_animate;
 	return 0;
 }
@@ -8650,7 +8654,7 @@ static void ui_update_active_element(ui_interface_t *ui, uint16_t id){
 	// -------------------------------------------------------------------
 	if (MOUSE_M && (ui->action_flags & MIDDLE_HELD)){
 		if (flags & UI_MOVABLE){
-			ui_move_element(ui, id, offset_x, offset_y);
+			ui_move_element(ui, ui->elements[id].uuid, offset_x, offset_y);
 		}
 	}
 	if (MOUSE_L && (ui->action_flags & LEFT_HELD)){
