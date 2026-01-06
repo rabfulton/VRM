@@ -215,11 +215,9 @@ static void compute_world_bounds(GltfModel *model, float *out_min, float *out_ma
 }
 
 void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
-                                   const float *view, const float *proj,
-                                   float *out_ndc_w, float *out_ndc_h) {
-  (void)view; (void)proj; /* Now computing world bounds, not NDC */
-  *out_ndc_w = 0.5f;
-  *out_ndc_h = 1.0f;
+                                   float *out_world_w, float *out_world_h) {
+  *out_world_w = 0.5f;
+  *out_world_h = 1.0f;
   
   if (!model || !anim_path || model->animation_count == 0) return;
 
@@ -258,8 +256,8 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
       AnimConfig cfg = {0};
       if (anim_config_load(anim_path, &cfg)) {
         if (cfg.has_bounds_world_w && cfg.has_bounds_world_h) {
-          *out_ndc_w = cfg.bounds_world_w;
-          *out_ndc_h = cfg.bounds_world_h;
+          *out_world_w = cfg.bounds_world_w;
+          *out_world_h = cfg.bounds_world_h;
           return;
         }
       }
@@ -294,8 +292,8 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   world_w = (global_max[0] - global_min[0]) * 1.3f;
   world_h = (global_max[1] - global_min[1]) * 1.3f;
   
-  *out_ndc_w = world_w;
-  *out_ndc_h = world_h;
+  *out_world_w = world_w;
+  *out_world_h = world_h;
   
   /* Write cache to config */
   AnimConfig cfg = {0};

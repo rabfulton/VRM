@@ -88,6 +88,22 @@ bool settings_load(const char *path, Settings *out_settings) {
                 out_settings->has_window_position = true;
                 found = true;
             }
+        } else if (strcmp(key, "window_size_w") == 0) {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end && end != val) {
+                out_settings->window_size[0] = (int)v;
+                out_settings->has_window_size = true;
+                found = true;
+            }
+        } else if (strcmp(key, "window_size_h") == 0) {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end && end != val) {
+                out_settings->window_size[1] = (int)v;
+                out_settings->has_window_size = true;
+                found = true;
+            }
         }
     }
     fclose(f);
@@ -112,6 +128,10 @@ bool settings_save(const char *path, const Settings *settings) {
     if (settings->has_window_position) {
         fprintf(f, "window_pos_x=%d\n", settings->window_pos[0]);
         fprintf(f, "window_pos_y=%d\n", settings->window_pos[1]);
+    }
+    if (settings->has_window_size) {
+        fprintf(f, "window_size_w=%d\n", settings->window_size[0]);
+        fprintf(f, "window_size_h=%d\n", settings->window_size[1]);
     }
     fclose(f);
     return true;

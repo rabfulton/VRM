@@ -269,7 +269,6 @@ void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const 
 
 /* Compute max bounds over entire animation, with caching */
 void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
-                                   const float *view, const float *proj,
-                                   float *out_ndc_w, float *out_ndc_h);
+                                   float *out_world_w, float *out_world_h);
 
 #endif /* GLTF_LOADER_H */

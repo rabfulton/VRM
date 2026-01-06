@@ -51,7 +51,9 @@ static VrmApp app = {0};
 static const char *SETTINGS_PATH = "settings.cfg";
 
 display_t display = {0};
-mouse_t mouse = {0};
+mouse_t mouse = {0};  /* For UI library */
+static int model_mouse_x = 0, model_mouse_y = 0;  /* For model window */
+static int model_mouse_buttons[3] = {0};  /* L, R, M */
 gl_buffer_t gl_buffer_default = {0};
 extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 extern int g_spring_cloth_mode;
@@ -136,24 +138,33 @@ static void msaa_resize(VrmApp *s, int w, int h) {
 }
 
 static void update_window_for_zoom(void) {
-    if (!app.auto_resize || !app.model_loaded || app.cached_world_w <= 0) return;
-    float fov = 0.785f, scale = 1.0f / (app.camera.distance * tanf(fov * 0.5f));
-    float model_scale = app.model_scale > 0.0f ? app.model_scale : 1.0f;
-    float margin = 1.1f;
-    int base = 300, w = (int)(app.cached_world_w * model_scale * scale * base * margin),
-        h = (int)(app.cached_world_h * model_scale * scale * base * margin);
+    if (!app.auto_resize || !app.model_loaded) return;
+    
+    /* Get current window position and size */
+    int old_x = 0, old_y = 0, old_w = 0, old_h = 0;
+    platform_get_window_pos(app.window, &old_x, &old_y);
+    platform_get_window_size(app.window, &old_w, &old_h);
+    
+    /* Calculate new size */
+    int base_w = 300;
+    int base_h = 550;
+    int w = (int)(base_w * app.model_scale);
+    int h = (int)(base_h * app.model_scale);
     if (w < 100) w = 100;
     if (h < 100) h = 100;
-    printf("UI debug: bounds=(%.3f,%.3f) model_scale=%.3f scale=%.3f margin=%.2f size=(%d,%d)\n",
-           app.cached_world_w, app.cached_world_h, model_scale, scale, margin, w, h);
+    
+    /* Keep window centered on same point */
+    int new_x = old_x + (old_w - w) / 2;
+    int new_y = old_y + (old_h - h) / 2;
+    
     platform_resize_window(app.window, w, h);
+    platform_move_window(app.window, new_x, new_y);
     update_ui_window_layout();
 }
 
 static void compute_and_cache_bounds(const char *anim_path) {
     if (!app.model_loaded) return;
-    camera_update(&app.camera);
-    gltf_compute_animation_bounds(&app.model, anim_path, (float*)app.camera.view, (float*)app.camera.proj, &app.cached_world_w, &app.cached_world_h);
+    gltf_compute_animation_bounds(&app.model, anim_path, &app.cached_world_w, &app.cached_world_h);
     update_window_for_zoom();
 }
 
@@ -405,12 +416,13 @@ static void on_resize(int w, int h, void *user) {
 
 static void on_mouse_move(double x, double y, void *user) {
     PlatformWindow *win = (PlatformWindow *)user;
-    mouse.x = (int32_t)x; mouse.y = (int32_t)y;
+    model_mouse_x = (int)x;
+    model_mouse_y = (int)y;
     if (is_window_dragging) {
         int wx = 0, wy = 0;
         platform_get_window_pos(win, &wx, &wy);
-        int gx = wx + mouse.x;
-        int gy = wy + mouse.y;
+        int gx = wx + model_mouse_x;
+        int gy = wy + model_mouse_y;
         int dx = gx - window_drag_start_x;
         int dy = gy - window_drag_start_y;
         platform_move_window(win, window_drag_start_pos[0] + dx, window_drag_start_pos[1] + dy);
@@ -427,15 +439,15 @@ static void on_mouse_button(int button, int action, void *user) {
     PlatformWindow *win = (PlatformWindow *)user;
     double cx = 0.0, cy = 0.0;
     platform_get_cursor_pos(win, &cx, &cy);
-    mouse.x = (int32_t)cx;
-    mouse.y = (int32_t)cy;
+    model_mouse_x = (int)cx;
+    model_mouse_y = (int)cy;
     if (button == PLATFORM_MOUSE_LEFT) {
-        mouse.button_l = action;
-        if (action && model_hit_test(mouse.x, mouse.y)) {
+        model_mouse_buttons[0] = action;
+        if (action && model_hit_test(model_mouse_x, model_mouse_y)) {
             int wx = 0, wy = 0;
             platform_get_window_pos(win, &wx, &wy);
-            window_drag_start_x = wx + mouse.x;
-            window_drag_start_y = wy + mouse.y;
+            window_drag_start_x = wx + model_mouse_x;
+            window_drag_start_y = wy + model_mouse_y;
             window_drag_start_pos[0] = wx;
             window_drag_start_pos[1] = wy;
             is_window_dragging = true;
@@ -444,14 +456,14 @@ static void on_mouse_button(int button, int action, void *user) {
             is_window_dragging = false;
         }
     } else if (button == PLATFORM_MOUSE_RIGHT) {
-        mouse.button_r = action;
-        if (action && model_hit_test(mouse.x, mouse.y)) {
+        model_mouse_buttons[1] = action;
+        if (action && model_hit_test(model_mouse_x, model_mouse_y)) {
             show_ui_window();
         }
     } else if (button == PLATFORM_MOUSE_MIDDLE) {
-        mouse.button_m = action;
+        model_mouse_buttons[2] = action;
         is_dragging = action;
-        if (action) { drag_start_x = mouse.x; drag_start_y = mouse.y; }
+        if (action) { drag_start_x = model_mouse_x; drag_start_y = model_mouse_y; }
     }
 }
 
@@ -504,6 +516,11 @@ static void on_scroll(double dx, double dy, void *user) {
     else if (dy < 0) app.model_scale *= 0.9f;
     if (app.model_scale < 0.1f) app.model_scale = 0.1f;
     if (app.model_scale > 10.0f) app.model_scale = 10.0f;
+    
+    /* Scale camera distance and target to keep model in view */
+    app.camera.distance = 3.0f * app.model_scale;
+    app.camera.target[1] = 0.8f * app.model_scale;
+    
     renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
     update_window_for_zoom();
 }
@@ -658,19 +675,28 @@ static void show_ui_window(void) {
     app.ui_visible = true;
     app.ui_force_pie_open = false;
     app.ui_force_pie_open_pending = true;
+    
+    /* Translate mouse coordinates from model window to UI window */
+    int mx = 0, my = 0, ux = 0, uy = 0;
+    platform_get_window_pos(app.window, &mx, &my);
+    platform_get_window_pos(app.ui_window, &ux, &uy);
+    int translated_x = model_mouse_x + (mx - ux);
+    int translated_y = model_mouse_y + (my - uy);
+    
+    /* Set UI mouse to translated coords */
+    mouse.x = translated_x;
+    mouse.y = translated_y;
+    
     app.pie_menu_id = debug_ui_build_pie_menu(app.ui, app.pie_menu_id, compute_model_radius_px());
+    
+    /* Explicitly position pie menu at translated coordinates */
+    ui_position_element(app.ui, app.pie_menu_id, translated_x, translated_y);
+    
     update_ui_window_layout();
     platform_show_window(app.ui_window);
     mouse.button_l = 0;
     mouse.button_r = 0;
     mouse.button_m = 0;
-    printf("UI debug: show_ui_window pie_id=%d force_open=%d\n", app.pie_menu_id, app.ui_force_pie_open);
-
-    int mx = 0, my = 0, ux = 0, uy = 0;
-    platform_get_window_pos(app.window, &mx, &my);
-    platform_get_window_pos(app.ui_window, &ux, &uy);
-    mouse.x = (int32_t)(mouse.x + (mx - ux));
-    mouse.y = (int32_t)(mouse.y + (my - uy));
 }
 
 static void hide_ui_window(void) {
@@ -762,8 +788,14 @@ int main(int argc, char *argv[]) {
             if (settings.has_window_position) {
                 platform_move_window(app.window, settings.window_pos[0], settings.window_pos[1]);
             }
+            if (settings.has_window_size) {
+                platform_resize_window(app.window, settings.window_size[0], settings.window_size[1]);
+            }
             if (settings.has_model_position || settings.has_model_scale) {
                 renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
+                /* Update camera to match scale */
+                app.camera.distance = 3.0f * app.model_scale;
+                app.camera.target[1] = 0.8f * app.model_scale;
             }
         }
     }
@@ -890,11 +922,15 @@ int main(int argc, char *argv[]) {
     settings.has_model_scale = true;
     settings.model_scale = app.model_scale;
     {
-        int wx = 0, wy = 0;
+        int wx = 0, wy = 0, ww = 0, wh = 0;
         platform_get_window_pos(app.window, &wx, &wy);
+        platform_get_window_size(app.window, &ww, &wh);
         settings.has_window_position = true;
         settings.window_pos[0] = wx;
         settings.window_pos[1] = wy;
+        settings.has_window_size = true;
+        settings.window_size[0] = ww;
+        settings.window_size[1] = wh;
     }
     settings_save(SETTINGS_PATH, &settings);
 

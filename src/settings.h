@@ -12,6 +12,8 @@ typedef struct {
     float model_scale;
     bool has_window_position;
     int window_pos[2];
+    bool has_window_size;
+    int window_size[2];
 } Settings;
 
 bool settings_load(const char *path, Settings *out_settings);
