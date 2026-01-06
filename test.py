@@ -4,8 +4,6 @@
 Controls:
   n/p or space  - Next/previous animation
   b             - Blend to next animation (crossfade)
-  l             - Toggle loop blending on/off
-  s             - Toggle smooth loop (skip spring reset on loop)
   [/]           - Adjust blend duration (-/+ 0.1s)
   x/y/z         - Set axis correction (rotX/rotY/rotZ)
   a             - Axis correction auto
@@ -64,8 +62,6 @@ stiff, drag, grav = 1.0, 1.0, 1.0
 
 # Blend params
 blend_dur = 2.0
-loop_blend = False
-smooth_loop = False
 
 # Axis correction mode
 axis_mode = 3  # Default rotY 180
@@ -74,7 +70,9 @@ axis_names = ["none", "auto", "rotX 180", "rotY 180", "rotZ 180"]
 def play(i, blend=False):
     cmd({"action": "load_animation", "path": anims[i]})
     if blend:
-        cmd({"action": "blend_to", "index": 0, "duration": blend_dur})
+        cmd({"action": "blend_to", "index": 0, "duration": blend_dur, "loop": True})
+    else:
+        cmd({"action": "blend_to", "index": 0, "duration": 3.0, "loop": True})
     cmd({"action": "play"})
     print(f"[{i+1}/{len(anims)}] {os.path.basename(anims[i])}" + (" (blended)" if blend else ""))
 
@@ -83,7 +81,7 @@ def show_spring():
     print(f"  Spring: stiff={stiff:.1f} drag={drag:.1f} grav={grav:.1f}")
 
 def show_blend():
-    print(f"  Blend: duration={blend_dur:.2f}s loop={loop_blend} smooth={smooth_loop}")
+    print(f"  Blend: duration={blend_dur:.2f}s")
 
 def set_axis(mode):
     global axis_mode
@@ -94,9 +92,7 @@ def set_axis(mode):
 old = termios.tcgetattr(sys.stdin)
 try:
     tty.setcbreak(sys.stdin.fileno())
-    print("p=anim, b=blend, l=Loop Blending, [/]=dur, x/y/z=axis, 7-0=spring, r=reset, q=quit")
-    print("s = smooth loop - do not reset springs.")
-    print("l = blending - Toggle loop blending on/off")
+    print("p=anim, b=blend, [/]=dur, x/y/z=axis, 7-0=spring, r=reset, q=quit")
     print("x/y/z = Set axis correction (rotX/rotY/rotZ), a=auto, v=none")
     print("7/8 - Adjust spring stiffness")
     print("9/0 - Adjust spring drag")
@@ -111,14 +107,6 @@ try:
             elif k in "nN ": idx = (idx + 1) % len(anims); play(idx)
             elif k in "pP": idx = (idx - 1) % len(anims); play(idx)
             elif k in "bB": idx = (idx + 1) % len(anims); play(idx, blend=True)
-            elif k in "lL":
-                loop_blend = not loop_blend
-                cmd({"action": "set_loop_blend", "duration": blend_dur if loop_blend else 0})
-                show_blend()
-            elif k in "sS":
-                smooth_loop = not smooth_loop
-                cmd({"action": "set_smooth_loop", "enabled": smooth_loop})
-                show_blend()
             elif k == '[': blend_dur = max(0.05, blend_dur - 0.1); show_blend()
             elif k == ']': blend_dur = min(10.0, blend_dur + 0.1); show_blend()
             # Axis correction keys
@@ -137,7 +125,7 @@ try:
             elif k == 'r': cmd({"action": "reset_spring"}); print("  Springs reset")
     print(f"\n=== Final values ===")
     print(f"spring: stiffness={stiff:.2f} drag={drag:.2f} gravity={grav:.2f}")
-    print(f"blend: duration={blend_dur:.2f}s loop={loop_blend} smooth={smooth_loop}")
+    print(f"blend: duration={blend_dur:.2f}s")
     print(f"axis: {axis_names[axis_mode]}")
 finally:
     termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old)

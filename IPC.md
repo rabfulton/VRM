@@ -69,6 +69,18 @@ Select an animation clip by index.
 {"id": 1, "action": "set_animation", "index": 0}
 ```
 
+### blend_to
+Blend to an animation clip with optional loop/count.
+```json
+{"id": 1, "action": "blend_to", "index": 1, "duration": 0.35, "loop": true}
+```
+```json
+{"id": 1, "action": "blend_to", "index": 2, "duration": 0.35, "count": 3}
+```
+- `duration`: Blend time in seconds (default: 0.3)
+- `loop`: If true, loop indefinitely; if false, play once
+- `count`: Number of times to play the clip (1 = play once). Overrides auto-loop detection.
+
 ### set_camera
 Control the orbit camera.
 ```json

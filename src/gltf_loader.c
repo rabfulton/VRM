@@ -222,6 +222,28 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   *out_ndc_h = 1.0f;
   
   if (!model || !anim_path || model->animation_count == 0) return;
+
+  int node_count = model->node_count;
+  float *saved_t = NULL;
+  float *saved_r = NULL;
+  float *saved_s = NULL;
+  if (node_count > 0) {
+    saved_t = (float *)malloc((size_t)node_count * 3 * sizeof(float));
+    saved_r = (float *)malloc((size_t)node_count * 4 * sizeof(float));
+    saved_s = (float *)malloc((size_t)node_count * 3 * sizeof(float));
+    if (!saved_t || !saved_r || !saved_s) {
+      free(saved_t);
+      free(saved_r);
+      free(saved_s);
+      return;
+    }
+    for (int i = 0; i < node_count; i++) {
+      GltfNode *node = &model->nodes[i];
+      memcpy(&saved_t[i * 3], node->translation, 3 * sizeof(float));
+      memcpy(&saved_r[i * 4], node->rotation, 4 * sizeof(float));
+      memcpy(&saved_s[i * 3], node->scale, 3 * sizeof(float));
+    }
+  }
   
   /* Build config filename */
   char cfg_path[512];
@@ -282,4 +304,17 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   cfg.has_bounds_world_w = true;
   cfg.has_bounds_world_h = true;
   anim_config_save(anim_path, &cfg);
+
+  if (saved_t && saved_r && saved_s) {
+    for (int i = 0; i < node_count; i++) {
+      GltfNode *node = &model->nodes[i];
+      memcpy(node->translation, &saved_t[i * 3], 3 * sizeof(float));
+      memcpy(node->rotation, &saved_r[i * 4], 4 * sizeof(float));
+      memcpy(node->scale, &saved_s[i * 3], 3 * sizeof(float));
+    }
+    gltf_update_transforms(model);
+  }
+  free(saved_t);
+  free(saved_r);
+  free(saved_s);
 }

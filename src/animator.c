@@ -7,15 +7,35 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <ctype.h>
+#include <stdio.h>
 
-static float loop_blend_duration = 0.0f;
-static bool smooth_loop = false;
+float g_anim_blend_time_default = 3.0f;
+float g_anim_inertial_half_life_ratio = 0.25f;
+float g_anim_blend_group_factors[BLEND_GROUP_COUNT] = {
+    1.0f, /* root */
+    1.0f, /* spine */
+    0.8f, /* head */
+    0.9f, /* arms */
+    0.7f, /* hands */
+    1.0f, /* legs */
+    1.0f, /* feet */
+    0.5f, /* face */
+    1.0f  /* other */
+};
+
+static bool animation_is_loopable(Animator *anim, int anim_idx);
 
 void animator_init(Animator *anim) {
     memset(anim, 0, sizeof(Animator));
     anim->speed = 1.0f;
     anim->current_animation = -1;
     anim->next_animation = -1;
+    anim->loop_remaining = 0;
+    anim->next_loop_remaining = 0;
+    anim->current_loopable = false;
+    anim->next_loopable = false;
+    anim->loop_blend_active = false;
 }
 
 void animator_cleanup(Animator *anim) {
@@ -26,6 +46,36 @@ void animator_cleanup(Animator *anim) {
     anim->snap_rotations = NULL;
     anim->snap_scales = NULL;
     anim->snap_node_count = 0;
+
+    free(anim->prev_translations);
+    free(anim->prev_rotations);
+    free(anim->vel_translations);
+    free(anim->vel_rotations);
+    free(anim->prev_vel_translations);
+    free(anim->prev_vel_rotations);
+    free(anim->acc_translations);
+    free(anim->acc_rotations);
+    free(anim->off_translations);
+    free(anim->off_rotations);
+    free(anim->inertial_vel_trans);
+    free(anim->inertial_vel_rot);
+    free(anim->blend_time_factors);
+    anim->prev_translations = NULL;
+    anim->prev_rotations = NULL;
+    anim->vel_translations = NULL;
+    anim->vel_rotations = NULL;
+    anim->prev_vel_translations = NULL;
+    anim->prev_vel_rotations = NULL;
+    anim->acc_translations = NULL;
+    anim->acc_rotations = NULL;
+    anim->off_translations = NULL;
+    anim->off_rotations = NULL;
+    anim->inertial_vel_trans = NULL;
+    anim->inertial_vel_rot = NULL;
+    anim->blend_time_factors = NULL;
+    anim->motion_node_count = 0;
+    anim->motion_initialized = false;
+    anim->blend_node_count = 0;
 }
 
 void animator_set_model(Animator *anim, GltfModel *model) {
@@ -34,11 +84,88 @@ void animator_set_model(Animator *anim, GltfModel *model) {
     anim->time = 0;
     anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
     anim->next_animation = -1;
+    anim->loop_remaining = (anim->current_animation >= 0) ? animator_compute_loop_remaining(anim, anim->current_animation) : 0;
+    anim->current_loopable = (anim->current_animation >= 0) ? animation_is_loopable(anim, anim->current_animation) : false;
+    anim->next_loop_remaining = anim->loop_remaining;
+    anim->next_loopable = anim->current_loopable;
+    anim->loop_blend_active = false;
 }
 
 /* Linear interpolation */
 static float lerp(float a, float b, float t) {
     return a + t * (b - a);
+}
+
+static float ease_smoothstep(float t) {
+    if (t <= 0.0f) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static bool name_contains_ci(const char *hay, const char *needle) {
+    if (!hay || !needle || !needle[0]) return false;
+    size_t nlen = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nlen) {
+            char hc = p[i];
+            if (!hc) break;
+            char nc = needle[i];
+            if (tolower((unsigned char)hc) != tolower((unsigned char)nc)) break;
+            i++;
+        }
+        if (i == nlen) return true;
+    }
+    return false;
+}
+
+static BlendGroup classify_blend_group(const char *name) {
+    if (!name) return BLEND_GROUP_OTHER;
+    if (name_contains_ci(name, "face") || name_contains_ci(name, "jaw") || name_contains_ci(name, "eye")) {
+        return BLEND_GROUP_FACE;
+    }
+    if (name_contains_ci(name, "hand") || name_contains_ci(name, "wrist")) {
+        return BLEND_GROUP_HANDS;
+    }
+    if (name_contains_ci(name, "foot") || name_contains_ci(name, "ankle") || name_contains_ci(name, "toe")) {
+        return BLEND_GROUP_FEET;
+    }
+    if (name_contains_ci(name, "arm") || name_contains_ci(name, "shoulder") || name_contains_ci(name, "elbow") ||
+        name_contains_ci(name, "forearm")) {
+        return BLEND_GROUP_ARMS;
+    }
+    if (name_contains_ci(name, "leg") || name_contains_ci(name, "thigh") || name_contains_ci(name, "calf") ||
+        name_contains_ci(name, "knee")) {
+        return BLEND_GROUP_LEGS;
+    }
+    if (name_contains_ci(name, "head") || name_contains_ci(name, "neck")) {
+        return BLEND_GROUP_HEAD;
+    }
+    if (name_contains_ci(name, "spine") || name_contains_ci(name, "chest")) {
+        return BLEND_GROUP_SPINE;
+    }
+    if (name_contains_ci(name, "hips") || name_contains_ci(name, "pelvis") || name_contains_ci(name, "root")) {
+        return BLEND_GROUP_ROOT;
+    }
+    return BLEND_GROUP_OTHER;
+}
+
+static void ensure_blend_factors(Animator *anim) {
+    if (!anim->model) return;
+    int n = anim->model->node_count;
+    if (anim->blend_node_count >= n) return;
+
+    free(anim->blend_time_factors);
+    anim->blend_time_factors = malloc((size_t)n * sizeof(float));
+    anim->blend_node_count = n;
+
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &anim->model->nodes[i];
+        BlendGroup group = classify_blend_group(node->name);
+        float factor = g_anim_blend_group_factors[group];
+        if (factor <= 0.0f || factor > 1.0f) factor = 1.0f;
+        anim->blend_time_factors[i] = factor;
+    }
 }
 
 /* Spherical linear interpolation for quaternions */
@@ -202,36 +329,344 @@ static void sample_animation(GltfModel *model, GltfAnimation *anim, float t) {
     apply_global_anim_correction(model, anim);
 }
 
+static void quat_log_vec3(const float *q, float *out) {
+    float v[3] = {q[0], q[1], q[2]};
+    float v_len = sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+    if (v_len < 1e-8f) {
+        out[0] = 0.0f;
+        out[1] = 0.0f;
+        out[2] = 0.0f;
+        return;
+    }
+    float angle = atan2f(v_len, q[3]) * 2.0f;
+    float inv_len = 1.0f / v_len;
+    out[0] = v[0] * inv_len * (angle * 0.5f);
+    out[1] = v[1] * inv_len * (angle * 0.5f);
+    out[2] = v[2] * inv_len * (angle * 0.5f);
+}
+
+static void quat_exp_vec3(const float *v, float *out) {
+    float v_len = sqrtf(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+    if (v_len < 1e-8f) {
+        out[0] = 0.0f;
+        out[1] = 0.0f;
+        out[2] = 0.0f;
+        out[3] = 1.0f;
+        return;
+    }
+    float angle = v_len * 2.0f;
+    float inv_len = 1.0f / v_len;
+    float s = sinf(angle * 0.5f);
+    out[0] = v[0] * inv_len * s;
+    out[1] = v[1] * inv_len * s;
+    out[2] = v[2] * inv_len * s;
+    out[3] = cosf(angle * 0.5f);
+}
+
+static void ensure_motion_cache(Animator *anim) {
+    GltfModel *model = anim->model;
+    int n = model->node_count;
+
+    if (anim->motion_node_count >= n) return;
+
+    free(anim->prev_translations);
+    free(anim->prev_rotations);
+    free(anim->vel_translations);
+    free(anim->vel_rotations);
+    free(anim->prev_vel_translations);
+    free(anim->prev_vel_rotations);
+    free(anim->acc_translations);
+    free(anim->acc_rotations);
+    free(anim->off_translations);
+    free(anim->off_rotations);
+    free(anim->inertial_vel_trans);
+    free(anim->inertial_vel_rot);
+
+    anim->prev_translations = calloc((size_t)n * 3, sizeof(float));
+    anim->prev_rotations = calloc((size_t)n * 4, sizeof(float));
+    anim->vel_translations = calloc((size_t)n * 3, sizeof(float));
+    anim->vel_rotations = calloc((size_t)n * 3, sizeof(float));
+    anim->prev_vel_translations = calloc((size_t)n * 3, sizeof(float));
+    anim->prev_vel_rotations = calloc((size_t)n * 3, sizeof(float));
+    anim->acc_translations = calloc((size_t)n * 3, sizeof(float));
+    anim->acc_rotations = calloc((size_t)n * 3, sizeof(float));
+    anim->off_translations = calloc((size_t)n * 3, sizeof(float));
+    anim->off_rotations = calloc((size_t)n * 3, sizeof(float));
+    anim->inertial_vel_trans = calloc((size_t)n * 3, sizeof(float));
+    anim->inertial_vel_rot = calloc((size_t)n * 3, sizeof(float));
+    anim->motion_node_count = n;
+    anim->motion_initialized = false;
+}
+
+static void reset_inertial_offsets(Animator *anim) {
+    if (!anim->model) return;
+    ensure_motion_cache(anim);
+
+    int n = anim->model->node_count;
+    memset(anim->off_translations, 0, (size_t)n * 3 * sizeof(float));
+    memset(anim->off_rotations, 0, (size_t)n * 3 * sizeof(float));
+    if (anim->motion_initialized) {
+        memcpy(anim->inertial_vel_trans, anim->vel_translations, (size_t)n * 3 * sizeof(float));
+        memcpy(anim->inertial_vel_rot, anim->vel_rotations, (size_t)n * 3 * sizeof(float));
+    } else {
+        memset(anim->inertial_vel_trans, 0, (size_t)n * 3 * sizeof(float));
+        memset(anim->inertial_vel_rot, 0, (size_t)n * 3 * sizeof(float));
+    }
+}
+
+static void apply_inertial_offsets(Animator *anim, float dt, float half_life) {
+    if (!anim->model || !anim->motion_initialized) return;
+    if (dt <= 0.0f) return;
+
+    if (half_life <= 0.0f) return;
+    float decay = powf(0.5f, dt / half_life);
+
+    GltfModel *model = anim->model;
+    int n = model->node_count;
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        if (node->is_spring_bone) continue;
+
+        float *off_t = &anim->off_translations[i * 3];
+        float *off_r = &anim->off_rotations[i * 3];
+        float *vel_t = &anim->inertial_vel_trans[i * 3];
+        float *vel_r = &anim->inertial_vel_rot[i * 3];
+
+        off_t[0] = off_t[0] * decay + vel_t[0] * dt;
+        off_t[1] = off_t[1] * decay + vel_t[1] * dt;
+        off_t[2] = off_t[2] * decay + vel_t[2] * dt;
+        vel_t[0] *= decay;
+        vel_t[1] *= decay;
+        vel_t[2] *= decay;
+
+        off_r[0] = off_r[0] * decay + vel_r[0] * dt * 0.5f;
+        off_r[1] = off_r[1] * decay + vel_r[1] * dt * 0.5f;
+        off_r[2] = off_r[2] * decay + vel_r[2] * dt * 0.5f;
+        vel_r[0] *= decay;
+        vel_r[1] *= decay;
+        vel_r[2] *= decay;
+
+        node->translation[0] += off_t[0];
+        node->translation[1] += off_t[1];
+        node->translation[2] += off_t[2];
+
+        float q_off[4];
+        float q_out[4];
+        quat_exp_vec3(off_r, q_off);
+        quat_mul(q_off, node->rotation, q_out);
+        memcpy(node->rotation, q_out, sizeof(float) * 4);
+    }
+}
+
+static void update_motion_cache(Animator *anim, float dt) {
+    if (!anim->model || dt <= 0.0f) return;
+    ensure_motion_cache(anim);
+
+    GltfModel *model = anim->model;
+    int n = model->node_count;
+
+    if (!anim->motion_initialized) {
+        for (int i = 0; i < n; i++) {
+            GltfNode *node = &model->nodes[i];
+            memcpy(&anim->prev_translations[i * 3], node->translation, 3 * sizeof(float));
+            memcpy(&anim->prev_rotations[i * 4], node->rotation, 4 * sizeof(float));
+        }
+        anim->motion_initialized = true;
+        return;
+    }
+
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        float *prev_t = &anim->prev_translations[i * 3];
+        float *prev_r = &anim->prev_rotations[i * 4];
+        float *vel_t = &anim->vel_translations[i * 3];
+        float *vel_r = &anim->vel_rotations[i * 3];
+        float *prev_vel_t = &anim->prev_vel_translations[i * 3];
+        float *prev_vel_r = &anim->prev_vel_rotations[i * 3];
+        float *acc_t = &anim->acc_translations[i * 3];
+        float *acc_r = &anim->acc_rotations[i * 3];
+
+        if (node->is_spring_bone) {
+            vel_t[0] = vel_t[1] = vel_t[2] = 0.0f;
+            vel_r[0] = vel_r[1] = vel_r[2] = 0.0f;
+            acc_t[0] = acc_t[1] = acc_t[2] = 0.0f;
+            acc_r[0] = acc_r[1] = acc_r[2] = 0.0f;
+            memcpy(prev_t, node->translation, 3 * sizeof(float));
+            memcpy(prev_r, node->rotation, 4 * sizeof(float));
+            memcpy(prev_vel_t, vel_t, 3 * sizeof(float));
+            memcpy(prev_vel_r, vel_r, 3 * sizeof(float));
+            continue;
+        }
+
+        vel_t[0] = (node->translation[0] - prev_t[0]) / dt;
+        vel_t[1] = (node->translation[1] - prev_t[1]) / dt;
+        vel_t[2] = (node->translation[2] - prev_t[2]) / dt;
+
+        float inv_prev[4];
+        float q_delta[4];
+        quat_inv(prev_r, inv_prev);
+        quat_mul(node->rotation, inv_prev, q_delta);
+        float logv[3];
+        quat_log_vec3(q_delta, logv);
+        vel_r[0] = (2.0f * logv[0]) / dt;
+        vel_r[1] = (2.0f * logv[1]) / dt;
+        vel_r[2] = (2.0f * logv[2]) / dt;
+
+        acc_t[0] = (vel_t[0] - prev_vel_t[0]) / dt;
+        acc_t[1] = (vel_t[1] - prev_vel_t[1]) / dt;
+        acc_t[2] = (vel_t[2] - prev_vel_t[2]) / dt;
+        acc_r[0] = (vel_r[0] - prev_vel_r[0]) / dt;
+        acc_r[1] = (vel_r[1] - prev_vel_r[1]) / dt;
+        acc_r[2] = (vel_r[2] - prev_vel_r[2]) / dt;
+
+        memcpy(prev_t, node->translation, 3 * sizeof(float));
+        memcpy(prev_r, node->rotation, 4 * sizeof(float));
+        memcpy(prev_vel_t, vel_t, 3 * sizeof(float));
+        memcpy(prev_vel_r, vel_r, 3 * sizeof(float));
+    }
+}
+
+static void copy_pose_arrays(GltfModel *model, float *t, float *r, float *s) {
+    int n = model->node_count;
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        memcpy(&t[i * 3], node->translation, 3 * sizeof(float));
+        memcpy(&r[i * 4], node->rotation, 4 * sizeof(float));
+        memcpy(&s[i * 3], node->scale, 3 * sizeof(float));
+    }
+}
+
+static void restore_pose_arrays(GltfModel *model, const float *t, const float *r, const float *s) {
+    int n = model->node_count;
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        memcpy(node->translation, &t[i * 3], 3 * sizeof(float));
+        memcpy(node->rotation, &r[i * 4], 4 * sizeof(float));
+        memcpy(node->scale, &s[i * 3], 3 * sizeof(float));
+    }
+}
+
+static bool animation_is_loopable(Animator *anim, int anim_idx) {
+    if (!anim || !anim->model) return false;
+    if (anim_idx < 0 || anim_idx >= anim->model->animation_count) return false;
+
+    GltfModel *model = anim->model;
+    GltfAnimation *animation = &model->animations[anim_idx];
+    if (animation->duration <= 0.0f) return false;
+
+    int n = model->node_count;
+    float *saved_t = malloc((size_t)n * 3 * sizeof(float));
+    float *saved_r = malloc((size_t)n * 4 * sizeof(float));
+    float *saved_s = malloc((size_t)n * 3 * sizeof(float));
+    float *start_t = malloc((size_t)n * 3 * sizeof(float));
+    float *start_r = malloc((size_t)n * 4 * sizeof(float));
+    float *start_s = malloc((size_t)n * 3 * sizeof(float));
+    float *end_t = malloc((size_t)n * 3 * sizeof(float));
+    float *end_r = malloc((size_t)n * 4 * sizeof(float));
+    float *end_s = malloc((size_t)n * 3 * sizeof(float));
+
+    if (!saved_t || !saved_r || !saved_s || !start_t || !start_r || !start_s || !end_t || !end_r || !end_s) {
+        free(saved_t); free(saved_r); free(saved_s);
+        free(start_t); free(start_r); free(start_s);
+        free(end_t); free(end_r); free(end_s);
+        return false;
+    }
+
+    copy_pose_arrays(model, saved_t, saved_r, saved_s);
+
+    sample_animation(model, animation, 0.0f);
+    copy_pose_arrays(model, start_t, start_r, start_s);
+    sample_animation(model, animation, animation->duration);
+    copy_pose_arrays(model, end_t, end_r, end_s);
+
+    restore_pose_arrays(model, saved_t, saved_r, saved_s);
+    gltf_update_transforms(model);
+
+    free(saved_t); free(saved_r); free(saved_s);
+
+    const float pos_eps = 5e-3f;
+    const float pos_eps_sq = pos_eps * pos_eps;
+    const float scale_eps = 5e-3f;
+    const float rot_angle = 0.2f;
+    const float rot_dot_min = cosf(rot_angle * 0.5f);
+
+    bool loopable = true;
+    for (int i = 0; i < n; i++) {
+        GltfNode *node = &model->nodes[i];
+        if (node->is_spring_bone) continue;
+        uint8_t mask = (animation->node_mask && i < animation->node_mask_count) ? animation->node_mask[i] : 0;
+        if (mask == 0) continue;
+
+        if (mask & 1) {
+            float dx = start_t[i * 3 + 0] - end_t[i * 3 + 0];
+            float dy = start_t[i * 3 + 1] - end_t[i * 3 + 1];
+            float dz = start_t[i * 3 + 2] - end_t[i * 3 + 2];
+            float d2 = dx*dx + dy*dy + dz*dz;
+            if (d2 > pos_eps_sq) {
+                printf("Loop check fail: anim=%s node=%s idx=%d translation delta=(%.4f, %.4f, %.4f)\n",
+                       animation->name, node->name, i, dx, dy, dz);
+                loopable = false; break;
+            }
+        }
+        if (mask & 2) {
+            float dot = start_r[i * 4 + 0] * end_r[i * 4 + 0] +
+                        start_r[i * 4 + 1] * end_r[i * 4 + 1] +
+                        start_r[i * 4 + 2] * end_r[i * 4 + 2] +
+                        start_r[i * 4 + 3] * end_r[i * 4 + 3];
+            if (dot < 0.0f) dot = -dot;
+            if (dot < rot_dot_min) {
+                printf("Loop check fail: anim=%s node=%s idx=%d rotation dot=%.4f\n",
+                       animation->name, node->name, i, dot);
+                loopable = false; break;
+            }
+        }
+        if (mask & 4) {
+            float dx = start_s[i * 3 + 0] - end_s[i * 3 + 0];
+            float dy = start_s[i * 3 + 1] - end_s[i * 3 + 1];
+            float dz = start_s[i * 3 + 2] - end_s[i * 3 + 2];
+            if (fabsf(dx) > scale_eps || fabsf(dy) > scale_eps || fabsf(dz) > scale_eps) {
+                printf("Loop check fail: anim=%s node=%s idx=%d scale delta=(%.4f, %.4f, %.4f)\n",
+                       animation->name, node->name, i, dx, dy, dz);
+                loopable = false; break;
+            }
+        }
+    }
+
+    free(start_t); free(start_r); free(start_s);
+    free(end_t); free(end_r); free(end_s);
+    return loopable;
+}
+
 void animator_update(Animator *anim, float dt) {
     if (!anim->model || !anim->playing) return;
     if (anim->current_animation < 0 || anim->current_animation >= anim->model->animation_count) return;
 
     GltfModel *model = anim->model;
-    extern void spring_bones_reset(GltfModel *model);
 
     /* Blending mode */
     if (anim->next_animation >= 0) {
         anim->blend_time += dt;
-        anim->next_anim_time += dt * anim->speed;
         
         GltfAnimation *next_anim = &model->animations[anim->next_animation];
         
-        /* Wrap next animation time */
-        if (next_anim->duration > 0) {
-            while (anim->next_anim_time > next_anim->duration)
-                anim->next_anim_time -= next_anim->duration;
-        }
-        
         float t = anim->blend_time / anim->blend_duration;
         if (t >= 1.0f) {
-            t = 1.0f;
+            int prev = anim->current_animation;
+            int next = anim->next_animation;
             anim->current_animation = anim->next_animation;
             anim->time = anim->next_anim_time;
             anim->next_animation = -1;
+            anim->loop_remaining = anim->next_loop_remaining;
+            anim->current_loopable = anim->next_loopable;
+            anim->loop_blend_active = false;
+            printf("Blend complete: from=%d to=%d\n", prev, next);
+            fflush(stdout);
         }
+        float eased_t = ease_smoothstep(t);
         
-        /* Sample target animation */
+        /* Sample target animation before advancing time so we hit t=0 on blend start. */
         sample_animation(model, next_anim, anim->next_anim_time);
+        ensure_blend_factors(anim);
         
         /* Blend with snapshot */
         for (int i = 0; i < model->node_count && i < anim->snap_node_count; i++) {
@@ -242,20 +677,44 @@ void animator_update(Animator *anim, float dt) {
             float *sr = &anim->snap_rotations[i * 4];
             float *ss = &anim->snap_scales[i * 3];
             
-            node->translation[0] = lerp(st[0], node->translation[0], t);
-            node->translation[1] = lerp(st[1], node->translation[1], t);
-            node->translation[2] = lerp(st[2], node->translation[2], t);
+            float factor = (anim->blend_time_factors && i < anim->blend_node_count) ? anim->blend_time_factors[i] : 1.0f;
+            if (factor <= 0.0f || factor > 1.0f) factor = 1.0f;
+            float bone_t = eased_t;
+            if (factor < 1.0f) {
+                float denom = anim->blend_duration * factor;
+                if (denom > 0.0f) {
+                    float raw = anim->blend_time / denom;
+                    if (raw > 1.0f) raw = 1.0f;
+                    bone_t = ease_smoothstep(raw);
+                }
+            }
+
+            node->translation[0] = lerp(st[0], node->translation[0], bone_t);
+            node->translation[1] = lerp(st[1], node->translation[1], bone_t);
+            node->translation[2] = lerp(st[2], node->translation[2], bone_t);
             
             float blended_rot[4];
-            slerp(sr, node->rotation, t, blended_rot);
+            slerp(sr, node->rotation, bone_t, blended_rot);
             memcpy(node->rotation, blended_rot, sizeof(float) * 4);
             
-            node->scale[0] = lerp(ss[0], node->scale[0], t);
-            node->scale[1] = lerp(ss[1], node->scale[1], t);
-            node->scale[2] = lerp(ss[2], node->scale[2], t);
+            node->scale[0] = lerp(ss[0], node->scale[0], bone_t);
+            node->scale[1] = lerp(ss[1], node->scale[1], bone_t);
+            node->scale[2] = lerp(ss[2], node->scale[2], bone_t);
         }
-        
+
+        /* Inertialization disabled: blend should be pure A->B easing. */
+
+        if (!anim->loop_blend_active) {
+            anim->next_anim_time += dt * anim->speed;
+            /* Wrap next animation time */
+            if (next_anim->duration > 0) {
+                while (anim->next_anim_time > next_anim->duration)
+                    anim->next_anim_time -= next_anim->duration;
+            }
+        }
+
         gltf_update_transforms(model);
+        update_motion_cache(anim, dt);
         return;
     }
 
@@ -263,28 +722,46 @@ void animator_update(Animator *anim, float dt) {
     GltfAnimation *animation = &model->animations[anim->current_animation];
     anim->time += dt * anim->speed;
 
-    /* Loop with optional blend */
+    /* Loop */
     if (animation->duration > 0) {
         if (anim->time > animation->duration) {
-            if (loop_blend_duration > 0.0f) {
-                /* Start loop blend: blend from end pose to start */
-                animator_blend_to(anim, anim->current_animation, loop_blend_duration);
-                anim->next_anim_time = anim->time - animation->duration;
-                return;
+            if (anim->loop_remaining == 0) {
+                anim->time = animation->duration;
+            } else {
+                if (!anim->current_loopable) {
+                    int remaining = anim->loop_remaining;
+                    if (remaining > 0) remaining--;
+                    sample_animation(model, animation, animation->duration);
+                    gltf_update_transforms(model);
+                    animator_blend_to(anim, anim->current_animation, g_anim_blend_time_default, remaining);
+                    anim->next_anim_time = 0.0f;
+                    anim->loop_blend_active = true;
+                    return;
+                }
+                while (anim->time > animation->duration) {
+                    anim->time -= animation->duration;
+                    if (anim->loop_remaining > 0) {
+                        anim->loop_remaining--;
+                        if (anim->loop_remaining == 0) {
+                            anim->time = animation->duration;
+                            break;
+                        }
+                    }
+                }
             }
-            while (anim->time > animation->duration) {
-                anim->time -= animation->duration;
-            }
-            if (!smooth_loop) spring_bones_reset(model);
         }
         while (anim->time < 0) {
+            if (anim->loop_remaining == 0) {
+                anim->time = 0.0f;
+                break;
+            }
             anim->time += animation->duration;
-            if (!smooth_loop) spring_bones_reset(model);
         }
     }
 
     sample_animation(model, animation, anim->time);
     gltf_update_transforms(model);
+    update_motion_cache(anim, dt);
 }
 
 void animator_play(Animator *anim, float speed) {
@@ -311,6 +788,11 @@ void animator_set_animation(Animator *anim, int index) {
         anim->current_animation = index;
         anim->time = 0;
         anim->next_animation = -1;
+        anim->loop_blend_active = false;
+        anim->loop_remaining = animator_compute_loop_remaining(anim, index);
+        anim->next_loop_remaining = anim->loop_remaining;
+        anim->current_loopable = animation_is_loopable(anim, index);
+        anim->next_loopable = anim->current_loopable;
     }
 }
 
@@ -336,29 +818,36 @@ static void snapshot_pose(Animator *anim) {
     }
 }
 
-void animator_blend_to(Animator *anim, int index, float duration) {
+void animator_blend_to(Animator *anim, int index, float duration, int loop_remaining) {
     if (!anim->model) return;
     if (index < 0 || index >= anim->model->animation_count) return;
+    bool target_loopable = animation_is_loopable(anim, index);
     if (duration <= 0.0f) {
         animator_set_animation(anim, index);
+        anim->loop_remaining = loop_remaining;
+        anim->next_loop_remaining = loop_remaining;
+        anim->current_loopable = target_loopable;
+        anim->next_loopable = target_loopable;
         return;
     }
     
     snapshot_pose(anim);
+    ensure_blend_factors(anim);
+    reset_inertial_offsets(anim);
     anim->next_animation = index;
     anim->blend_time = 0.0f;
     anim->blend_duration = duration;
     anim->next_anim_time = 0.0f;
+    anim->next_loop_remaining = loop_remaining;
+    anim->next_loopable = target_loopable;
+    anim->loop_blend_active = false;
+    printf("Blend start: from=%d to=%d duration=%.2f\n",
+           anim->current_animation, index, duration);
+    fflush(stdout);
 }
 
-void animator_set_loop_blend(Animator *anim, float duration) {
-    (void)anim;
-    loop_blend_duration = duration >= 0.0f ? duration : 0.0f;
-}
-
-void animator_set_smooth_loop(Animator *anim, bool enabled) {
-    (void)anim;
-    smooth_loop = enabled;
+int animator_compute_loop_remaining(Animator *anim, int index) {
+    return animation_is_loopable(anim, index) ? -1 : 0;
 }
 
 void animator_sample_frame(GltfModel *model, int anim_idx, float time) {

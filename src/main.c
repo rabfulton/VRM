@@ -193,9 +193,16 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (app.model_loaded) { gltf_unload(&app.model); app.model_loaded = false; renderer_set_model(&app.renderer, NULL); animator_set_model(&app.animator, NULL); }
         if (gltf_load(&app.model, path->valuestring)) {
             app.model_loaded = true; gltf_update_transforms(&app.model); spring_bones_init(&app.model);
-            renderer_set_model(&app.renderer, &app.model); animator_set_model(&app.animator, &app.model);
+            renderer_set_model(&app.renderer, &app.model);
+            app.animator.model = &app.model;
+            if (app.animator.current_animation < 0 || app.animator.current_animation >= app.model.animation_count) {
+                app.animator.current_animation = app.model.animation_count > 0 ? 0 : -1;
+                app.animator.time = 0.0f;
+                app.animator.next_animation = -1;
+            }
             update_anim_correction_mode(app.model.anim_correction_mode);
             update_ui_window_layout();
+            app.last_time = platform_get_time();
             printf("Loaded: %s (%d animations)\n", path->valuestring, app.model.animation_count);
             ipc_respond(&app.ipc, id, true, NULL);
         } else { ipc_respond(&app.ipc, id, false, "Failed to load VRM"); }
@@ -283,8 +290,12 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
                 if (cfg.has_spring_cloth_taper) g_spring_cloth_taper = cfg.spring_cloth_taper;
             }
             debug_ui_sync_spring_params();
-            spring_bones_reset(&app.model);
             if (app.auto_resize) compute_and_cache_bounds(path->valuestring);
+            if (app.model.animation_count > 0) {
+                int loop_remaining = animator_compute_loop_remaining(&app.animator, 0);
+                animator_blend_to(&app.animator, 0, g_anim_blend_time_default, loop_remaining);
+            }
+            app.last_time = platform_get_time();
             ipc_respond(&app.ipc, id, true, NULL);
         } else { ipc_respond(&app.ipc, id, false, "Failed to load animation"); }
     }
@@ -301,17 +312,27 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
     }
     else if (strcmp(action, "blend_to") == 0) {
         cJSON *idx = cJSON_GetObjectItem(json, "index"), *dur = cJSON_GetObjectItem(json, "duration");
-        if (idx) animator_blend_to(&app.animator, idx->valueint, dur ? (float)dur->valuedouble : 0.3f);
-        ipc_respond(&app.ipc, id, true, NULL);
-    }
-    else if (strcmp(action, "set_loop_blend") == 0) {
-        cJSON *dur = cJSON_GetObjectItem(json, "duration");
-        animator_set_loop_blend(&app.animator, dur ? (float)dur->valuedouble : 0.0f);
-        ipc_respond(&app.ipc, id, true, NULL);
-    }
-    else if (strcmp(action, "set_smooth_loop") == 0) {
-        cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
-        animator_set_smooth_loop(&app.animator, enabled && cJSON_IsTrue(enabled));
+        cJSON *loop = cJSON_GetObjectItem(json, "loop"), *count = cJSON_GetObjectItem(json, "count");
+        int loop_remaining = 0;
+        bool loop_specified = false;
+
+        if (count && cJSON_IsNumber(count)) {
+            int plays = count->valueint;
+            loop_remaining = (plays > 1) ? (plays - 1) : 0;
+            loop_specified = true;
+        }
+        if (loop && cJSON_IsBool(loop)) {
+            loop_specified = true;
+            loop_remaining = cJSON_IsTrue(loop) ? -1 : 0;
+        }
+
+        if (idx) {
+            if (!loop_specified) {
+                loop_remaining = animator_compute_loop_remaining(&app.animator, idx->valueint);
+            }
+            float blend_time = dur ? (float)dur->valuedouble : g_anim_blend_time_default;
+            animator_blend_to(&app.animator, idx->valueint, blend_time, loop_remaining);
+        }
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "set_position") == 0) {
@@ -633,8 +654,6 @@ int main(int argc, char *argv[]) {
     app.camera.aspect = (float)w / (float)h;
 
     animator_init(&app.animator);
-    animator_set_loop_blend(&app.animator, 0.0f);
-    animator_set_smooth_loop(&app.animator, true);
     platform_make_context_current(app.ui_window);
     update_display_metrics_for_window(app.ui_window);
     ui_init_overlay(&app);

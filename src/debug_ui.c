@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "debug_ui.h"
+#include "animator.h"
 #include "ui_library/ui.h"
 
 typedef enum {
@@ -28,6 +29,21 @@ typedef enum {
     SPRING_PARAM_MAX_ELEMENT
 } SpringParamAction;
 
+typedef enum {
+    ANIM_PARAM_BLEND_TIME = 0,
+    ANIM_PARAM_INERTIAL_RATIO,
+    ANIM_PARAM_GROUP_ROOT,
+    ANIM_PARAM_GROUP_SPINE,
+    ANIM_PARAM_GROUP_HEAD,
+    ANIM_PARAM_GROUP_ARMS,
+    ANIM_PARAM_GROUP_HANDS,
+    ANIM_PARAM_GROUP_LEGS,
+    ANIM_PARAM_GROUP_FEET,
+    ANIM_PARAM_GROUP_FACE,
+    ANIM_PARAM_GROUP_OTHER,
+    ANIM_PARAM_MAX_ELEMENT
+} AnimParamAction;
+
 static const char *ui_pie_menu_labels[UI_PIE_MAX_ELEMENT] = {
     "Adjust Springs",
     "Adjust Axis",
@@ -43,9 +59,13 @@ static void (*spring_reset_fn)(void) = NULL;
 static void (*spring_save_fn)(void) = NULL;
 static int32_t spring_menu_id = -1;
 static uint32_t spring_param_ids[SPRING_PARAM_MAX_ELEMENT] = {0};
+static int32_t anim_menu_id = -1;
+static uint32_t anim_param_ids[ANIM_PARAM_MAX_ELEMENT] = {0};
 static int spring_close_guard = 0;
+static int anim_close_guard = 0;
 static int ui_close_request = 0;
 static int spring_menu_close_pending = 0;
+static int anim_menu_close_pending = 0;
 
 extern float g_spring_stiffness;
 extern float g_spring_drag;
@@ -76,8 +96,9 @@ void debug_ui_set_spring_save(void (*fn)(void)) {
 }
 
 int debug_ui_consume_close_guard(void) {
-    int guard = spring_close_guard;
+    int guard = spring_close_guard || anim_close_guard;
     spring_close_guard = 0;
+    anim_close_guard = 0;
     return guard;
 }
 
@@ -88,26 +109,47 @@ int debug_ui_consume_close_request(void) {
 }
 
 void debug_ui_prepare_for_close(void) {
-    if (!spring_menu_close_pending) return;
-    spring_menu_close_pending = 0;
-    if (!debug_ui || spring_menu_id < 0) return;
-    ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
-    spring_menu_id = -1;
-    for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
-        spring_param_ids[i] = 0;
+    if (spring_menu_close_pending) {
+        spring_menu_close_pending = 0;
+        if (debug_ui && spring_menu_id >= 0) {
+            ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
+        }
+        spring_menu_id = -1;
+        for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
+            spring_param_ids[i] = 0;
+        }
+    }
+    if (anim_menu_close_pending) {
+        anim_menu_close_pending = 0;
+        if (debug_ui && anim_menu_id >= 0) {
+            ui_element_delete(debug_ui, (uint32_t)anim_menu_id);
+        }
+        anim_menu_id = -1;
+        for (int i = 0; i < ANIM_PARAM_MAX_ELEMENT; i++) {
+            anim_param_ids[i] = 0;
+        }
     }
 }
 
 void debug_ui_reset_menus(void) {
     spring_menu_close_pending = 0;
+    anim_menu_close_pending = 0;
     ui_close_request = 0;
     spring_close_guard = 0;
+    anim_close_guard = 0;
     if (debug_ui && spring_menu_id >= 0) {
         ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
     }
     spring_menu_id = -1;
     for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
         spring_param_ids[i] = 0;
+    }
+    if (debug_ui && anim_menu_id >= 0) {
+        ui_element_delete(debug_ui, (uint32_t)anim_menu_id);
+    }
+    anim_menu_id = -1;
+    for (int i = 0; i < ANIM_PARAM_MAX_ELEMENT; i++) {
+        anim_param_ids[i] = 0;
     }
 }
 
@@ -142,7 +184,45 @@ void debug_ui_sync_spring_params(void) {
     }
 }
 
+void debug_ui_sync_anim_params(void) {
+    if (!debug_ui || anim_menu_id < 0) return;
+    if (anim_param_ids[ANIM_PARAM_BLEND_TIME]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], g_anim_blend_time_default);
+    }
+    if (anim_param_ids[ANIM_PARAM_INERTIAL_RATIO]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], g_anim_inertial_half_life_ratio);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_ROOT]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ROOT], g_anim_blend_group_factors[BLEND_GROUP_ROOT]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_SPINE]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_SPINE], g_anim_blend_group_factors[BLEND_GROUP_SPINE]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_HEAD]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HEAD], g_anim_blend_group_factors[BLEND_GROUP_HEAD]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_ARMS]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ARMS], g_anim_blend_group_factors[BLEND_GROUP_ARMS]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_HANDS]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HANDS], g_anim_blend_group_factors[BLEND_GROUP_HANDS]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_LEGS]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_LEGS], g_anim_blend_group_factors[BLEND_GROUP_LEGS]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_FEET]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FEET], g_anim_blend_group_factors[BLEND_GROUP_FEET]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_FACE]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FACE], g_anim_blend_group_factors[BLEND_GROUP_FACE]);
+    }
+    if (anim_param_ids[ANIM_PARAM_GROUP_OTHER]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_OTHER], g_anim_blend_group_factors[BLEND_GROUP_OTHER]);
+    }
+}
+
 static void springs_menu(void);
+static void animation_menu(void);
 
 static void on_spring_stiffness(int id) {
     if (!debug_ui) return;
@@ -221,6 +301,79 @@ static void on_spring_menu_close(int id) {
     ui_close_request = 1;
 }
 
+static void on_anim_blend_time(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_time_default = clampf(v, 0.05f, 3.0f);
+}
+
+static void on_anim_inertial_ratio(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_inertial_half_life_ratio = clampf(v, 0.05f, 1.0f);
+}
+
+static void on_anim_group_root(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_ROOT] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_spine(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_SPINE] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_head(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_HEAD] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_arms(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_ARMS] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_hands(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_HANDS] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_legs(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_LEGS] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_feet(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_FEET] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_face(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_FACE] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_group_other(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_blend_group_factors[BLEND_GROUP_OTHER] = clampf(v, 0.1f, 1.0f);
+}
+
+static void on_anim_menu_close(int id) {
+    (void)id;
+    printf("UI debug: animation menu close pressed (menu_id=%d)\n", anim_menu_id);
+    anim_menu_close_pending = 1;
+    ui_close_request = 1;
+}
+
 static void on_pie_select(int idx) {
     switch (idx) {
         case UI_PIE_ADJUST_SPRINGS:
@@ -242,6 +395,7 @@ static void on_pie_select(int idx) {
             break;
         case UI_PIE_ANIMATION:
             printf("UI pie selection: Animation\n");
+            animation_menu();
             break;
         case UI_PIE_POSITION:
             printf("UI pie selection: Position\n");
@@ -396,6 +550,169 @@ static void springs_menu(void) {
     spring_close_guard = 1;
 }
 
+static void animation_menu(void) {
+    if (!debug_ui) return;
+    if (anim_menu_id >= 0) return;
+
+    ui_header_t header = {.w = 0, .h = 0, .state = 1, .title = "Animation Blend"};
+    anim_menu_id = ui_group_start(debug_ui, &header);
+    printf("UI debug: animation menu opened (menu_id=%d)\n", anim_menu_id);
+
+    ui_set_element_flags(debug_ui, (uint32_t)anim_menu_id, UI_MOVABLE);
+    ui_position_element(debug_ui, (uint32_t)anim_menu_id, 50, 50);
+    ui_set_align(debug_ui, UI_BELOW);
+
+    ui_parameter_t blend_time = {
+        .w = 440.0f,
+        .value = g_anim_blend_time_default,
+        .start_val = 0.05f,
+        .end_val = 3.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Blend Time (sec)"
+    };
+    anim_param_ids[ANIM_PARAM_BLEND_TIME] = (uint32_t)ui_element_init(debug_ui, &blend_time, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], on_anim_blend_time);
+
+    ui_parameter_t inertial = {
+        .w = 440.0f,
+        .value = g_anim_inertial_half_life_ratio,
+        .start_val = 0.05f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Inertial Half-life Ratio"
+    };
+    anim_param_ids[ANIM_PARAM_INERTIAL_RATIO] = (uint32_t)ui_element_init(debug_ui, &inertial, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_INERTIAL_RATIO], on_anim_inertial_ratio);
+
+    ui_parameter_t group_root = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_ROOT],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Root Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_ROOT] = (uint32_t)ui_element_init(debug_ui, &group_root, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ROOT], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ROOT], on_anim_group_root);
+
+    ui_parameter_t group_spine = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_SPINE],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Spine Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_SPINE] = (uint32_t)ui_element_init(debug_ui, &group_spine, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_SPINE], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_SPINE], on_anim_group_spine);
+
+    ui_parameter_t group_head = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_HEAD],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Head Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_HEAD] = (uint32_t)ui_element_init(debug_ui, &group_head, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HEAD], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HEAD], on_anim_group_head);
+
+    ui_parameter_t group_arms = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_ARMS],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Arms Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_ARMS] = (uint32_t)ui_element_init(debug_ui, &group_arms, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ARMS], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ARMS], on_anim_group_arms);
+
+    ui_parameter_t group_hands = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_HANDS],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Hands Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_HANDS] = (uint32_t)ui_element_init(debug_ui, &group_hands, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HANDS], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_HANDS], on_anim_group_hands);
+
+    ui_parameter_t group_legs = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_LEGS],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Legs Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_LEGS] = (uint32_t)ui_element_init(debug_ui, &group_legs, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_LEGS], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_LEGS], on_anim_group_legs);
+
+    ui_parameter_t group_feet = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_FEET],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Feet Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_FEET] = (uint32_t)ui_element_init(debug_ui, &group_feet, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FEET], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FEET], on_anim_group_feet);
+
+    ui_parameter_t group_face = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_FACE],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Face Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_FACE] = (uint32_t)ui_element_init(debug_ui, &group_face, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FACE], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_FACE], on_anim_group_face);
+
+    ui_parameter_t group_other = {
+        .w = 440.0f,
+        .value = g_anim_blend_group_factors[BLEND_GROUP_OTHER],
+        .start_val = 0.1f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Other Blend Factor"
+    };
+    anim_param_ids[ANIM_PARAM_GROUP_OTHER] = (uint32_t)ui_element_init(debug_ui, &group_other, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_OTHER], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_OTHER], on_anim_group_other);
+
+    ui_button_t close_btn = {.str = "Close", .w = 0, .h = 0, .state = 0};
+    uint32_t close_id = (uint32_t)ui_element_init(debug_ui, &close_btn, 0, UI_BUTTON_ROUND);
+    ui_set_element_flags(debug_ui, close_id, UI_ACTION_ON_RELEASE);
+    ui_set_callback(debug_ui, close_id, on_anim_menu_close);
+
+    ui_group_stop(debug_ui);
+    anim_close_guard = 1;
+}
 
 int32_t debug_ui_build_pie_menu(ui_interface_t *ui, int32_t pie_menu_id, float radius) {
     if (!ui) return pie_menu_id;

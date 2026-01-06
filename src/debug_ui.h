@@ -13,6 +13,7 @@ int debug_ui_consume_close_request(void);
 void debug_ui_prepare_for_close(void);
 void debug_ui_reset_menus(void);
 void debug_ui_sync_spring_params(void);
+void debug_ui_sync_anim_params(void);
 int32_t debug_ui_build_pie_menu(ui_interface_t *ui, int32_t pie_menu_id, float radius);
 
 #endif
