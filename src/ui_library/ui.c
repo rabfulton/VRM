@@ -4365,6 +4365,7 @@ static int ui_pie_menu_activate(ui_interface_t *ui, uint32_t id){
 		ui_position_element(ui, e->uuid, pos.x, pos.y);
 		// e->flags &= !UI_HIDDEN;
 	}
+	printf("UI_LIBRARY: Actvate Pie Menu at: %d, %d\n", e->x, e->y);
 	ui->action = ui_pie_menu_animate;
 	return 0;
 }
