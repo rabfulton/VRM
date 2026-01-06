@@ -7,7 +7,9 @@ Controls:
   l             - Toggle loop blending on/off
   s             - Toggle smooth loop (skip spring reset on loop)
   [/]           - Adjust blend duration (-/+ 0.1s)
-  0-5           - Set axis correction (0=none, 1=auto, 2=rotX, 3=rotY, 4=rotZ)
+  x/y/z         - Set axis correction (rotX/rotY/rotZ)
+  a             - Axis correction auto
+  v             - Axis correction none
   7/8           - Adjust spring stiffness
   9/0           - Adjust spring drag  
   -/=           - Adjust spring gravity
@@ -69,10 +71,10 @@ def set_axis(mode):
 old = termios.tcgetattr(sys.stdin)
 try:
     tty.setcbreak(sys.stdin.fileno())
-    print("p=anim, b=blend, l=Loop Blending, [/]=dur, 0-4=axis, 7-0=spring, r=reset, q=quit")
+    print("p=anim, b=blend, l=Loop Blending, [/]=dur, x/y/z=axis, 7-0=spring, r=reset, q=quit")
     print("s = smooth loop - do not reset springs.")
     print("l = blending - Toggle loop blending on/off")
-    print("0-5 = Set axis correction - (0=none, 1=auto, 2=rotX, 3=rotY, 4=rotZ)")
+    print("x/y/z = Set axis correction (rotX/rotY/rotZ), a=auto, v=none")
     print("7/8 - Adjust spring stiffness")
     print("9/0 - Adjust spring drag")
     print("-/= - Adjust spring gravity")
@@ -96,13 +98,12 @@ try:
                 show_blend()
             elif k == '[': blend_dur = max(0.05, blend_dur - 0.1); show_blend()
             elif k == ']': blend_dur = min(10.0, blend_dur + 0.1); show_blend()
-            # Axis correction: a + number
-            elif k == 'a':
-                # Read next char for axis mode
-                if select.select([sys.stdin], [], [], 0.5)[0]:
-                    k2 = sys.stdin.read(1)
-                    if k2 in '01234':
-                        set_axis(int(k2))
+            # Axis correction keys
+            elif k == 'x': set_axis(2)
+            elif k == 'y': set_axis(3)
+            elif k == 'z': set_axis(4)
+            elif k == 'a': set_axis(1)
+            elif k == 'v': set_axis(0)
             # Spring controls: s + 1/2/3 for stiff/drag/grav, then +/-
             elif k == '7': stiff = min(3.0, stiff + 0.1); show_spring()
             elif k == '8': stiff = max(0.0, stiff - 0.1); show_spring()

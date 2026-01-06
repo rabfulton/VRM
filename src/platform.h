@@ -53,6 +53,7 @@ double platform_get_time(void);
 #define PLATFORM_KEY_Q      81
 #define PLATFORM_KEY_T      84
 #define PLATFORM_KEY_C      67
+#define PLATFORM_KEY_B      66
 #define PLATFORM_KEY_1      49
 #define PLATFORM_KEY_2      50
 #define PLATFORM_KEY_3      51

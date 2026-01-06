@@ -19,7 +19,7 @@ OBJ = $(C_OBJ) $(CXX_OBJ)
 
 TARGET = vrm-overlay
 
-.PHONY: all clean
+.PHONY: all clean debug
 
 all: $(TARGET)
 
@@ -34,5 +34,9 @@ $(TARGET): $(OBJ)
 
 clean:
 	rm -f $(OBJ) $(TARGET)
+
+debug: CFLAGS += -O0 -DDEBUG
+debug: CXXFLAGS += -O0 -DDEBUG
+debug: clean all
 
 -include $(OBJ:.o=.d)

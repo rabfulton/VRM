@@ -31,6 +31,9 @@ typedef struct {
   GLuint vbo_weights;
   GLuint ebo;
 
+  GLenum mode;
+  uint32_t vertex_count;
+
   uint32_t index_count;
   GLenum index_type;
   int material_index;
@@ -143,11 +146,13 @@ typedef struct {
   int node_mask_count;
 } GltfAnimation;
 
-/* Spring bone collider */
+/* Spring bone collider (supports sphere and capsule per spec) */
 typedef struct {
   int node;           /* Node index the collider is attached to */
   float offset[3];    /* Local offset from node */
-  float radius;       /* Sphere radius */
+  float radius;       /* Collider radius */
+  int is_capsule;     /* 0=sphere, 1=capsule */
+  float tail[3];      /* Capsule tail in local coords (if capsule) */
 } SpringCollider;
 
 /* Spring bone collider group */
@@ -157,26 +162,33 @@ typedef struct {
   int collider_count;
 } SpringColliderGroup;
 
-/* Spring bone joint (runtime state) */
+/* Spring bone joint state (per VRMC_springBone-1.0 spec) */
 typedef struct {
-  int node;           /* Node index */
-  float curr_pos[3];  /* Current tail position (world) */
-  float prev_pos[3];  /* Previous tail position (world) */
-  float bone_length;  /* Length of this bone segment */
-} SpringJoint;
-
-/* Spring bone group */
-typedef struct {
-  float stiffness;    /* Spring stiffness (0-1) */
-  float drag;         /* Drag force (0-1) */
+  int node;                     /* Node index */
+  float prev_tail[3];           /* Previous tail position (world) */
+  float current_tail[3];        /* Current tail position (world) */
+  float bone_axis[3];           /* Direction to child in local rest pose */
+  float bone_length;            /* Length to child in world units */
+  float initial_local_rotation[4]; /* Rest orientation (quaternion) */
+  float initial_local_matrix[16];  /* Rest local matrix */
+  /* Per-joint parameters (spec requires these per joint) */
+  float hit_radius;
+  float stiffness;
   float gravity_power;
   float gravity_dir[3];
-  float hit_radius;   /* Collision radius */
-  int *bones;         /* Node indices of bones in chain */
+  float drag_force;
+} SpringJoint;
+
+/* Spring bone chain (SpringChain in spec) */
+typedef struct {
+  int *bones;         /* Node indices of joints in chain */
   int bone_count;
   int *collider_groups; /* Indices into collider groups array */
   int collider_group_count;
-  SpringJoint *joints;  /* Runtime joint state */
+  int center;         /* Center space node index (-1 for world) */
+  SpringJoint *joints;  /* Runtime joint state (bone_count - 1 pairs) */
+  int joint_count;      /* Number of active joint pairs */
+  float avg_bone_length; /* Average bone length in chain */
 } SpringBoneGroup;
 
 /* Complete glTF model */

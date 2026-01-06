@@ -66,6 +66,22 @@ static void vec3_cross(const float *a, const float *b, float *out) {
   out[2] = z;
 }
 
+static bool read_vec3_value(const tinygltf::Value &v, float *out) {
+  if (v.IsArray() && v.ArrayLen() >= 3) {
+    out[0] = (float)v.Get(0).Get<double>();
+    out[1] = (float)v.Get(1).Get<double>();
+    out[2] = (float)v.Get(2).Get<double>();
+    return true;
+  }
+  if (v.IsObject()) {
+    out[0] = v.Has("x") ? (float)v.Get("x").Get<double>() : 0.0f;
+    out[1] = v.Has("y") ? (float)v.Get("y").Get<double>() : 0.0f;
+    out[2] = v.Has("z") ? (float)v.Get("z").Get<double>() : 0.0f;
+    return true;
+  }
+  return false;
+}
+
 static void quat_mul(const float *a, const float *b, float *out) {
   out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
   out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
@@ -237,10 +253,40 @@ static void create_primitive_buffers(GltfPrimitive *prim,
     return true;
   };
 
+  prim->mode = GL_TRIANGLES;
+  prim->vertex_count = 0;
+  if (tprim.mode >= 0) {
+    switch (tprim.mode) {
+      case TINYGLTF_MODE_POINTS:
+        prim->mode = GL_POINTS;
+        break;
+      case TINYGLTF_MODE_LINE:
+        prim->mode = GL_LINES;
+        break;
+      case TINYGLTF_MODE_LINE_LOOP:
+        prim->mode = GL_LINE_LOOP;
+        break;
+      case TINYGLTF_MODE_LINE_STRIP:
+        prim->mode = GL_LINE_STRIP;
+        break;
+      case TINYGLTF_MODE_TRIANGLE_STRIP:
+        prim->mode = GL_TRIANGLE_STRIP;
+        break;
+      case TINYGLTF_MODE_TRIANGLE_FAN:
+        prim->mode = GL_TRIANGLE_FAN;
+        break;
+      case TINYGLTF_MODE_TRIANGLES:
+      default:
+        prim->mode = GL_TRIANGLES;
+        break;
+    }
+  }
+
   /* Positions (required) */
   auto it = tprim.attributes.find("POSITION");
   if (it != tprim.attributes.end()) {
     bind_attribute(it->second, &prim->vbo_positions, 0, 3, false, false);
+    prim->vertex_count = (uint32_t)gltf.accessors[it->second].count;
   }
 
   /* Normals */
@@ -574,7 +620,21 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         const auto &input_buf = gltf.buffers[input_view.buffer];
         const float *input_data = (const float *)(input_buf.data.data() + input_view.byteOffset + input_acc.byteOffset);
 
-        s->keyframe_count = (int)input_acc.count;
+        const auto &output_acc = gltf.accessors[sampler.output];
+        const auto &output_view = gltf.bufferViews[output_acc.bufferView];
+        const auto &output_buf = gltf.buffers[output_view.buffer];
+        const float *output_data = (const float *)(output_buf.data.data() + output_view.byteOffset + output_acc.byteOffset);
+
+        int input_count = (int)input_acc.count;
+        int output_count = (int)output_acc.count;
+        int keyframe_count = input_count < output_count ? input_count : output_count;
+        if (input_count != output_count) {
+          fprintf(stderr,
+                  "Warning: sampler %zu input/output count mismatch (%d/%d), clamping to %d\n",
+                  j, input_count, output_count, keyframe_count);
+        }
+
+        s->keyframe_count = keyframe_count;
         s->input = (float *)malloc(s->keyframe_count * sizeof(float));
         memcpy(s->input, input_data, s->keyframe_count * sizeof(float));
 
@@ -584,11 +644,6 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         }
 
         /* Output (values) */
-        const auto &output_acc = gltf.accessors[sampler.output];
-        const auto &output_view = gltf.bufferViews[output_acc.bufferView];
-        const auto &output_buf = gltf.buffers[output_view.buffer];
-        const float *output_data = (const float *)(output_buf.data.data() + output_view.byteOffset + output_acc.byteOffset);
-
         int components = 1;
         if (output_acc.type == TINYGLTF_TYPE_VEC3) components = 3;
         else if (output_acc.type == TINYGLTF_TYPE_VEC4) components = 4;
@@ -615,6 +670,21 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
         else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
 
+        if (c->sampler_index >= 0 && c->sampler_index < a->sampler_count) {
+          int expected = 0;
+          if (c->path == GLTF_PATH_TRANSLATION || c->path == GLTF_PATH_SCALE) expected = 3;
+          else if (c->path == GLTF_PATH_ROTATION) expected = 4;
+          if (expected > 0) {
+            GltfAnimSampler *s = &a->samplers[c->sampler_index];
+            if (s->output_stride < expected) {
+              fprintf(stderr,
+                      "Warning: channel '%s' expects %d components but sampler has %d; disabling channel\n",
+                      channel.target_path.c_str(), expected, s->output_stride);
+              c->target_node = -1;
+            }
+          }
+        }
+
         if (c->target_node >= 0 && c->target_node < a->node_mask_count) {
           if (c->path == GLTF_PATH_TRANSLATION) a->node_mask[c->target_node] |= 1;
           else if (c->path == GLTF_PATH_ROTATION) a->node_mask[c->target_node] |= 2;
@@ -623,6 +693,139 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
       }
     }
     printf("Loaded %d animations\n", model->animation_count);
+  }
+
+  bool loaded_vrmc_spring = false;
+  if (gltf.extensions.count("VRMC_springBone")) {
+    const auto &sb = gltf.extensions.at("VRMC_springBone");
+
+    std::vector<SpringCollider> flat_colliders;
+    if (sb.Has("colliders") && sb.Get("colliders").IsArray()) {
+      const auto &colliders = sb.Get("colliders");
+      flat_colliders.resize(colliders.ArrayLen());
+      for (size_t i = 0; i < colliders.ArrayLen(); i++) {
+        const auto &c = colliders.Get((int)i);
+        SpringCollider col = {};
+        col.node = c.Has("node") ? c.Get("node").Get<int>() : -1;
+        if (c.Has("shape") && c.Get("shape").IsObject()) {
+          const auto &shape = c.Get("shape");
+          if (shape.Has("sphere") && shape.Get("sphere").IsObject()) {
+            const auto &sphere = shape.Get("sphere");
+            col.is_capsule = 0;
+            if (sphere.Has("offset")) {
+              read_vec3_value(sphere.Get("offset"), col.offset);
+            }
+            col.radius = sphere.Has("radius") ? (float)sphere.Get("radius").Get<double>() : 0.0f;
+          } else if (shape.Has("capsule") && shape.Get("capsule").IsObject()) {
+            const auto &cap = shape.Get("capsule");
+            col.is_capsule = 1;
+            if (cap.Has("offset")) {
+              read_vec3_value(cap.Get("offset"), col.offset);
+            }
+            if (cap.Has("tail")) {
+              read_vec3_value(cap.Get("tail"), col.tail);
+            }
+            col.radius = cap.Has("radius") ? (float)cap.Get("radius").Get<double>() : 0.0f;
+          }
+        }
+        flat_colliders[i] = col;
+      }
+    }
+
+    if (sb.Has("colliderGroups") && sb.Get("colliderGroups").IsArray()) {
+      const auto &cgroups = sb.Get("colliderGroups");
+      model->spring_collider_count = (int)cgroups.ArrayLen();
+      model->spring_colliders = (SpringColliderGroup *)calloc(model->spring_collider_count, sizeof(SpringColliderGroup));
+      for (size_t i = 0; i < cgroups.ArrayLen(); i++) {
+        const auto &cg = cgroups.Get((int)i);
+        SpringColliderGroup *group = &model->spring_colliders[i];
+        group->node = -1;
+        if (cg.Has("colliders") && cg.Get("colliders").IsArray()) {
+          const auto &cols = cg.Get("colliders");
+          std::vector<SpringCollider> group_cols;
+          group_cols.reserve(cols.ArrayLen());
+          for (size_t j = 0; j < cols.ArrayLen(); j++) {
+            int idx = cols.Get((int)j).Get<int>();
+            if (idx >= 0 && idx < (int)flat_colliders.size()) {
+              group_cols.push_back(flat_colliders[idx]);
+            }
+          }
+          group->collider_count = (int)group_cols.size();
+          if (group->collider_count > 0) {
+            group->colliders = (SpringCollider *)calloc(group->collider_count, sizeof(SpringCollider));
+            for (int j = 0; j < group->collider_count; j++) {
+              group->colliders[j] = group_cols[j];
+            }
+          }
+        }
+      }
+    }
+
+    if (sb.Has("springs") && sb.Get("springs").IsArray()) {
+      const auto &springs = sb.Get("springs");
+      model->spring_group_count = (int)springs.ArrayLen();
+      model->spring_groups = (SpringBoneGroup *)calloc(model->spring_group_count, sizeof(SpringBoneGroup));
+
+      for (size_t i = 0; i < springs.ArrayLen(); i++) {
+        const auto &sp = springs.Get((int)i);
+        SpringBoneGroup *group = &model->spring_groups[i];
+        group->center = sp.Has("center") ? sp.Get("center").Get<int>() : -1;
+
+        if (sp.Has("joints") && sp.Get("joints").IsArray()) {
+          const auto &joints = sp.Get("joints");
+          group->bone_count = (int)joints.ArrayLen();
+          if (group->bone_count > 0) {
+            group->bones = (int *)malloc(group->bone_count * sizeof(int));
+          }
+          if (group->bone_count >= 2) {
+            group->joint_count = group->bone_count - 1;
+            group->joints = (SpringJoint *)calloc(group->joint_count, sizeof(SpringJoint));
+          }
+
+          for (int j = 0; j < group->bone_count; j++) {
+            const auto &jv = joints.Get(j);
+            int node_idx = jv.Has("node") ? jv.Get("node").Get<int>() : -1;
+            group->bones[j] = node_idx;
+            if (j < group->joint_count) {
+              SpringJoint *joint = &group->joints[j];
+              joint->hit_radius = jv.Has("hitRadius") ? (float)jv.Get("hitRadius").Get<double>() : 0.0f;
+              joint->stiffness = jv.Has("stiffness") ? (float)jv.Get("stiffness").Get<double>() : 0.0f;
+              joint->gravity_power = jv.Has("gravityPower") ? (float)jv.Get("gravityPower").Get<double>() : 0.0f;
+              joint->drag_force = jv.Has("dragForce") ? (float)jv.Get("dragForce").Get<double>() : 0.0f;
+              joint->gravity_dir[0] = 0.0f;
+              joint->gravity_dir[1] = -1.0f;
+              joint->gravity_dir[2] = 0.0f;
+              if (jv.Has("gravityDir")) {
+                read_vec3_value(jv.Get("gravityDir"), joint->gravity_dir);
+              }
+            }
+          }
+        }
+
+        if (sp.Has("colliderGroups") && sp.Get("colliderGroups").IsArray()) {
+          const auto &cgs = sp.Get("colliderGroups");
+          group->collider_group_count = (int)cgs.ArrayLen();
+          if (group->collider_group_count > 0) {
+            group->collider_groups = (int *)malloc(group->collider_group_count * sizeof(int));
+            for (size_t j = 0; j < cgs.ArrayLen(); j++) {
+              group->collider_groups[j] = cgs.Get((int)j).Get<int>();
+            }
+          }
+        }
+
+        for (int j = 0; j < group->bone_count; j++) {
+          int node_idx = group->bones[j];
+          if (node_idx >= 0 && node_idx < model->node_count) {
+            model->nodes[node_idx].is_spring_bone = 1;
+          }
+        }
+      }
+      loaded_vrmc_spring = model->spring_group_count > 0;
+      if (loaded_vrmc_spring) {
+        printf("Loaded %d VRMC spring bone groups, %d collider groups\n",
+               model->spring_group_count, model->spring_collider_count);
+      }
+    }
   }
 
   /* Load VRM humanoid bone mapping */
@@ -649,7 +852,7 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
     }
     
     /* Load VRM spring bones */
-    if (vrm.Has("secondaryAnimation")) {
+    if (!loaded_vrmc_spring && vrm.Has("secondaryAnimation")) {
       const auto &secondary = vrm.Get("secondaryAnimation");
       
       /* Parse collider groups first */
@@ -687,51 +890,104 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
       /* Parse bone groups */
       if (secondary.Has("boneGroups") && secondary.Get("boneGroups").IsArray()) {
         const auto &bgroups = secondary.Get("boneGroups");
-        model->spring_group_count = (int)bgroups.ArrayLen();
-        model->spring_groups = (SpringBoneGroup *)calloc(model->spring_group_count, sizeof(SpringBoneGroup));
-        
+        std::vector<SpringBoneGroup> spring_groups_vec;
+
         for (size_t i = 0; i < bgroups.ArrayLen(); i++) {
           const auto &bg = bgroups.Get((int)i);
-          SpringBoneGroup *group = &model->spring_groups[i];
-          
-          group->stiffness = bg.Has("stiffiness") ? (float)bg.Get("stiffiness").Get<double>() : 0.5f;
-          group->drag = bg.Has("dragForce") ? (float)bg.Get("dragForce").Get<double>() : 0.4f;
-          group->gravity_power = bg.Has("gravityPower") ? (float)bg.Get("gravityPower").Get<double>() : 1.0f;
-          group->hit_radius = bg.Has("hitRadius") ? (float)bg.Get("hitRadius").Get<double>() : 0.02f;
-          
+
+          /* Read group-level params (VRM 0.x format) */
+          float stiffness = bg.Has("stiffiness") ? (float)bg.Get("stiffiness").Get<double>() : 0.5f;
+          float drag = bg.Has("dragForce") ? (float)bg.Get("dragForce").Get<double>() : 0.4f;
+          float gravity_power = bg.Has("gravityPower") ? (float)bg.Get("gravityPower").Get<double>() : 1.0f;
+          float hit_radius = bg.Has("hitRadius") ? (float)bg.Get("hitRadius").Get<double>() : 0.02f;
+          float gravity_dir[3] = {0, -1, 0};
+
           if (bg.Has("gravityDir")) {
             const auto &gd = bg.Get("gravityDir");
-            group->gravity_dir[0] = gd.Has("x") ? (float)gd.Get("x").Get<double>() : 0;
-            group->gravity_dir[1] = gd.Has("y") ? (float)gd.Get("y").Get<double>() : -1;
-            group->gravity_dir[2] = gd.Has("z") ? (float)gd.Get("z").Get<double>() : 0;
-          } else {
-            group->gravity_dir[0] = 0; group->gravity_dir[1] = -1; group->gravity_dir[2] = 0;
+            gravity_dir[0] = gd.Has("x") ? (float)gd.Get("x").Get<double>() : 0;
+            gravity_dir[1] = gd.Has("y") ? (float)gd.Get("y").Get<double>() : -1;
+            gravity_dir[2] = gd.Has("z") ? (float)gd.Get("z").Get<double>() : 0;
           }
-          
-          if (bg.Has("bones") && bg.Get("bones").IsArray()) {
-            const auto &bones = bg.Get("bones");
-            group->bone_count = (int)bones.ArrayLen();
-            group->bones = (int *)malloc(group->bone_count * sizeof(int));
-            for (size_t j = 0; j < bones.ArrayLen(); j++) {
-              group->bones[j] = bones.Get((int)j).Get<int>();
-            }
-          }
-          
+
+          std::vector<int> collider_groups_vec;
           if (bg.Has("colliderGroups") && bg.Get("colliderGroups").IsArray()) {
             const auto &cgs = bg.Get("colliderGroups");
-            group->collider_group_count = (int)cgs.ArrayLen();
-            group->collider_groups = (int *)malloc(group->collider_group_count * sizeof(int));
+            collider_groups_vec.reserve(cgs.ArrayLen());
             for (size_t j = 0; j < cgs.ArrayLen(); j++) {
-              group->collider_groups[j] = cgs.Get((int)j).Get<int>();
+              collider_groups_vec.push_back(cgs.Get((int)j).Get<int>());
             }
           }
-          
-          /* Mark spring bone nodes */
-          for (int j = 0; j < group->bone_count; j++) {
-            int node_idx = group->bones[j];
-            if (node_idx >= 0 && node_idx < model->node_count) {
-              model->nodes[node_idx].is_spring_bone = 1;
+
+          if (bg.Has("bones") && bg.Get("bones").IsArray()) {
+            const auto &bones = bg.Get("bones");
+            int root_count = (int)bones.ArrayLen();
+
+            for (int root_idx = 0; root_idx < root_count; root_idx++) {
+              int root = bones.Get(root_idx).Get<int>();
+              if (root < 0 || root >= model->node_count) continue;
+
+              std::vector<int> chain;
+              chain.push_back(root);
+              int current = root;
+              while (current >= 0 && current < model->node_count) {
+                GltfNode *node = &model->nodes[current];
+                if (node->child_count > 0) {
+                  current = node->children[0]; /* Follow first child */
+                  chain.push_back(current);
+                } else {
+                  break;
+                }
+              }
+
+              SpringBoneGroup group = {};
+              group.center = -1;
+              group.bone_count = (int)chain.size();
+              if (group.bone_count > 0) {
+                group.bones = (int *)malloc(group.bone_count * sizeof(int));
+                for (int j = 0; j < group.bone_count; j++) {
+                  group.bones[j] = chain[j];
+                }
+              }
+
+              if (group.bone_count >= 2) {
+                group.joint_count = group.bone_count - 1;
+                group.joints = (SpringJoint *)calloc(group.joint_count, sizeof(SpringJoint));
+                for (int j = 0; j < group.joint_count; j++) {
+                  group.joints[j].stiffness = stiffness;
+                  group.joints[j].drag_force = drag;
+                  group.joints[j].gravity_power = gravity_power;
+                  group.joints[j].hit_radius = hit_radius;
+                  group.joints[j].gravity_dir[0] = gravity_dir[0];
+                  group.joints[j].gravity_dir[1] = gravity_dir[1];
+                  group.joints[j].gravity_dir[2] = gravity_dir[2];
+                }
+              }
+
+              group.collider_group_count = (int)collider_groups_vec.size();
+              if (group.collider_group_count > 0) {
+                group.collider_groups = (int *)malloc(group.collider_group_count * sizeof(int));
+                for (int j = 0; j < group.collider_group_count; j++) {
+                  group.collider_groups[j] = collider_groups_vec[j];
+                }
+              }
+
+              for (int j = 0; j < group.bone_count; j++) {
+                int node_idx = group.bones[j];
+                if (node_idx >= 0 && node_idx < model->node_count) {
+                  model->nodes[node_idx].is_spring_bone = 1;
+                }
+              }
+
+              spring_groups_vec.push_back(group);
             }
+          }
+        }
+
+        model->spring_group_count = (int)spring_groups_vec.size();
+        if (model->spring_group_count > 0) {
+          model->spring_groups = (SpringBoneGroup *)calloc(model->spring_group_count, sizeof(SpringBoneGroup));
+          for (int i = 0; i < model->spring_group_count; i++) {
+            model->spring_groups[i] = spring_groups_vec[i];
           }
         }
       }
@@ -1307,18 +1563,27 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       const auto &input_buf = anim_gltf.buffers[input_view.buffer];
       const float *input_data = (const float *)(input_buf.data.data() + input_view.byteOffset + input_acc.byteOffset);
 
-      s->keyframe_count = (int)input_acc.count;
+      const auto &output_acc = anim_gltf.accessors[sampler.output];
+      const auto &output_view = anim_gltf.bufferViews[output_acc.bufferView];
+      const auto &output_buf = anim_gltf.buffers[output_view.buffer];
+      const float *output_data = (const float *)(output_buf.data.data() + output_view.byteOffset + output_acc.byteOffset);
+
+      int input_count = (int)input_acc.count;
+      int output_count = (int)output_acc.count;
+      int keyframe_count = input_count < output_count ? input_count : output_count;
+      if (input_count != output_count) {
+        fprintf(stderr,
+                "Warning: sampler %zu input/output count mismatch (%d/%d), clamping to %d\n",
+                j, input_count, output_count, keyframe_count);
+      }
+
+      s->keyframe_count = keyframe_count;
       s->input = (float *)malloc(s->keyframe_count * sizeof(float));
       memcpy(s->input, input_data, s->keyframe_count * sizeof(float));
 
       if (s->keyframe_count > 0 && s->input[s->keyframe_count - 1] > a->duration) {
         a->duration = s->input[s->keyframe_count - 1];
       }
-
-      const auto &output_acc = anim_gltf.accessors[sampler.output];
-      const auto &output_view = anim_gltf.bufferViews[output_acc.bufferView];
-      const auto &output_buf = anim_gltf.buffers[output_view.buffer];
-      const float *output_data = (const float *)(output_buf.data.data() + output_view.byteOffset + output_acc.byteOffset);
 
       int components = 1;
       if (output_acc.type == TINYGLTF_TYPE_VEC3) components = 3;
@@ -1340,92 +1605,107 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       GltfAnimChannel *c = &a->channels[j];
 
       c->sampler_index = channel.sampler;
+      bool sampler_valid = c->sampler_index >= 0 && c->sampler_index < a->sampler_count;
+      if (!sampler_valid) {
+        fprintf(stderr,
+                "Warning: channel %zu has invalid sampler index %d (samplers=%d); disabling channel\n",
+                j, c->sampler_index, a->sampler_count);
+        c->target_node = -1;
+      }
 
       int anim_node_idx = channel.target_node;
       auto it = anim_to_model_node.find(anim_node_idx);
       if (it != anim_to_model_node.end()) {
-        c->target_node = it->second;
+        if (sampler_valid) {
+          c->target_node = it->second;
+        }
         matched++;
         
         /* Process rotation keyframes */
-        if (channel.target_path == "rotation") {
+        if (channel.target_path == "rotation" && sampler_valid) {
           GltfAnimSampler *s = &a->samplers[c->sampler_index];
-          int model_node = c->target_node;
-          
-          /* Get source rest rotations (A) */
-          auto src_local_it = anim_local_rest.find(anim_node_idx);
-          auto src_world_it = anim_world_rest.find(anim_node_idx);
-          
-          /* Get target rest rotations (B) */
-          auto tgt_local_it = model_local_rest.find(model_node);
-          auto tgt_world_it = model_world_rest.find(model_node);
-          
-          if (src_local_it != anim_local_rest.end() && src_world_it != anim_world_rest.end() &&
-              tgt_local_it != model_local_rest.end() && tgt_world_it != model_world_rest.end()) {
-            const auto &L_A = src_local_it->second;
-            const auto &W_A = src_world_it->second;
-            const auto &L_B = tgt_local_it->second;
-            const auto &W_B = tgt_world_it->second;
+          if (s->output_stride != 4) {
+            fprintf(stderr,
+                    "Warning: rotation channel sampler stride %d, expected 4; disabling channel\n",
+                    s->output_stride);
+            c->target_node = -1;
+          } else {
+            int model_node = c->target_node;
 
-            bool src_non_identity =
-                std::abs(L_A[0]) > 0.001f || std::abs(L_A[1]) > 0.001f ||
-                std::abs(L_A[2]) > 0.001f || std::abs(L_A[3] - 1.0f) > 0.001f ||
-                std::abs(W_A[0]) > 0.001f || std::abs(W_A[1]) > 0.001f ||
-                std::abs(W_A[2]) > 0.001f || std::abs(W_A[3] - 1.0f) > 0.001f;
-            bool tgt_non_identity =
-                std::abs(L_B[0]) > 0.001f || std::abs(L_B[1]) > 0.001f ||
-                std::abs(L_B[2]) > 0.001f || std::abs(L_B[3] - 1.0f) > 0.001f ||
-                std::abs(W_B[0]) > 0.001f || std::abs(W_B[1]) > 0.001f ||
-                std::abs(W_B[2]) > 0.001f || std::abs(W_B[3] - 1.0f) > 0.001f;
+            /* Get source rest rotations (A) */
+            auto src_local_it = anim_local_rest.find(anim_node_idx);
+            auto src_world_it = anim_world_rest.find(anim_node_idx);
 
-            bool tgt_identity = !tgt_non_identity;
+            /* Get target rest rotations (B) */
+            auto tgt_local_it = model_local_rest.find(model_node);
+            auto tgt_world_it = model_world_rest.find(model_node);
 
-            if ((src_non_identity || tgt_non_identity) && !tgt_identity) {
-              float L_A_inv[4], W_A_inv[4], W_B_inv[4];
-              qinv(L_A.data(), L_A_inv);
-              qinv(W_A.data(), W_A_inv);
-              qinv(W_B.data(), W_B_inv);
-              
-              for (int k = 0; k < s->keyframe_count; k++) {
-                float *q = &s->output[k * 4];
-                float t1[4], t2[4], normalized[4], t3[4], t4[4];
-                
-                /* Step 1: Normalized = W_A * L_A^-1 * anim * W_A^-1 */
-                qmul(L_A_inv, q, t1);
-                qmul(W_A.data(), t1, t2);
-                qmul(t2, W_A_inv, normalized);
-                
-                /* Step 2: B.Local = L_B * W_B^-1 * Normalized * W_B */
-                qmul(W_B_inv, normalized, t3);
-                qmul(L_B.data(), t3, t4);
-                qmul(t4, W_B.data(), q);
-                float len = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
-                if (len > 0.0001f) {
-                  q[0] /= len; q[1] /= len; q[2] /= len; q[3] /= len;
+            if (src_local_it != anim_local_rest.end() && src_world_it != anim_world_rest.end() &&
+                tgt_local_it != model_local_rest.end() && tgt_world_it != model_world_rest.end()) {
+              const auto &L_A = src_local_it->second;
+              const auto &W_A = src_world_it->second;
+              const auto &L_B = tgt_local_it->second;
+              const auto &W_B = tgt_world_it->second;
+
+              bool src_non_identity =
+                  std::abs(L_A[0]) > 0.001f || std::abs(L_A[1]) > 0.001f ||
+                  std::abs(L_A[2]) > 0.001f || std::abs(L_A[3] - 1.0f) > 0.001f ||
+                  std::abs(W_A[0]) > 0.001f || std::abs(W_A[1]) > 0.001f ||
+                  std::abs(W_A[2]) > 0.001f || std::abs(W_A[3] - 1.0f) > 0.001f;
+              bool tgt_non_identity =
+                  std::abs(L_B[0]) > 0.001f || std::abs(L_B[1]) > 0.001f ||
+                  std::abs(L_B[2]) > 0.001f || std::abs(L_B[3] - 1.0f) > 0.001f ||
+                  std::abs(W_B[0]) > 0.001f || std::abs(W_B[1]) > 0.001f ||
+                  std::abs(W_B[2]) > 0.001f || std::abs(W_B[3] - 1.0f) > 0.001f;
+
+              bool tgt_identity = !tgt_non_identity;
+
+              if ((src_non_identity || tgt_non_identity) && !tgt_identity) {
+                float L_A_inv[4], W_A_inv[4], W_B_inv[4];
+                qinv(L_A.data(), L_A_inv);
+                qinv(W_A.data(), W_A_inv);
+                qinv(W_B.data(), W_B_inv);
+
+                for (int k = 0; k < s->keyframe_count; k++) {
+                  float *q = &s->output[k * 4];
+                  float t1[4], t2[4], normalized[4], t3[4], t4[4];
+
+                  /* Step 1: Normalized = W_A * L_A^-1 * anim * W_A^-1 */
+                  qmul(L_A_inv, q, t1);
+                  qmul(W_A.data(), t1, t2);
+                  qmul(t2, W_A_inv, normalized);
+
+                  /* Step 2: B.Local = L_B * W_B^-1 * Normalized * W_B */
+                  qmul(W_B_inv, normalized, t3);
+                  qmul(L_B.data(), t3, t4);
+                  qmul(t4, W_B.data(), q);
+                  float len = sqrtf(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+                  if (len > 0.0001f) {
+                    q[0] /= len; q[1] /= len; q[2] /= len; q[3] /= len;
+                  }
                 }
               }
-            }
 
-            if (tgt_identity && src_non_identity) {
-              float L_A_inv[4], W_A_inv[4];
-              qinv(L_A.data(), L_A_inv);
-              qinv(W_A.data(), W_A_inv);
-              for (int k = 0; k < s->keyframe_count; k++) {
-                float *q = &s->output[k * 4];
-                float t1[4], t2[4], normalized[4];
-                qmul(L_A_inv, q, t1);
-                qmul(W_A.data(), t1, t2);
-                qmul(t2, W_A_inv, normalized);
-                q[0] = normalized[0];
-                q[1] = normalized[1];
-                q[2] = normalized[2];
-                q[3] = normalized[3];
-                normalize_quat(q);
+              if (tgt_identity && src_non_identity) {
+                float L_A_inv[4], W_A_inv[4];
+                qinv(L_A.data(), L_A_inv);
+                qinv(W_A.data(), W_A_inv);
+                for (int k = 0; k < s->keyframe_count; k++) {
+                  float *q = &s->output[k * 4];
+                  float t1[4], t2[4], normalized[4];
+                  qmul(L_A_inv, q, t1);
+                  qmul(W_A.data(), t1, t2);
+                  qmul(t2, W_A_inv, normalized);
+                  q[0] = normalized[0];
+                  q[1] = normalized[1];
+                  q[2] = normalized[2];
+                  q[3] = normalized[3];
+                  normalize_quat(q);
+                }
               }
+
+              (void)tgt_identity;
             }
-
-            (void)tgt_identity;
-
           }
         }
       } else {
@@ -1437,6 +1717,21 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
       else if (channel.target_path == "scale") c->path = GLTF_PATH_SCALE;
       else if (channel.target_path == "weights") c->path = GLTF_PATH_WEIGHTS;
 
+      if (sampler_valid) {
+        int expected = 0;
+        if (c->path == GLTF_PATH_TRANSLATION || c->path == GLTF_PATH_SCALE) expected = 3;
+        else if (c->path == GLTF_PATH_ROTATION) expected = 4;
+        if (expected > 0) {
+          GltfAnimSampler *s = &a->samplers[c->sampler_index];
+          if (s->output_stride < expected) {
+            fprintf(stderr,
+                    "Warning: channel '%s' expects %d components but sampler has %d; disabling channel\n",
+                    channel.target_path.c_str(), expected, s->output_stride);
+            c->target_node = -1;
+          }
+        }
+      }
+
       /* Skip root (hips) translation if it looks like world-space or wrong scale */
       if (c->path == GLTF_PATH_TRANSLATION && c->target_node >= 0) {
         int hips_node = -1;
@@ -1446,10 +1741,10 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model, const char *anim_path
             break;
           }
         }
-        if (c->target_node == hips_node && c->sampler_index >= 0) {
+        if (c->target_node == hips_node && sampler_valid) {
           /* Check first translation value */
           GltfAnimSampler *s = &a->samplers[c->sampler_index];
-          if (s->output && s->keyframe_count > 0) {
+          if (s->output && s->keyframe_count > 0 && s->output_stride >= 2) {
             float ty = s->output[1]; /* Y component */
             float model_hips_y = model->nodes[hips_node].base_translation[1];
             /* If animation hips Y is way off (negative or >2x model), skip translation */

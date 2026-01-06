@@ -7338,6 +7338,13 @@ void *ui_init(char *path){
     return ui;
 }
 
+void ui_reset_interaction(ui_interface_t *ui){
+	if (!ui) return;
+	ui->selected_element = MAX_UI_ELEMENTS;
+	ui->action = NULL;
+	ui->action_flags = 0;
+}
+
 int ui_load_shaders(const char *vert_src, const char *frag_src){
 
     int vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -9262,9 +9269,6 @@ static int ui_find_array_index(ui_interface_t *ui, uint32_t uuid){
 }
 
 // open a directory for reading and return a list of directory entries containing its contents
-
-
-
 
 
 

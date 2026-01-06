@@ -51,6 +51,8 @@ display_t display = {0};
 mouse_t mouse = {0};
 gl_buffer_t gl_buffer_default = {0};
 extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
+extern int g_spring_cloth_mode;
+extern float g_spring_cloth_stiffness, g_spring_cloth_drag, g_spring_cloth_gravity, g_spring_cloth_taper;
 
 static void update_ui_window_layout(void);
 static bool model_hit_test(int x, int y);
@@ -86,6 +88,16 @@ static void save_springs_to_config(void) {
     cfg.has_spring_stiffness = true;
     cfg.has_spring_drag = true;
     cfg.has_spring_gravity = true;
+    cfg.spring_cloth_mode = (float)g_spring_cloth_mode;
+    cfg.spring_cloth_stiffness = g_spring_cloth_stiffness;
+    cfg.spring_cloth_drag = g_spring_cloth_drag;
+    cfg.spring_cloth_gravity = g_spring_cloth_gravity;
+    cfg.spring_cloth_taper = g_spring_cloth_taper;
+    cfg.has_spring_cloth_mode = true;
+    cfg.has_spring_cloth_stiffness = true;
+    cfg.has_spring_cloth_drag = true;
+    cfg.has_spring_cloth_gravity = true;
+    cfg.has_spring_cloth_taper = true;
     if (!anim_config_save(app.current_anim_path, &cfg)) {
         printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
     }
@@ -237,6 +249,13 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         cJSON *path = cJSON_GetObjectItem(json, "path");
         if (!path || !path->valuestring) { ipc_respond(&app.ipc, id, false, "Missing path"); return; }
         if (!app.model_loaded) { ipc_respond(&app.ipc, id, false, "No model loaded"); return; }
+        if (app.ui) {
+            debug_ui_reset_menus();
+        }
+        if (app.ui_visible) {
+            hide_ui_window();
+            printf("UI debug: closed UI during animation load\n");
+        }
         if (gltf_load_animation(&app.model, path->valuestring)) {
             animator_set_model(&app.animator, &app.model);
             update_anim_correction_mode(app.model.anim_correction_mode);
@@ -247,12 +266,23 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
             g_spring_stiffness = 1.0f;
             g_spring_drag = 1.0f;
             g_spring_gravity = 1.0f;
+            g_spring_cloth_mode = 0;
+            g_spring_cloth_stiffness = 0.35f;
+            g_spring_cloth_drag = 1.2f;
+            g_spring_cloth_gravity = 1.0f;
+            g_spring_cloth_taper = 0.6f;
             AnimConfig cfg = {0};
             if (anim_config_load(app.current_anim_path, &cfg)) {
                 if (cfg.has_spring_stiffness) g_spring_stiffness = cfg.spring_stiffness;
                 if (cfg.has_spring_drag) g_spring_drag = cfg.spring_drag;
                 if (cfg.has_spring_gravity) g_spring_gravity = cfg.spring_gravity;
+                if (cfg.has_spring_cloth_mode) g_spring_cloth_mode = cfg.spring_cloth_mode >= 0.5f ? 1 : 0;
+                if (cfg.has_spring_cloth_stiffness) g_spring_cloth_stiffness = cfg.spring_cloth_stiffness;
+                if (cfg.has_spring_cloth_drag) g_spring_cloth_drag = cfg.spring_cloth_drag;
+                if (cfg.has_spring_cloth_gravity) g_spring_cloth_gravity = cfg.spring_cloth_gravity;
+                if (cfg.has_spring_cloth_taper) g_spring_cloth_taper = cfg.spring_cloth_taper;
             }
+            debug_ui_sync_spring_params();
             spring_bones_reset(&app.model);
             if (app.auto_resize) compute_and_cache_bounds(path->valuestring);
             ipc_respond(&app.ipc, id, true, NULL);
@@ -306,6 +336,7 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
         if (stiff) g_spring_stiffness = (float)stiff->valuedouble;
         if (drag) g_spring_drag = (float)drag->valuedouble;
         if (grav) g_spring_gravity = (float)grav->valuedouble;
+        debug_ui_sync_spring_params();
         ipc_respond(&app.ipc, id, true, NULL);
     }
     else if (strcmp(action, "reset_spring") == 0) { spring_bones_reset(&app.model); ipc_respond(&app.ipc, id, true, NULL); }
@@ -430,6 +461,12 @@ static void on_key(int key, int action, void *user) {
             if (app.ui_window) platform_set_always_on_top(app.ui_window, app.always_on_top);
             break;
         case PLATFORM_KEY_C: renderer_toggle_shader(&app.renderer); break;
+        case PLATFORM_KEY_B:
+            g_spring_cloth_mode = !g_spring_cloth_mode;
+            printf("Spring cloth mode %s\n", g_spring_cloth_mode ? "enabled" : "disabled");
+            if (app.model_loaded) spring_bones_reset(&app.model);
+            debug_ui_sync_spring_params();
+            break;
         case PLATFORM_KEY_1: update_anim_correction_mode(0); break;
         case PLATFORM_KEY_2: update_anim_correction_mode(1); break;
         case PLATFORM_KEY_3: update_anim_correction_mode(2); break;
@@ -538,6 +575,9 @@ static void hide_ui_window(void) {
     app.ui_pending_close = false;
     mouse.button_l = 0;
     mouse.button_r = 0;
+    if (app.ui) {
+        ui_reset_interaction(app.ui);
+    }
     platform_clear_input_region(app.ui_window);
     platform_hide_window(app.ui_window);
 }
@@ -610,6 +650,7 @@ int main(int argc, char *argv[]) {
 
     printf("VRM Overlay started. Press 'q' to quit, 't' for always-on-top\n");
     printf("Press 'c' to toggle cel shading\n");
+    printf("Press 'b' to toggle cloth spring mode\n");
     printf("IPC socket: /tmp/vrm-overlay.sock\n");
     fflush(stdout);
 

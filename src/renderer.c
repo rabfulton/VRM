@@ -464,7 +464,9 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
 
   glBindVertexArray(prim->vao);
   if (prim->ebo && prim->index_count > 0) {
-    glDrawElements(GL_TRIANGLES, prim->index_count, prim->index_type, NULL);
+    glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
+  } else if (prim->vertex_count > 0) {
+    glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
   }
   glBindVertexArray(0);
 }
@@ -511,7 +513,9 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
         if (mat && mat->alpha_mode == 2) continue; /* Skip transparent */
         glBindVertexArray(prim->vao);
         if (prim->ebo && prim->index_count > 0) {
-          glDrawElements(GL_TRIANGLES, prim->index_count, prim->index_type, NULL);
+          glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
+        } else if (prim->vertex_count > 0) {
+          glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
         }
         glBindVertexArray(0);
       }
@@ -553,7 +557,9 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
         GltfPrimitive *prim = &mesh->primitives[j];
         glBindVertexArray(prim->vao);
         if (prim->ebo && prim->index_count > 0) {
-          glDrawElements(GL_TRIANGLES, prim->index_count, prim->index_type, NULL);
+          glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
+        } else if (prim->vertex_count > 0) {
+          glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
         }
         glBindVertexArray(0);
       }

@@ -482,6 +482,7 @@ enum{        UI_NOT_SET = UI_FLAG(1),
 
 void *ui_init(char *path);
 void ui_render(ui_interface_t *ui);
+void ui_reset_interaction(ui_interface_t *ui);
 
 
 void ui_refresh_shaders(ui_interface_t *ui);
@@ -530,8 +531,6 @@ void ui_set_active_font(ui_interface_t *ui, uint16_t font_id);
 #ifdef TRUETYPE_SUPPORT
 void ui_load_font(ui_interface_t *ui, const char *str, uint16_t size);
 #endif
-// Returns the number of elements deleted, in the cas of group objects may be more than 1
-int ui_element_delete(ui_interface_t *ui, uint32_t uid);
 void ui_log_elements(ui_interface_t *ui);
 
 void ui_load_bitmap_font(const char *str, uint16_t id);
@@ -542,6 +541,7 @@ void ui_write_dial(ui_interface_t *ui, uint32_t uid, float value);
 float ui_read_slider(ui_interface_t *ui, uint32_t uid);
 void ui_write_slider(ui_interface_t *ui, uint32_t uid, float value);
 float ui_read_parameter(ui_interface_t *ui, uint32_t uid);
+void ui_write_parameter(ui_interface_t *ui, uint32_t uid, float value);
 int ui_read_checkbox(ui_interface_t *ui, uint32_t uid);
 void ui_write_checkbox(ui_interface_t *ui, uint32_t uid, int state);
 int ui_read_menu(ui_interface_t *ui, uint32_t uid);

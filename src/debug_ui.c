@@ -19,6 +19,12 @@ typedef enum {
     SPRING_PARAM_STIFFNESS = 0,
     SPRING_PARAM_DRAG,
     SPRING_PARAM_GRAVITY,
+    SPRING_PARAM_CLOTH_MODE,
+    SPRING_PARAM_CLOTH_STIFFNESS,
+    SPRING_PARAM_CLOTH_DRAG,
+    SPRING_PARAM_CLOTH_GRAVITY,
+    SPRING_PARAM_CLOTH_TAPER,
+    SPRING_PARAM_COLLISION_DEBUG,
     SPRING_PARAM_MAX_ELEMENT
 } SpringParamAction;
 
@@ -44,6 +50,12 @@ static int spring_menu_close_pending = 0;
 extern float g_spring_stiffness;
 extern float g_spring_drag;
 extern float g_spring_gravity;
+extern int g_spring_cloth_mode;
+extern float g_spring_cloth_stiffness;
+extern float g_spring_cloth_drag;
+extern float g_spring_cloth_gravity;
+extern float g_spring_cloth_taper;
+extern int g_spring_debug_collisions;
 
 static float clampf(float v, float lo, float hi) {
     if (v < lo) return lo;
@@ -86,6 +98,50 @@ void debug_ui_prepare_for_close(void) {
     }
 }
 
+void debug_ui_reset_menus(void) {
+    spring_menu_close_pending = 0;
+    ui_close_request = 0;
+    spring_close_guard = 0;
+    if (debug_ui && spring_menu_id >= 0) {
+        ui_element_delete(debug_ui, (uint32_t)spring_menu_id);
+    }
+    spring_menu_id = -1;
+    for (int i = 0; i < SPRING_PARAM_MAX_ELEMENT; i++) {
+        spring_param_ids[i] = 0;
+    }
+}
+
+void debug_ui_sync_spring_params(void) {
+    if (!debug_ui || spring_menu_id < 0) return;
+    if (spring_param_ids[SPRING_PARAM_STIFFNESS]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_STIFFNESS], g_spring_stiffness);
+    }
+    if (spring_param_ids[SPRING_PARAM_DRAG]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_DRAG], g_spring_drag);
+    }
+    if (spring_param_ids[SPRING_PARAM_GRAVITY]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_GRAVITY], g_spring_gravity);
+    }
+    if (spring_param_ids[SPRING_PARAM_CLOTH_MODE]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_MODE], (float)g_spring_cloth_mode);
+    }
+    if (spring_param_ids[SPRING_PARAM_CLOTH_STIFFNESS]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_STIFFNESS], g_spring_cloth_stiffness);
+    }
+    if (spring_param_ids[SPRING_PARAM_CLOTH_DRAG]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_DRAG], g_spring_cloth_drag);
+    }
+    if (spring_param_ids[SPRING_PARAM_CLOTH_GRAVITY]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_GRAVITY], g_spring_cloth_gravity);
+    }
+    if (spring_param_ids[SPRING_PARAM_CLOTH_TAPER]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_TAPER], g_spring_cloth_taper);
+    }
+    if (spring_param_ids[SPRING_PARAM_COLLISION_DEBUG]) {
+        ui_write_parameter(debug_ui, spring_param_ids[SPRING_PARAM_COLLISION_DEBUG], (float)g_spring_debug_collisions);
+    }
+}
+
 static void springs_menu(void);
 
 static void on_spring_stiffness(int id) {
@@ -107,6 +163,47 @@ static void on_spring_gravity(int id) {
     float v = ui_read_parameter(debug_ui, (uint32_t)id);
     g_spring_gravity = clampf(v, 0.0f, 2.0f);
     if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_cloth_mode(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_cloth_mode = v >= 0.5f ? 1 : 0;
+    if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_cloth_stiffness(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_cloth_stiffness = clampf(v, 0.0f, 1.0f);
+    if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_cloth_drag(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_cloth_drag = clampf(v, 0.0f, 3.0f);
+    if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_cloth_gravity(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_cloth_gravity = clampf(v, 0.0f, 2.0f);
+    if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_cloth_taper(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_cloth_taper = clampf(v, 0.0f, 1.0f);
+    if (spring_reset_fn) spring_reset_fn();
+}
+
+static void on_spring_collision_debug(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_spring_debug_collisions = v >= 0.5f ? 1 : 0;
 }
 
 static void on_spring_menu_save(int id) {
@@ -168,7 +265,7 @@ static void springs_menu(void) {
     ui_set_align(debug_ui, UI_BELOW);
 
     ui_parameter_t stiffness = {
-        .w = 220.0f,
+        .w = 440.0f,
         .value = g_spring_stiffness,
         .start_val = 0.0f,
         .end_val = 2.0f,
@@ -181,7 +278,7 @@ static void springs_menu(void) {
     ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_STIFFNESS], on_spring_stiffness);
 
     ui_parameter_t drag = {
-        .w = 220.0f,
+        .w = 440.0f,
         .value = g_spring_drag,
         .start_val = 0.0f,
         .end_val = 2.0f,
@@ -194,7 +291,7 @@ static void springs_menu(void) {
     ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_DRAG], on_spring_drag);
 
     ui_parameter_t gravity = {
-        .w = 220.0f,
+        .w = 440.0f,
         .value = g_spring_gravity,
         .start_val = 0.0f,
         .end_val = 2.0f,
@@ -205,6 +302,85 @@ static void springs_menu(void) {
     spring_param_ids[SPRING_PARAM_GRAVITY] = (uint32_t)ui_element_init(debug_ui, &gravity, 0, UI_PARAMETER);
     ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_GRAVITY], UI_ACTION_ON_PRESS);
     ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_GRAVITY], on_spring_gravity);
+
+    ui_parameter_t cloth_mode = {
+        .w = 440.0f,
+        .value = (float)g_spring_cloth_mode,
+        .start_val = 0.0f,
+        .end_val = 1.0f,
+        .step_size = 1.0f,
+        .steps_per_pixel = 1.0f,
+        .title = "Cloth Mode"
+    };
+    spring_param_ids[SPRING_PARAM_CLOTH_MODE] = (uint32_t)ui_element_init(debug_ui, &cloth_mode, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_MODE], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_MODE], on_spring_cloth_mode);
+
+    ui_parameter_t cloth_stiffness = {
+        .w = 440.0f,
+        .value = g_spring_cloth_stiffness,
+        .start_val = 0.0f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Cloth Stiffness"
+    };
+    spring_param_ids[SPRING_PARAM_CLOTH_STIFFNESS] = (uint32_t)ui_element_init(debug_ui, &cloth_stiffness, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_STIFFNESS], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_STIFFNESS], on_spring_cloth_stiffness);
+
+    ui_parameter_t cloth_drag = {
+        .w = 440.0f,
+        .value = g_spring_cloth_drag,
+        .start_val = 0.0f,
+        .end_val = 3.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Cloth Drag"
+    };
+    spring_param_ids[SPRING_PARAM_CLOTH_DRAG] = (uint32_t)ui_element_init(debug_ui, &cloth_drag, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_DRAG], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_DRAG], on_spring_cloth_drag);
+
+    ui_parameter_t cloth_gravity = {
+        .w = 440.0f,
+        .value = g_spring_cloth_gravity,
+        .start_val = 0.0f,
+        .end_val = 2.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Cloth Gravity"
+    };
+    spring_param_ids[SPRING_PARAM_CLOTH_GRAVITY] = (uint32_t)ui_element_init(debug_ui, &cloth_gravity, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_GRAVITY], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_GRAVITY], on_spring_cloth_gravity);
+
+    ui_parameter_t cloth_taper = {
+        .w = 440.0f,
+        .value = g_spring_cloth_taper,
+        .start_val = 0.0f,
+        .end_val = 1.0f,
+        .step_size = 0.05f,
+        .steps_per_pixel = 0.2f,
+        .title = "Cloth Taper"
+    };
+    spring_param_ids[SPRING_PARAM_CLOTH_TAPER] = (uint32_t)ui_element_init(debug_ui, &cloth_taper, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_TAPER], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_CLOTH_TAPER], on_spring_cloth_taper);
+
+    ui_parameter_t collision_debug = {
+        .w = 440.0f,
+        .value = (float)g_spring_debug_collisions,
+        .start_val = 0.0f,
+        .end_val = 1.0f,
+        .step_size = 1.0f,
+        .steps_per_pixel = 1.0f,
+        .title = "Collision Debug"
+    };
+    spring_param_ids[SPRING_PARAM_COLLISION_DEBUG] = (uint32_t)ui_element_init(debug_ui, &collision_debug, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, spring_param_ids[SPRING_PARAM_COLLISION_DEBUG], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, spring_param_ids[SPRING_PARAM_COLLISION_DEBUG], on_spring_collision_debug);
+
 
     ui_button_t save_btn = {.str = "Save", .w = 0, .h = 0, .state = 0};
     uint32_t save_id = (uint32_t)ui_element_init(debug_ui, &save_btn, 0, UI_BUTTON_ROUND);

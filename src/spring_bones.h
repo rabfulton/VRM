@@ -7,6 +7,13 @@
 
 #include "gltf_loader.h"
 
+extern int g_spring_cloth_mode;
+extern float g_spring_cloth_stiffness;
+extern float g_spring_cloth_drag;
+extern float g_spring_cloth_gravity;
+extern float g_spring_cloth_taper;
+extern int g_spring_debug_collisions;
+
 /* Initialize spring bone runtime state (call after model load) */
 void spring_bones_init(GltfModel *model);
 

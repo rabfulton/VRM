@@ -80,6 +80,21 @@ bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
         } else if (strcmp(key, "spring.gravity") == 0) {
             out_cfg->spring_gravity = fval;
             out_cfg->has_spring_gravity = true;
+        } else if (strcmp(key, "spring.cloth_mode") == 0) {
+            out_cfg->spring_cloth_mode = fval;
+            out_cfg->has_spring_cloth_mode = true;
+        } else if (strcmp(key, "spring.cloth_stiffness") == 0) {
+            out_cfg->spring_cloth_stiffness = fval;
+            out_cfg->has_spring_cloth_stiffness = true;
+        } else if (strcmp(key, "spring.cloth_drag") == 0) {
+            out_cfg->spring_cloth_drag = fval;
+            out_cfg->has_spring_cloth_drag = true;
+        } else if (strcmp(key, "spring.cloth_gravity") == 0) {
+            out_cfg->spring_cloth_gravity = fval;
+            out_cfg->has_spring_cloth_gravity = true;
+        } else if (strcmp(key, "spring.cloth_taper") == 0) {
+            out_cfg->spring_cloth_taper = fval;
+            out_cfg->has_spring_cloth_taper = true;
         } else if (strcmp(key, "bounds.world_w") == 0) {
             out_cfg->bounds_world_w = fval;
             out_cfg->has_bounds_world_w = true;
@@ -160,6 +175,61 @@ bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
         if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
         else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
             snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.gravity");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_cloth_mode) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_cloth_mode);
+        int idx = kv_find(pairs, pair_count, "spring.cloth_mode");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_mode");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_cloth_stiffness) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_cloth_stiffness);
+        int idx = kv_find(pairs, pair_count, "spring.cloth_stiffness");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_stiffness");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_cloth_drag) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_cloth_drag);
+        int idx = kv_find(pairs, pair_count, "spring.cloth_drag");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_drag");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_cloth_gravity) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_cloth_gravity);
+        int idx = kv_find(pairs, pair_count, "spring.cloth_gravity");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_gravity");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_spring_cloth_taper) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->spring_cloth_taper);
+        int idx = kv_find(pairs, pair_count, "spring.cloth_taper");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_taper");
             snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
             pair_count++;
         }
