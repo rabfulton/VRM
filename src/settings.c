@@ -72,6 +72,22 @@ bool settings_load(const char *path, Settings *out_settings) {
                 out_settings->has_model_scale = true;
                 found = true;
             }
+        } else if (strcmp(key, "window_pos_x") == 0) {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end && end != val) {
+                out_settings->window_pos[0] = (int)v;
+                out_settings->has_window_position = true;
+                found = true;
+            }
+        } else if (strcmp(key, "window_pos_y") == 0) {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end && end != val) {
+                out_settings->window_pos[1] = (int)v;
+                out_settings->has_window_position = true;
+                found = true;
+            }
         }
     }
     fclose(f);
@@ -92,6 +108,10 @@ bool settings_save(const char *path, const Settings *settings) {
     }
     if (settings->has_model_scale) {
         fprintf(f, "model_scale=%.6f\n", settings->model_scale);
+    }
+    if (settings->has_window_position) {
+        fprintf(f, "window_pos_x=%d\n", settings->window_pos[0]);
+        fprintf(f, "window_pos_y=%d\n", settings->window_pos[1]);
     }
     fclose(f);
     return true;

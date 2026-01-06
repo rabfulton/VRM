@@ -130,6 +130,47 @@ static const char *shadow_frag_src =
     "uniform float uShadowAlpha;\n"
     "void main() {\n"
     "    float a = uShadowAlpha;\n"
+    "    FragColor = vec4(a, a, a, a);\n"
+    "}\n";
+
+static const char *shadow_blur_vert_src =
+    "#version 330 core\n"
+    "layout(location = 0) in vec2 aPos;\n"
+    "layout(location = 1) in vec2 aUV;\n"
+    "out vec2 vUV;\n"
+    "void main() {\n"
+    "    vUV = aUV;\n"
+    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *shadow_blur_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "out vec4 FragColor;\n"
+    "uniform sampler2D uTex;\n"
+    "uniform vec2 uTexelSize;\n"
+    "uniform vec2 uDirection;\n"
+    "void main() {\n"
+    "    vec2 off = uDirection * uTexelSize;\n"
+    "    vec4 c = texture(uTex, vUV) * 0.227027;\n"
+    "    c += texture(uTex, vUV + off * 1.384615) * 0.316216;\n"
+    "    c += texture(uTex, vUV - off * 1.384615) * 0.316216;\n"
+    "    c += texture(uTex, vUV + off * 3.230769) * 0.070270;\n"
+    "    c += texture(uTex, vUV - off * 3.230769) * 0.070270;\n"
+    "    FragColor = c;\n"
+    "}\n";
+
+static const char *shadow_comp_frag_src =
+    "#version 330 core\n"
+    "in vec2 vUV;\n"
+    "out vec4 FragColor;\n"
+    "uniform sampler2D uTex;\n"
+    "uniform vec2 uScreenSize;\n"
+    "uniform vec2 uOffsetPx;\n"
+    "uniform float uShadowAlpha;\n"
+    "void main() {\n"
+    "    vec2 uv = vUV + uOffsetPx / uScreenSize;\n"
+    "    float a = texture(uTex, uv).r * uShadowAlpha;\n"
     "    FragColor = vec4(0.0, 0.0, 0.0, a);\n"
     "}\n";
 
@@ -341,6 +382,72 @@ static GLuint link_program(GLuint vert, GLuint frag) {
   return program;
 }
 
+static void init_shadow_quad(Renderer *r) {
+  if (r->shadow_quad_vao) return;
+  float quad[] = {
+    -1.0f, -1.0f, 0.0f, 0.0f,
+     1.0f, -1.0f, 1.0f, 0.0f,
+     1.0f,  1.0f, 1.0f, 1.0f,
+    -1.0f, -1.0f, 0.0f, 0.0f,
+     1.0f,  1.0f, 1.0f, 1.0f,
+    -1.0f,  1.0f, 0.0f, 1.0f
+  };
+  glGenVertexArrays(1, &r->shadow_quad_vao);
+  glGenBuffers(1, &r->shadow_quad_vbo);
+  glBindVertexArray(r->shadow_quad_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, r->shadow_quad_vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
+}
+
+static void ensure_shadow_targets(Renderer *r, int w, int h) {
+  int tw = w / 2;
+  int th = h / 2;
+  if (tw < 128) tw = 128;
+  if (th < 128) th = 128;
+  if (tw > 1024) tw = 1024;
+  if (th > 1024) th = 1024;
+
+  if (r->shadow_tex_w == tw && r->shadow_tex_h == th && r->shadow_tex && r->shadow_blur_tex) {
+    return;
+  }
+
+  r->shadow_tex_w = tw;
+  r->shadow_tex_h = th;
+
+  if (!r->shadow_tex) glGenTextures(1, &r->shadow_tex);
+  glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  if (!r->shadow_blur_tex) glGenTextures(1, &r->shadow_blur_tex);
+  glBindTexture(GL_TEXTURE_2D, r->shadow_blur_tex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  if (!r->shadow_fbo) glGenFramebuffers(1, &r->shadow_fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->shadow_tex, 0);
+
+  if (!r->shadow_blur_fbo) glGenFramebuffers(1, &r->shadow_blur_fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_blur_fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->shadow_blur_tex, 0);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 static bool init_shader_program(ShaderProgram *program, const char *frag_src) {
   GLuint vert = compile_shader(GL_VERTEX_SHADER, skinned_vert_src);
   GLuint frag = compile_shader(GL_FRAGMENT_SHADER, frag_src);
@@ -423,6 +530,39 @@ bool renderer_init(Renderer *r) {
   if (shadow_vert) glDeleteShader(shadow_vert);
   if (shadow_frag) glDeleteShader(shadow_frag);
 
+  /* Shadow blur/composite shaders */
+  {
+    GLuint blur_vert = compile_shader(GL_VERTEX_SHADER, shadow_blur_vert_src);
+    GLuint blur_frag = compile_shader(GL_FRAGMENT_SHADER, shadow_blur_frag_src);
+    if (blur_vert && blur_frag) {
+      r->shadow_blur_program = link_program(blur_vert, blur_frag);
+      if (r->shadow_blur_program) {
+        r->u_shadow_blur_tex = glGetUniformLocation(r->shadow_blur_program, "uTex");
+        r->u_shadow_blur_texel = glGetUniformLocation(r->shadow_blur_program, "uTexelSize");
+        r->u_shadow_blur_dir = glGetUniformLocation(r->shadow_blur_program, "uDirection");
+      }
+    }
+    if (blur_vert) glDeleteShader(blur_vert);
+    if (blur_frag) glDeleteShader(blur_frag);
+  }
+  {
+    GLuint comp_vert = compile_shader(GL_VERTEX_SHADER, shadow_blur_vert_src);
+    GLuint comp_frag = compile_shader(GL_FRAGMENT_SHADER, shadow_comp_frag_src);
+    if (comp_vert && comp_frag) {
+      r->shadow_comp_program = link_program(comp_vert, comp_frag);
+      if (r->shadow_comp_program) {
+        r->u_shadow_comp_tex = glGetUniformLocation(r->shadow_comp_program, "uTex");
+        r->u_shadow_comp_screen = glGetUniformLocation(r->shadow_comp_program, "uScreenSize");
+        r->u_shadow_comp_offset = glGetUniformLocation(r->shadow_comp_program, "uOffsetPx");
+        r->u_shadow_comp_alpha = glGetUniformLocation(r->shadow_comp_program, "uShadowAlpha");
+      }
+    }
+    if (comp_vert) glDeleteShader(comp_vert);
+    if (comp_frag) glDeleteShader(comp_frag);
+  }
+
+  init_shadow_quad(r);
+
   /* Outline shader */
   GLuint outline_vert = compile_shader(GL_VERTEX_SHADER, outline_vert_src);
   GLuint outline_frag = compile_shader(GL_FRAGMENT_SHADER, outline_frag_src);
@@ -461,8 +601,16 @@ void renderer_cleanup(Renderer *r) {
   if (r->toon.program) glDeleteProgram(r->toon.program);
   if (r->anime.program) glDeleteProgram(r->anime.program);
   if (r->shadow_program) glDeleteProgram(r->shadow_program);
+  if (r->shadow_blur_program) glDeleteProgram(r->shadow_blur_program);
+  if (r->shadow_comp_program) glDeleteProgram(r->shadow_comp_program);
   if (r->outline_program) glDeleteProgram(r->outline_program);
   if (r->bone_tex) glDeleteTextures(1, &r->bone_tex);
+  if (r->shadow_tex) glDeleteTextures(1, &r->shadow_tex);
+  if (r->shadow_blur_tex) glDeleteTextures(1, &r->shadow_blur_tex);
+  if (r->shadow_fbo) glDeleteFramebuffers(1, &r->shadow_fbo);
+  if (r->shadow_blur_fbo) glDeleteFramebuffers(1, &r->shadow_blur_fbo);
+  if (r->shadow_quad_vao) glDeleteVertexArrays(1, &r->shadow_quad_vao);
+  if (r->shadow_quad_vbo) glDeleteBuffers(1, &r->shadow_quad_vbo);
   free(r->bone_tex_data);
   memset(r, 0, sizeof(Renderer));
 }
@@ -645,13 +793,129 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
   glBindVertexArray(0);
 }
 
-void renderer_draw(Renderer *r, const OrbitCamera *camera) {
+void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_height) {
   if (!r->initialized) return;
 
   if (!r->model || !r->model->loaded) return;
 
   mat4 mt;
   memcpy(mt, r->model_transform, sizeof(mat4));
+
+  /* === Render silhouette to texture + blur + composite === */
+  if (r->shadow_program && r->shadow_blur_program && r->shadow_comp_program && fb_width > 0 && fb_height > 0) {
+    ensure_shadow_targets(r, fb_width, fb_height);
+    if (r->shadow_tex && r->shadow_blur_tex && r->shadow_fbo && r->shadow_blur_fbo) {
+      GLint prev_fbo = 0;
+      glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+
+      GLboolean had_depth = glIsEnabled(GL_DEPTH_TEST);
+      GLboolean had_blend = glIsEnabled(GL_BLEND);
+
+      glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_fbo);
+      glViewport(0, 0, r->shadow_tex_w, r->shadow_tex_h);
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+      glDisable(GL_DEPTH_TEST);
+      glDisable(GL_BLEND);
+
+      glUseProgram(r->shadow_program);
+      glUniformMatrix4fv(r->u_shadow_view, 1, GL_FALSE, camera->view[0]);
+      glUniformMatrix4fv(r->u_shadow_proj, 1, GL_FALSE, camera->proj[0]);
+      if (r->use_bone_texture && r->bone_tex && r->u_shadow_bone_tex >= 0) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+        glUniform1i(r->u_shadow_bone_tex, 1);
+      }
+      float shadow_offset[3] = {0.0f, 0.0f, 0.0f};
+      glUniform3fv(r->u_shadow_offset, 1, shadow_offset);
+      glUniform1f(r->u_shadow_alpha, 1.0f);
+      glUniform1f(r->u_shadow_scale, 1.0f);
+
+      for (int i = 0; i < r->model->node_count; i++) {
+        GltfNode *node = &r->model->nodes[i];
+        if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
+
+        mat4 combined;
+        glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
+          if (r->use_bone_texture) {
+            renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
+          }
+        }
+        glUniform1i(r->u_shadow_use_skinning, 0);
+        glUniform1i(r->u_shadow_use_bone_texture, 0);
+        glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float*)combined);
+
+        GltfMesh *mesh = &r->model->meshes[node->mesh_index];
+        for (int j = 0; j < mesh->primitive_count; j++) {
+          GltfPrimitive *prim = &mesh->primitives[j];
+          if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+            if (prim->joint_palette_count > 0) {
+              renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
+              glUniformMatrix4fv(r->u_shadow_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+              glUniform1i(r->u_shadow_use_skinning, 1);
+              glUniform1i(r->u_shadow_use_bone_texture, 0);
+            } else if (r->use_bone_texture) {
+              glUniform1i(r->u_shadow_use_skinning, 1);
+              glUniform1i(r->u_shadow_use_bone_texture, 1);
+            } else {
+              glUniform1i(r->u_shadow_use_skinning, 0);
+              glUniform1i(r->u_shadow_use_bone_texture, 0);
+            }
+          } else {
+            glUniform1i(r->u_shadow_use_skinning, 0);
+            glUniform1i(r->u_shadow_use_bone_texture, 0);
+          }
+          glBindVertexArray(prim->vao);
+          if (prim->ebo && prim->index_count > 0) {
+            glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
+          } else if (prim->vertex_count > 0) {
+            glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
+          }
+          glBindVertexArray(0);
+        }
+      }
+
+      glUseProgram(r->shadow_blur_program);
+      glBindVertexArray(r->shadow_quad_vao);
+      glUniform1i(r->u_shadow_blur_tex, 0);
+      glUniform2f(r->u_shadow_blur_texel, 1.0f / (float)r->shadow_tex_w, 1.0f / (float)r->shadow_tex_h);
+
+      glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_blur_fbo);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
+      glUniform2f(r->u_shadow_blur_dir, 1.0f, 0.0f);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+
+      glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_fbo);
+      glBindTexture(GL_TEXTURE_2D, r->shadow_blur_tex);
+      glUniform2f(r->u_shadow_blur_dir, 0.0f, 1.0f);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+      glBindVertexArray(0);
+
+      glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
+      glViewport(0, 0, fb_width, fb_height);
+
+      glUseProgram(r->shadow_comp_program);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
+      glUniform1i(r->u_shadow_comp_tex, 0);
+      glUniform2f(r->u_shadow_comp_screen, (float)fb_width, (float)fb_height);
+      glUniform2f(r->u_shadow_comp_offset, -20.0f, 10.0f);
+      glUniform1f(r->u_shadow_comp_alpha, 0.25f);
+
+      glDisable(GL_DEPTH_TEST);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glBindVertexArray(r->shadow_quad_vao);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+      glBindVertexArray(0);
+
+      if (had_depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+      if (had_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    }
+  }
 
   /* === Draw outline pass for anime mode (back faces extruded) === */
   if (r->shader_mode == RENDERER_SHADER_ANIME && r->outline_program) {
@@ -720,73 +984,6 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     }
     glCullFace(GL_BACK);
     glDisable(GL_CULL_FACE);
-  }
-
-  /* === Draw shadow pass (behind model) === */
-  if (r->shadow_program) {
-    glUseProgram(r->shadow_program);
-    glUniformMatrix4fv(r->u_shadow_view, 1, GL_FALSE, camera->view[0]);
-    glUniformMatrix4fv(r->u_shadow_proj, 1, GL_FALSE, camera->proj[0]);
-    if (r->use_bone_texture && r->bone_tex && r->u_shadow_bone_tex >= 0) {
-      glActiveTexture(GL_TEXTURE1);
-      glBindTexture(GL_TEXTURE_2D, r->bone_tex);
-      glUniform1i(r->u_shadow_bone_tex, 1);
-    }
-    
-    /* Shadow offset: slightly back and down-right */
-    float shadow_offset[3] = {0.08f, 0.02f, -0.15f};
-    glUniform3fv(r->u_shadow_offset, 1, shadow_offset);
-    glUniform1f(r->u_shadow_alpha, 0.15f);
-    glUniform1f(r->u_shadow_scale, 0.9f);
-
-    glDepthMask(GL_FALSE);
-
-    for (int i = 0; i < r->model->node_count; i++) {
-      GltfNode *node = &r->model->nodes[i];
-      if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
-
-      mat4 combined;
-      glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
-
-      if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-        if (r->use_bone_texture) {
-          renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
-        }
-      }
-      glUniform1i(r->u_shadow_use_skinning, 0);
-      glUniform1i(r->u_shadow_use_bone_texture, 0);
-      glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float*)combined);
-
-      GltfMesh *mesh = &r->model->meshes[node->mesh_index];
-      for (int j = 0; j < mesh->primitive_count; j++) {
-        GltfPrimitive *prim = &mesh->primitives[j];
-        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
-          if (prim->joint_palette_count > 0) {
-            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
-            glUniformMatrix4fv(r->u_shadow_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
-            glUniform1i(r->u_shadow_use_skinning, 1);
-            glUniform1i(r->u_shadow_use_bone_texture, 0);
-          } else if (r->use_bone_texture) {
-            glUniform1i(r->u_shadow_use_skinning, 1);
-            glUniform1i(r->u_shadow_use_bone_texture, 1);
-          } else {
-            glUniform1i(r->u_shadow_use_skinning, 0);
-            glUniform1i(r->u_shadow_use_bone_texture, 0);
-          }
-        } else {
-          glUniform1i(r->u_shadow_use_skinning, 0);
-          glUniform1i(r->u_shadow_use_bone_texture, 0);
-        }
-        glBindVertexArray(prim->vao);
-        if (prim->ebo && prim->index_count > 0) {
-          glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
-        } else if (prim->vertex_count > 0) {
-          glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
-        }
-        glBindVertexArray(0);
-      }
-    }
-    glDepthMask(GL_TRUE);
   }
 
   /* === Draw main model === */

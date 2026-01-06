@@ -58,7 +58,6 @@ extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness, g_spring_cloth_drag, g_spring_cloth_gravity, g_spring_cloth_taper;
 
 static void update_ui_window_layout(void);
-static void update_model_from_drag(int dx, int dy);
 static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
 static void show_ui_window(void);
@@ -140,12 +139,13 @@ static void update_window_for_zoom(void) {
     if (!app.auto_resize || !app.model_loaded || app.cached_world_w <= 0) return;
     float fov = 0.785f, scale = 1.0f / (app.camera.distance * tanf(fov * 0.5f));
     float model_scale = app.model_scale > 0.0f ? app.model_scale : 1.0f;
-    int base = 300, w = (int)(app.cached_world_w * model_scale * scale * base),
-        h = (int)(app.cached_world_h * model_scale * scale * base);
+    float margin = 1.1f;
+    int base = 300, w = (int)(app.cached_world_w * model_scale * scale * base * margin),
+        h = (int)(app.cached_world_h * model_scale * scale * base * margin);
     if (w < 100) w = 100;
     if (h < 100) h = 100;
-    if (w > 2000) w = 2000;
-    if (h > 3000) h = 3000;
+    printf("UI debug: bounds=(%.3f,%.3f) model_scale=%.3f scale=%.3f margin=%.2f size=(%d,%d)\n",
+           app.cached_world_w, app.cached_world_h, model_scale, scale, margin, w, h);
     platform_resize_window(app.window, w, h);
     update_ui_window_layout();
 }
@@ -382,9 +382,9 @@ static void on_ipc_command(const char *action, void *params, int id, void *user_
 /* Platform callbacks */
 static double drag_start_x, drag_start_y;
 static bool is_dragging = false;
-static bool is_model_dragging = false;
-static int model_drag_start_x = 0, model_drag_start_y = 0;
-static float model_drag_start_pos[3] = {0.0f, 0.0f, 0.0f};
+static bool is_window_dragging = false;
+static int window_drag_start_x = 0, window_drag_start_y = 0;
+static int window_drag_start_pos[2] = {0, 0};
 
 static void on_resize(int w, int h, void *user) {
     (void)user;
@@ -404,15 +404,16 @@ static void on_resize(int w, int h, void *user) {
 }
 
 static void on_mouse_move(double x, double y, void *user) {
-    (void)user;
+    PlatformWindow *win = (PlatformWindow *)user;
     mouse.x = (int32_t)x; mouse.y = (int32_t)y;
-    if (is_model_dragging) {
-        int dx = mouse.x - model_drag_start_x;
-        int dy = mouse.y - model_drag_start_y;
-        app.model_position[0] = model_drag_start_pos[0];
-        app.model_position[1] = model_drag_start_pos[1];
-        app.model_position[2] = model_drag_start_pos[2];
-        update_model_from_drag(dx, dy);
+    if (is_window_dragging) {
+        int wx = 0, wy = 0;
+        platform_get_window_pos(win, &wx, &wy);
+        int gx = wx + mouse.x;
+        int gy = wy + mouse.y;
+        int dx = gx - window_drag_start_x;
+        int dy = gy - window_drag_start_y;
+        platform_move_window(win, window_drag_start_pos[0] + dx, window_drag_start_pos[1] + dy);
     } else if (is_dragging) {
         app.camera.azimuth += (float)(x - drag_start_x) * 0.01f;
         app.camera.polar += (float)(y - drag_start_y) * 0.01f;
@@ -431,15 +432,16 @@ static void on_mouse_button(int button, int action, void *user) {
     if (button == PLATFORM_MOUSE_LEFT) {
         mouse.button_l = action;
         if (action && model_hit_test(mouse.x, mouse.y)) {
-            is_model_dragging = true;
-            model_drag_start_x = mouse.x;
-            model_drag_start_y = mouse.y;
-            model_drag_start_pos[0] = app.model_position[0];
-            model_drag_start_pos[1] = app.model_position[1];
-            model_drag_start_pos[2] = app.model_position[2];
+            int wx = 0, wy = 0;
+            platform_get_window_pos(win, &wx, &wy);
+            window_drag_start_x = wx + mouse.x;
+            window_drag_start_y = wy + mouse.y;
+            window_drag_start_pos[0] = wx;
+            window_drag_start_pos[1] = wy;
+            is_window_dragging = true;
         }
         if (!action) {
-            is_model_dragging = false;
+            is_window_dragging = false;
         }
     } else if (button == PLATFORM_MOUSE_RIGHT) {
         mouse.button_r = action;
@@ -553,17 +555,6 @@ static float compute_model_radius_px(void) {
     return radius * 0.75f;
 }
 
-static void update_main_window_layout(void) {
-    if (!app.window) return;
-
-    int wx = 0, wy = 0, ww = 0, wh = 0;
-    platform_get_window_workarea(app.window, &wx, &wy, &ww, &wh);
-    if (ww > 0 && wh > 0) {
-        platform_resize_window(app.window, ww, wh);
-        platform_move_window(app.window, wx, wy);
-    }
-}
-
 static void update_ui_window_layout(void) {
     if (!app.ui_window || !app.ui_visible) return;
 
@@ -627,22 +618,6 @@ static void update_ui_input_region(void) {
     } else {
         platform_clear_input_region(app.ui_window);
     }
-}
-
-static void update_model_from_drag(int dx, int dy) {
-    if (!app.model_loaded) return;
-    int win_w = 0, win_h = 0;
-    platform_get_window_size(app.window, &win_w, &win_h);
-    if (win_w <= 0 || win_h <= 0) return;
-
-    float view_h = 2.0f * app.camera.distance * tanf(app.camera.fov * 0.5f);
-    float view_w = view_h * app.camera.aspect;
-    float world_per_px_x = view_w / (float)win_w;
-    float world_per_px_y = view_h / (float)win_h;
-
-    app.model_position[0] += -dx * world_per_px_x;
-    app.model_position[1] += -dy * world_per_px_y;
-    renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
 }
 
 static void build_view_with_model_transform(float out_view[16]) {
@@ -732,6 +707,8 @@ int main(int argc, char *argv[]) {
     if (!ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, NULL))
         fprintf(stderr, "Failed to start IPC server\n");
 
+    app.auto_resize = true;
+
     app.window = platform_create_window(400, 600, "VRM Overlay", true, false);
     if (!app.window) { fprintf(stderr, "Failed to create window\n"); return 1; }
 
@@ -742,8 +719,6 @@ int main(int argc, char *argv[]) {
     platform_hide_window(app.ui_window);
 
     platform_make_context_current(app.window);
-
-    update_main_window_layout();
 
     printf("OpenGL: %s\n", glGetString(GL_VERSION));
     if (!renderer_init(&app.renderer)) { fprintf(stderr, "Failed to init renderer\n"); return 1; }
@@ -783,6 +758,9 @@ int main(int argc, char *argv[]) {
                 app.model_position[0] = settings.model_position[0];
                 app.model_position[1] = settings.model_position[1];
                 app.model_position[2] = settings.model_position[2];
+            }
+            if (settings.has_window_position) {
+                platform_move_window(app.window, settings.window_pos[0], settings.window_pos[1]);
             }
             if (settings.has_model_position || settings.has_model_scale) {
                 renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
@@ -846,7 +824,7 @@ int main(int argc, char *argv[]) {
         glCullFace(GL_BACK);
 
         camera_update(&app.camera);
-        renderer_draw(&app.renderer, &app.camera);
+        renderer_draw(&app.renderer, &app.camera, app.fb_width, app.fb_height);
 
         if (app.msaa_fbo) {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, app.msaa_fbo);
@@ -911,6 +889,13 @@ int main(int argc, char *argv[]) {
     settings.model_position[2] = app.model_position[2];
     settings.has_model_scale = true;
     settings.model_scale = app.model_scale;
+    {
+        int wx = 0, wy = 0;
+        platform_get_window_pos(app.window, &wx, &wy);
+        settings.has_window_position = true;
+        settings.window_pos[0] = wx;
+        settings.window_pos[1] = wy;
+    }
     settings_save(SETTINGS_PATH, &settings);
 
     gltf_unload(&app.model);

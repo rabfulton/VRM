@@ -41,6 +41,8 @@ typedef struct {
   ShaderProgram anime;
   ShaderProgram *active;
   GLuint shadow_program;
+  GLuint shadow_blur_program;
+  GLuint shadow_comp_program;
   GLuint outline_program;
 
   /* Shadow shader uniforms */
@@ -54,6 +56,15 @@ typedef struct {
   GLint u_shadow_offset;
   GLint u_shadow_alpha;
   GLint u_shadow_scale;
+
+  /* Shadow blur/composite uniforms */
+  GLint u_shadow_blur_tex;
+  GLint u_shadow_blur_texel;
+  GLint u_shadow_blur_dir;
+  GLint u_shadow_comp_tex;
+  GLint u_shadow_comp_screen;
+  GLint u_shadow_comp_offset;
+  GLint u_shadow_comp_alpha;
 
   /* Outline shader uniforms */
   GLint u_outline_view;
@@ -79,6 +90,16 @@ typedef struct {
   /* Model transform (position + rotation) */
   float model_transform[16];
 
+  /* Shadow textures and quad */
+  GLuint shadow_fbo;
+  GLuint shadow_tex;
+  GLuint shadow_blur_fbo;
+  GLuint shadow_blur_tex;
+  GLuint shadow_quad_vao;
+  GLuint shadow_quad_vbo;
+  int shadow_tex_w;
+  int shadow_tex_h;
+
   RendererShaderMode shader_mode;
   bool initialized;
 } Renderer;
@@ -86,7 +107,7 @@ typedef struct {
 bool renderer_init(Renderer *r);
 void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
-void renderer_draw(Renderer *r, const OrbitCamera *camera);
+void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_height);
 void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg, float scale);
 void renderer_toggle_shader(Renderer *r);
 
