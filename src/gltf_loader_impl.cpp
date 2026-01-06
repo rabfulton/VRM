@@ -5,11 +5,7 @@
  * to our C interface.
  */
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
-
 #include "tiny_gltf.h"
 #include <cglm/cglm.h>
 #include <cmath>
@@ -18,6 +14,7 @@
 #include <cstring>
 #include <array>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 extern "C" {
@@ -174,7 +171,6 @@ static size_t component_type_size(int componentType) {
   }
 }
 
-/* Create OpenGL texture from glTF image */
 static GLuint create_texture(const tinygltf::Image &image,
                              size_t *texture_bytes,
                              size_t *texture_bytes_mip) {
@@ -310,8 +306,98 @@ static void create_primitive_buffers(GltfPrimitive *prim,
   /* Joints */
   it = tprim.attributes.find("JOINTS_0");
   if (it != tprim.attributes.end()) {
-    if (bind_attribute(it->second, &prim->vbo_joints, 3, 4, true, false)) {
-      prim->has_skinning = true;
+    const auto &accessor = gltf.accessors[it->second];
+    if (accessor.bufferView >= 0) {
+      const auto &view = gltf.bufferViews[accessor.bufferView];
+      const auto &buffer = gltf.buffers[view.buffer];
+      const uint8_t *data = buffer.data.data() + view.byteOffset + accessor.byteOffset;
+      size_t comp_size = component_type_size(accessor.componentType);
+      size_t stride = accessor.ByteStride(view);
+      if (stride == 0) {
+        stride = 4 * comp_size;
+      }
+      std::vector<int> palette;
+      palette.reserve(GLTF_MAX_PALETTE_BONES);
+      std::unordered_map<uint32_t, uint32_t> remap;
+      bool palette_overflow = false;
+
+      int count = (int)accessor.count;
+      std::vector<uint8_t> remapped;
+      remapped.resize((size_t)count * 4 * comp_size);
+
+      auto read_joint = [&](const uint8_t *ptr) -> uint32_t {
+        if (comp_size == 1) return *ptr;
+        if (comp_size == 2) {
+          uint16_t v;
+          memcpy(&v, ptr, sizeof(v));
+          return v;
+        }
+        uint32_t v;
+        memcpy(&v, ptr, sizeof(v));
+        return v;
+      };
+      auto write_joint = [&](uint8_t *ptr, uint32_t v) {
+        if (comp_size == 1) {
+          *ptr = (uint8_t)v;
+        } else if (comp_size == 2) {
+          uint16_t out = (uint16_t)v;
+          memcpy(ptr, &out, sizeof(out));
+        } else {
+          memcpy(ptr, &v, sizeof(v));
+        }
+      };
+
+      for (int i = 0; i < count; i++) {
+        const uint8_t *src = data + (size_t)i * stride;
+        uint8_t *dst = remapped.data() + (size_t)i * 4 * comp_size;
+        for (int c = 0; c < 4; c++) {
+          uint32_t joint = read_joint(src + (size_t)c * comp_size);
+          auto itp = remap.find(joint);
+          uint32_t local_idx = 0;
+          if (itp == remap.end()) {
+            if ((int)palette.size() < GLTF_MAX_PALETTE_BONES) {
+              local_idx = (uint32_t)palette.size();
+              remap[joint] = local_idx;
+              palette.push_back((int)joint);
+            } else {
+              palette_overflow = true;
+              local_idx = 0;
+            }
+          } else {
+            local_idx = itp->second;
+          }
+          write_joint(dst + (size_t)c * comp_size, local_idx);
+        }
+      }
+
+      if (palette_overflow) {
+        fprintf(stderr,
+                "Warning: primitive uses >%d joints, using bone texture path\n",
+                GLTF_MAX_PALETTE_BONES);
+        if (bind_attribute(it->second, &prim->vbo_joints, 3, 4, true, false)) {
+          prim->has_skinning = true;
+        }
+        prim->joint_palette_count = 0;
+        prim->joint_palette = NULL;
+      } else {
+        glGenBuffers(1, &prim->vbo_joints);
+        glBindBuffer(GL_ARRAY_BUFFER, prim->vbo_joints);
+        glBufferData(GL_ARRAY_BUFFER, remapped.size(), remapped.data(), GL_STATIC_DRAW);
+        if (gpu_buffer_bytes) {
+          *gpu_buffer_bytes += remapped.size();
+        }
+
+        prim->joint_palette_count = (int)palette.size();
+        prim->joint_palette = (int *)malloc((size_t)prim->joint_palette_count * sizeof(int));
+        for (int i = 0; i < prim->joint_palette_count; i++) {
+          prim->joint_palette[i] = palette[i];
+        }
+
+        GLenum gl_type = component_gl_type(accessor.componentType);
+        glVertexAttribIPointer(3, 4, gl_type, (GLsizei)(4 * comp_size), (const void *)0);
+        glEnableVertexAttribArray(3);
+        prim->has_skinning = prim->joint_palette_count > 0;
+      }
     }
   }
 
@@ -583,6 +669,7 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
         memcpy(s->inverse_bind_matrices, data,
                s->joint_count * 16 * sizeof(float));
       }
+
     }
   }
 
@@ -1056,6 +1143,7 @@ extern "C" void gltf_unload_impl(GltfModel *model) {
         glDeleteBuffers(1, &p->vbo_weights);
       if (p->ebo)
         glDeleteBuffers(1, &p->ebo);
+      free(p->joint_palette);
     }
     free(m->primitives);
     free(m->morph_weights);

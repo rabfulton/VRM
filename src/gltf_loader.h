@@ -20,6 +20,7 @@
 #define MAX_NODES 512
 #define MAX_JOINTS 256
 #define MAX_ANIMATIONS 64
+#define GLTF_MAX_PALETTE_BONES 128
 
 /* Primitive (submesh) */
 typedef struct {
@@ -41,6 +42,9 @@ typedef struct {
   bool has_normals;
   bool has_texcoords;
   bool has_skinning;
+
+  int joint_palette_count;
+  int *joint_palette; /* Node indices used by this primitive */
 } GltfPrimitive;
 
 /* Mesh */

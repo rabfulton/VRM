@@ -19,7 +19,7 @@ void main() {
     }
 
     // Simple lighting
-    vec3 normal = normalize(vNormal);
+    vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float diff = max(dot(normal, lightDir), 0.0) * 0.6 + 0.4;
     color.rgb *= diff;

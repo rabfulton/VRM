@@ -10,6 +10,8 @@
 #include <string.h>
 
 /* Embedded shaders */
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
 static const char *skinned_vert_src =
     "#version 330 core\n"
     "layout(location = 0) in vec3 aPos;\n"
@@ -20,18 +22,44 @@ static const char *skinned_vert_src =
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[200];\n"
+    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
     "uniform bool uUseSkinning;\n"
+    "uniform bool uUseBoneTexture;\n"
+    "uniform sampler2D uBoneTex;\n"
     "out vec3 vNormal;\n"
     "out vec2 vTexCoord;\n"
     "out vec3 vWorldPos;\n"
     "void main() {\n"
     "    mat4 skinMatrix;\n"
     "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
-    "        skinMatrix = aWeights.x * uBones[aJoints.x]\n"
-    "                   + aWeights.y * uBones[aJoints.y]\n"
-    "                   + aWeights.z * uBones[aJoints.z]\n"
-    "                   + aWeights.w * uBones[aJoints.w];\n"
+    "        if (uUseBoneTexture) {\n"
+    "            ivec2 row = ivec2(0, aJoints.x);\n"
+    "            mat4 b0 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.y);\n"
+    "            mat4 b1 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.z);\n"
+    "            mat4 b2 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.w);\n"
+    "            mat4 b3 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            skinMatrix = aWeights.x * b0 + aWeights.y * b1 + aWeights.z * b2 + aWeights.w * b3;\n"
+    "        } else {\n"
+    "            skinMatrix = aWeights.x * uBones[aJoints.x]\n"
+    "                       + aWeights.y * uBones[aJoints.y]\n"
+    "                       + aWeights.z * uBones[aJoints.z]\n"
+    "                       + aWeights.w * uBones[aJoints.w];\n"
+    "        }\n"
     "    } else {\n"
     "        skinMatrix = mat4(1.0);\n"
     "    }\n"
@@ -51,17 +79,43 @@ static const char *shadow_vert_src =
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[200];\n"
+    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
     "uniform bool uUseSkinning;\n"
+    "uniform bool uUseBoneTexture;\n"
+    "uniform sampler2D uBoneTex;\n"
     "uniform vec3 uShadowOffset;\n"
     "uniform float uShadowScale;\n"
     "void main() {\n"
     "    mat4 skinMatrix;\n"
     "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
-    "        skinMatrix = aWeights.x * uBones[aJoints.x]\n"
-    "                   + aWeights.y * uBones[aJoints.y]\n"
-    "                   + aWeights.z * uBones[aJoints.z]\n"
-    "                   + aWeights.w * uBones[aJoints.w];\n"
+    "        if (uUseBoneTexture) {\n"
+    "            ivec2 row = ivec2(0, aJoints.x);\n"
+    "            mat4 b0 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.y);\n"
+    "            mat4 b1 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.z);\n"
+    "            mat4 b2 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.w);\n"
+    "            mat4 b3 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            skinMatrix = aWeights.x * b0 + aWeights.y * b1 + aWeights.z * b2 + aWeights.w * b3;\n"
+    "        } else {\n"
+    "            skinMatrix = aWeights.x * uBones[aJoints.x]\n"
+    "                       + aWeights.y * uBones[aJoints.y]\n"
+    "                       + aWeights.z * uBones[aJoints.z]\n"
+    "                       + aWeights.w * uBones[aJoints.w];\n"
+    "        }\n"
     "    } else {\n"
     "        skinMatrix = mat4(1.0);\n"
     "    }\n"
@@ -95,7 +149,7 @@ static const char *pbr_frag_src =
     "    if (uHasBaseColorTex) {\n"
     "        color *= texture(uBaseColorTex, vTexCoord);\n"
     "    }\n"
-    "    vec3 normal = normalize(vNormal);\n"
+    "    vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);\n"
     "    // Key light (upper right front)\n"
     "    vec3 keyDir = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float key = max(dot(normal, keyDir), 0.0) * 0.5;\n"
@@ -126,7 +180,7 @@ static const char *toon_frag_src =
     "    if (uHasBaseColorTex) {\n"
     "        color *= texture(uBaseColorTex, vTexCoord);\n"
     "    }\n"
-    "    vec3 normal = normalize(vNormal);\n"
+    "    vec3 normal = normalize(gl_FrontFacing ? vNormal : -vNormal);\n"
     "    vec3 lightDir = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float ndotl = max(dot(normal, lightDir), 0.0);\n"
     "    float shade = 0.25;\n"
@@ -165,7 +219,7 @@ static const char *anime_frag_src =
     "void main() {\n"
     "    vec4 color = uBaseColor;\n"
     "    if (uHasBaseColorTex) color *= texture(uBaseColorTex, vTexCoord);\n"
-    "    vec3 N = normalize(vNormal);\n"
+    "    vec3 N = normalize(gl_FrontFacing ? vNormal : -vNormal);\n"
     "    vec3 L = normalize(vec3(0.2, 0.4, -0.9));\n"
     "    float NdotL = dot(N, L);\n"
     /* Two-tone cel shading with soft edge */
@@ -199,16 +253,42 @@ static const char *outline_vert_src =
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[200];\n"
+    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
     "uniform bool uUseSkinning;\n"
+    "uniform bool uUseBoneTexture;\n"
+    "uniform sampler2D uBoneTex;\n"
     "uniform float uOutlineWidth;\n"
     "void main() {\n"
     "    mat4 skinMatrix;\n"
     "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
-    "        skinMatrix = aWeights.x * uBones[aJoints.x]\n"
-    "                   + aWeights.y * uBones[aJoints.y]\n"
-    "                   + aWeights.z * uBones[aJoints.z]\n"
-    "                   + aWeights.w * uBones[aJoints.w];\n"
+    "        if (uUseBoneTexture) {\n"
+    "            ivec2 row = ivec2(0, aJoints.x);\n"
+    "            mat4 b0 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.y);\n"
+    "            mat4 b1 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.z);\n"
+    "            mat4 b2 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            row = ivec2(0, aJoints.w);\n"
+    "            mat4 b3 = mat4(texelFetch(uBoneTex, row, 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "            skinMatrix = aWeights.x * b0 + aWeights.y * b1 + aWeights.z * b2 + aWeights.w * b3;\n"
+    "        } else {\n"
+    "            skinMatrix = aWeights.x * uBones[aJoints.x]\n"
+    "                       + aWeights.y * uBones[aJoints.y]\n"
+    "                       + aWeights.z * uBones[aJoints.z]\n"
+    "                       + aWeights.w * uBones[aJoints.w];\n"
+    "        }\n"
     "    } else {\n"
     "        skinMatrix = mat4(1.0);\n"
     "    }\n"
@@ -280,6 +360,8 @@ static bool init_shader_program(ShaderProgram *program, const char *frag_src) {
   program->u_model = glGetUniformLocation(program->program, "uModel");
   program->u_bones = glGetUniformLocation(program->program, "uBones");
   program->u_use_skinning = glGetUniformLocation(program->program, "uUseSkinning");
+  program->u_use_bone_texture = glGetUniformLocation(program->program, "uUseBoneTexture");
+  program->u_bone_tex = glGetUniformLocation(program->program, "uBoneTex");
   program->u_base_color = glGetUniformLocation(program->program, "uBaseColor");
   program->u_base_color_tex = glGetUniformLocation(program->program, "uBaseColorTex");
   program->u_has_base_color_tex = glGetUniformLocation(program->program, "uHasBaseColorTex");
@@ -331,6 +413,8 @@ bool renderer_init(Renderer *r) {
       r->u_shadow_model = glGetUniformLocation(r->shadow_program, "uModel");
       r->u_shadow_bones = glGetUniformLocation(r->shadow_program, "uBones");
       r->u_shadow_use_skinning = glGetUniformLocation(r->shadow_program, "uUseSkinning");
+      r->u_shadow_use_bone_texture = glGetUniformLocation(r->shadow_program, "uUseBoneTexture");
+      r->u_shadow_bone_tex = glGetUniformLocation(r->shadow_program, "uBoneTex");
       r->u_shadow_offset = glGetUniformLocation(r->shadow_program, "uShadowOffset");
       r->u_shadow_alpha = glGetUniformLocation(r->shadow_program, "uShadowAlpha");
       r->u_shadow_scale = glGetUniformLocation(r->shadow_program, "uShadowScale");
@@ -350,6 +434,8 @@ bool renderer_init(Renderer *r) {
       r->u_outline_model = glGetUniformLocation(r->outline_program, "uModel");
       r->u_outline_bones = glGetUniformLocation(r->outline_program, "uBones");
       r->u_outline_use_skinning = glGetUniformLocation(r->outline_program, "uUseSkinning");
+      r->u_outline_use_bone_texture = glGetUniformLocation(r->outline_program, "uUseBoneTexture");
+      r->u_outline_bone_tex = glGetUniformLocation(r->outline_program, "uBoneTex");
       r->u_outline_width = glGetUniformLocation(r->outline_program, "uOutlineWidth");
       r->u_outline_color = glGetUniformLocation(r->outline_program, "uOutlineColor");
     }
@@ -358,7 +444,7 @@ bool renderer_init(Renderer *r) {
   if (outline_frag) glDeleteShader(outline_frag);
 
   /* Initialize bone matrices to identity */
-  for (int i = 0; i < 200; i++) {
+  for (int i = 0; i < RENDERER_MAX_BONES; i++) {
     float *m = &r->bone_matrices[i * 16];
     memset(m, 0, 16 * sizeof(float));
     m[0] = m[5] = m[10] = m[15] = 1.0f;
@@ -376,6 +462,8 @@ void renderer_cleanup(Renderer *r) {
   if (r->anime.program) glDeleteProgram(r->anime.program);
   if (r->shadow_program) glDeleteProgram(r->shadow_program);
   if (r->outline_program) glDeleteProgram(r->outline_program);
+  if (r->bone_tex) glDeleteTextures(1, &r->bone_tex);
+  free(r->bone_tex_data);
   memset(r, 0, sizeof(Renderer));
 }
 
@@ -384,6 +472,39 @@ void renderer_set_model(Renderer *r, GltfModel *model) {
   if (model) {
     printf("Renderer: model set with %d meshes, %d nodes, %d skins\n",
            model->mesh_count, model->node_count, model->skin_count);
+    int max_joints = 0;
+    for (int i = 0; i < model->skin_count; i++) {
+      if (model->skins[i].joint_count > max_joints) {
+        max_joints = model->skins[i].joint_count;
+      }
+    }
+    if (max_joints > RENDERER_MAX_BONES) {
+      r->use_bone_texture = true;
+      r->bone_tex_joints = max_joints;
+      free(r->bone_tex_data);
+      r->bone_tex_data = (float *)malloc((size_t)r->bone_tex_joints * 16 * sizeof(float));
+      if (!r->bone_tex) {
+        glGenTextures(1, &r->bone_tex);
+      }
+      glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, r->bone_tex_joints, 0,
+                   GL_RGBA, GL_FLOAT, NULL);
+      glBindTexture(GL_TEXTURE_2D, 0);
+      printf("Renderer: bone texture enabled (%d joints)\n", r->bone_tex_joints);
+    } else {
+      r->use_bone_texture = false;
+      r->bone_tex_joints = 0;
+      if (r->bone_tex) {
+        glDeleteTextures(1, &r->bone_tex);
+        r->bone_tex = 0;
+      }
+      free(r->bone_tex_data);
+      r->bone_tex_data = NULL;
+    }
   }
 }
 
@@ -399,10 +520,52 @@ static void mat4_mul(const float *a, const float *b, float *out) {
   }
 }
 
-void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world) {
+static void renderer_update_bone_texture(Renderer *r, int skin_index,
+                                         const float *mesh_world) {
   if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count) return;
   if (!r->model->skins[skin_index].inverse_bind_matrices) return;
-  if (!mesh_world) return;
+  if (!mesh_world || !r->use_bone_texture || !r->bone_tex_data) return;
+
+  mat4 mesh;
+  mat4 mesh_inv;
+  memcpy(mesh, mesh_world, sizeof(mat4));
+  glm_mat4_inv(mesh, mesh_inv);
+
+  GltfSkin *skin = &r->model->skins[skin_index];
+  int joint_count = skin->joint_count;
+  if (joint_count > r->bone_tex_joints) {
+    joint_count = r->bone_tex_joints;
+  }
+
+  for (int i = 0; i < joint_count; i++) {
+    int node_idx = skin->joints[i];
+    if (node_idx < 0 || node_idx >= r->model->node_count) {
+      float *m = &r->bone_tex_data[i * 16];
+      memset(m, 0, 16 * sizeof(float));
+      m[0] = m[5] = m[10] = m[15] = 1.0f;
+      continue;
+    }
+
+    GltfNode *node = &r->model->nodes[node_idx];
+    float *ibm = &skin->inverse_bind_matrices[i * 16];
+    float *out = &r->bone_tex_data[i * 16];
+
+    float joint_ibm[16];
+    mat4_mul(node->world_matrix, ibm, joint_ibm);
+    mat4_mul((float *)mesh_inv, joint_ibm, out);
+  }
+
+  glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, joint_count, GL_RGBA, GL_FLOAT,
+                  r->bone_tex_data);
+}
+
+static void renderer_update_bones(Renderer *r, int skin_index,
+                                  const float *mesh_world,
+                                  const GltfPrimitive *prim) {
+  if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count) return;
+  if (!r->model->skins[skin_index].inverse_bind_matrices) return;
+  if (!mesh_world || !prim || prim->joint_palette_count <= 0) return;
 
   mat4 mesh;
   mat4 mesh_inv;
@@ -411,12 +574,25 @@ void renderer_update_bones(Renderer *r, int skin_index, const float *mesh_world)
 
   GltfSkin *skin = &r->model->skins[skin_index];
 
-  for (int i = 0; i < skin->joint_count && i < 200; i++) {
-    int node_idx = skin->joints[i];
+  for (int i = 0; i < RENDERER_MAX_BONES; i++) {
+    float *m = &r->bone_matrices[i * 16];
+    memset(m, 0, 16 * sizeof(float));
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+  }
+
+  int palette_count = prim->joint_palette_count;
+  if (palette_count > RENDERER_MAX_BONES) {
+    palette_count = RENDERER_MAX_BONES;
+  }
+
+  for (int i = 0; i < palette_count; i++) {
+    int joint_idx = prim->joint_palette[i];
+    if (joint_idx < 0 || joint_idx >= skin->joint_count) continue;
+    int node_idx = skin->joints[joint_idx];
     if (node_idx < 0 || node_idx >= r->model->node_count) continue;
 
     GltfNode *node = &r->model->nodes[node_idx];
-    float *ibm = &skin->inverse_bind_matrices[i * 16];
+    float *ibm = &skin->inverse_bind_matrices[joint_idx * 16];
     float *out = &r->bone_matrices[i * 16];
 
     /* bone_matrix = inverse(mesh_world) * joint_world * inverse_bind */
@@ -447,7 +623,7 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
       glUniform1i(program->u_has_base_color_tex, 0);
     }
 
-    if (mat->double_sided) {
+    if (mat->double_sided || mat->alpha_mode == 2) {
       glDisable(GL_CULL_FACE);
     } else {
       glEnable(GL_CULL_FACE);
@@ -459,8 +635,6 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
     glUniform1i(program->u_has_base_color_tex, 0);
     glDisable(GL_CULL_FACE);
   }
-
-  glUniform1i(program->u_use_skinning, prim->has_skinning ? 1 : 0);
 
   glBindVertexArray(prim->vao);
   if (prim->ebo && prim->index_count > 0) {
@@ -487,6 +661,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     glUniform1f(r->u_outline_width, 0.002f);
     float outline_color[3] = {0.1f, 0.08f, 0.12f};
     glUniform3fv(r->u_outline_color, 1, outline_color);
+    if (r->use_bone_texture && r->bone_tex && r->u_outline_bone_tex >= 0) {
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+      glUniform1i(r->u_outline_bone_tex, 1);
+    }
 
     glEnable(GL_CULL_FACE);
     glCullFace(GL_FRONT);
@@ -499,10 +678,12 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
 
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-        renderer_update_bones(r, node->skin_index, node->world_matrix);
-        glUniformMatrix4fv(r->u_outline_bones, 200, GL_FALSE, r->bone_matrices);
+        if (r->use_bone_texture) {
+          renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
+        }
       }
-      glUniform1i(r->u_outline_use_skinning, node->skin_index >= 0 ? 1 : 0);
+      glUniform1i(r->u_outline_use_skinning, 0);
+      glUniform1i(r->u_outline_use_bone_texture, 0);
       glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, (float*)combined);
 
       GltfMesh *mesh = &r->model->meshes[node->mesh_index];
@@ -511,6 +692,23 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
         GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count)
                             ? &r->model->materials[prim->material_index] : NULL;
         if (mat && mat->alpha_mode == 2) continue; /* Skip transparent */
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+          if (prim->joint_palette_count > 0) {
+            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
+            glUniformMatrix4fv(r->u_outline_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            glUniform1i(r->u_outline_use_skinning, 1);
+            glUniform1i(r->u_outline_use_bone_texture, 0);
+          } else if (r->use_bone_texture) {
+            glUniform1i(r->u_outline_use_skinning, 1);
+            glUniform1i(r->u_outline_use_bone_texture, 1);
+          } else {
+            glUniform1i(r->u_outline_use_skinning, 0);
+            glUniform1i(r->u_outline_use_bone_texture, 0);
+          }
+        } else {
+          glUniform1i(r->u_outline_use_skinning, 0);
+          glUniform1i(r->u_outline_use_bone_texture, 0);
+        }
         glBindVertexArray(prim->vao);
         if (prim->ebo && prim->index_count > 0) {
           glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
@@ -529,6 +727,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     glUseProgram(r->shadow_program);
     glUniformMatrix4fv(r->u_shadow_view, 1, GL_FALSE, camera->view[0]);
     glUniformMatrix4fv(r->u_shadow_proj, 1, GL_FALSE, camera->proj[0]);
+    if (r->use_bone_texture && r->bone_tex && r->u_shadow_bone_tex >= 0) {
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+      glUniform1i(r->u_shadow_bone_tex, 1);
+    }
     
     /* Shadow offset: slightly back and down-right */
     float shadow_offset[3] = {0.08f, 0.02f, -0.15f};
@@ -546,15 +749,34 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
       glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
 
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-        renderer_update_bones(r, node->skin_index, node->world_matrix);
-        glUniformMatrix4fv(r->u_shadow_bones, 200, GL_FALSE, r->bone_matrices);
+        if (r->use_bone_texture) {
+          renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
+        }
       }
-      glUniform1i(r->u_shadow_use_skinning, node->skin_index >= 0 ? 1 : 0);
+      glUniform1i(r->u_shadow_use_skinning, 0);
+      glUniform1i(r->u_shadow_use_bone_texture, 0);
       glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float*)combined);
 
       GltfMesh *mesh = &r->model->meshes[node->mesh_index];
       for (int j = 0; j < mesh->primitive_count; j++) {
         GltfPrimitive *prim = &mesh->primitives[j];
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+          if (prim->joint_palette_count > 0) {
+            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
+            glUniformMatrix4fv(r->u_shadow_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            glUniform1i(r->u_shadow_use_skinning, 1);
+            glUniform1i(r->u_shadow_use_bone_texture, 0);
+          } else if (r->use_bone_texture) {
+            glUniform1i(r->u_shadow_use_skinning, 1);
+            glUniform1i(r->u_shadow_use_bone_texture, 1);
+          } else {
+            glUniform1i(r->u_shadow_use_skinning, 0);
+            glUniform1i(r->u_shadow_use_bone_texture, 0);
+          }
+        } else {
+          glUniform1i(r->u_shadow_use_skinning, 0);
+          glUniform1i(r->u_shadow_use_bone_texture, 0);
+        }
         glBindVertexArray(prim->vao);
         if (prim->ebo && prim->index_count > 0) {
           glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
@@ -572,6 +794,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
   glUseProgram(program->program);
   glUniformMatrix4fv(program->u_view, 1, GL_FALSE, camera->view[0]);
   glUniformMatrix4fv(program->u_proj, 1, GL_FALSE, camera->proj[0]);
+  if (r->use_bone_texture && r->bone_tex && program->u_bone_tex >= 0) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, r->bone_tex);
+    glUniform1i(program->u_bone_tex, 1);
+  }
 
   for (int i = 0; i < r->model->node_count; i++) {
     GltfNode *node = &r->model->nodes[i];
@@ -581,8 +808,9 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
     glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
 
     if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
-      renderer_update_bones(r, node->skin_index, node->world_matrix);
-      glUniformMatrix4fv(program->u_bones, 200, GL_FALSE, r->bone_matrices);
+      if (r->use_bone_texture) {
+        renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
+      }
     }
 
     glUniformMatrix4fv(program->u_model, 1, GL_FALSE, (float*)combined);
@@ -596,6 +824,23 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
                           ? &r->model->materials[prim->material_index] : NULL;
       if (!mat || mat->alpha_mode != 2) {
         glDepthMask(GL_TRUE);
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+          if (prim->joint_palette_count > 0) {
+            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
+            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            glUniform1i(program->u_use_skinning, 1);
+            glUniform1i(program->u_use_bone_texture, 0);
+          } else if (r->use_bone_texture) {
+            glUniform1i(program->u_use_skinning, 1);
+            glUniform1i(program->u_use_bone_texture, 1);
+          } else {
+            glUniform1i(program->u_use_skinning, 0);
+            glUniform1i(program->u_use_bone_texture, 0);
+          }
+        } else {
+          glUniform1i(program->u_use_skinning, 0);
+          glUniform1i(program->u_use_bone_texture, 0);
+        }
         draw_primitive(r, prim);
       }
     }
@@ -607,6 +852,23 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera) {
                           ? &r->model->materials[prim->material_index] : NULL;
       if (mat && mat->alpha_mode == 2) {
         glDepthMask(GL_FALSE);
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+          if (prim->joint_palette_count > 0) {
+            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
+            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            glUniform1i(program->u_use_skinning, 1);
+            glUniform1i(program->u_use_bone_texture, 0);
+          } else if (r->use_bone_texture) {
+            glUniform1i(program->u_use_skinning, 1);
+            glUniform1i(program->u_use_bone_texture, 1);
+          } else {
+            glUniform1i(program->u_use_skinning, 0);
+            glUniform1i(program->u_use_bone_texture, 0);
+          }
+        } else {
+          glUniform1i(program->u_use_skinning, 0);
+          glUniform1i(program->u_use_bone_texture, 0);
+        }
         draw_primitive(r, prim);
       }
     }
