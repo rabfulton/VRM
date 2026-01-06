@@ -902,7 +902,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
       glUniform1i(r->u_shadow_comp_tex, 0);
       glUniform2f(r->u_shadow_comp_screen, (float)fb_width, (float)fb_height);
-      glUniform2f(r->u_shadow_comp_offset, -20.0f, 10.0f);
+      glUniform2f(r->u_shadow_comp_offset, -25.0f, -5.0f);
       glUniform1f(r->u_shadow_comp_alpha, 0.4f);
 
       glDisable(GL_DEPTH_TEST);
@@ -1077,26 +1077,26 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
 void renderer_toggle_shader(Renderer *r) {
   if (!r->initialized) return;
 
-  if (r->shader_mode == RENDERER_SHADER_PBR) {
+  if (r->shader_mode == RENDERER_SHADER_ANIME) {
     if (r->toon.program) {
       r->shader_mode = RENDERER_SHADER_TOON;
       r->active = &r->toon;
       printf("Shader: toon\n");
     }
   } else if (r->shader_mode == RENDERER_SHADER_TOON) {
-    if (r->anime.program) {
-      r->shader_mode = RENDERER_SHADER_ANIME;
-      r->active = &r->anime;
-      printf("Shader: anime\n");
+    if (r->pbr.program) {
+      r->shader_mode = RENDERER_SHADER_PBR;
+      r->active = &r->pbr;
+      printf("Shader: PBR\n");
     } else {
       r->shader_mode = RENDERER_SHADER_ANIME;
       r->active = &r->anime;
-      printf("Shader: PBR\n");
+      printf("Shader: anime\n");
     }
   } else {
     r->shader_mode = RENDERER_SHADER_ANIME;
     r->active = &r->anime;
-    printf("Shader: PBR\n");
+    printf("Shader: anime\n");
   }
 }
 
