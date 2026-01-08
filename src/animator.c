@@ -22,6 +22,28 @@ float g_anim_blend_group_factors[BLEND_GROUP_COUNT] = {
     0.5f, /* face */
     1.0f  /* other */
 };
+static const float g_anim_blend_group_offsets[BLEND_GROUP_COUNT] = {
+    0.00f, /* root */
+    0.02f, /* spine */
+    0.12f, /* head */
+    0.10f, /* arms */
+    0.16f, /* hands */
+    0.05f, /* legs */
+    0.08f, /* feet */
+    0.20f, /* face */
+    0.07f  /* other */
+};
+static const float g_anim_blend_group_staggers[BLEND_GROUP_COUNT] = {
+    0.00f, /* root */
+    0.00f, /* spine */
+    0.00f, /* head */
+    0.15f, /* arms */
+    0.18f, /* hands */
+    0.25f, /* legs */
+    0.18f, /* feet */
+    0.00f, /* face */
+    0.04f  /* other */
+};
 
 static bool animation_is_loopable(Animator *anim, int anim_idx);
 
@@ -47,7 +69,9 @@ void animator_cleanup(Animator *anim) {
     anim->snap_node_count = 0;
 
     free(anim->blend_time_factors);
+    free(anim->blend_time_offsets);
     anim->blend_time_factors = NULL;
+    anim->blend_time_offsets = NULL;
     anim->blend_node_count = 0;
 }
 
@@ -123,21 +147,73 @@ static BlendGroup classify_blend_group(const char *name) {
     return BLEND_GROUP_OTHER;
 }
 
+static bool is_name_sep(char c) {
+    return c == '_' || c == '.' || c == '-' || c == ' ';
+}
+
+static int detect_side(const char *name) {
+    if (!name || !name[0]) return 0;
+    if (name_contains_ci(name, "left")) return -1;
+    if (name_contains_ci(name, "right")) return 1;
+
+    int len = (int)strlen(name);
+    if ((name[0] == 'L' || name[0] == 'l') && (len == 1 || is_name_sep(name[1]))) return -1;
+    if ((name[0] == 'R' || name[0] == 'r') && (len == 1 || is_name_sep(name[1]))) return 1;
+
+    for (int i = 0; i < len - 1; i++) {
+        if (!is_name_sep(name[i])) continue;
+        char c = name[i + 1];
+        if (!(c == 'L' || c == 'l' || c == 'R' || c == 'r')) continue;
+        char next = (i + 2 < len) ? name[i + 2] : '\0';
+        if (next == '\0' || is_name_sep(next)) {
+            return (c == 'L' || c == 'l') ? -1 : 1;
+        }
+    }
+    return 0;
+}
+
 static void ensure_blend_factors(Animator *anim) {
     if (!anim->model) return;
     int n = anim->model->node_count;
     if (anim->blend_node_count >= n) return;
 
     free(anim->blend_time_factors);
+    free(anim->blend_time_offsets);
     anim->blend_time_factors = malloc((size_t)n * sizeof(float));
+    anim->blend_time_offsets = malloc((size_t)n * sizeof(float));
     anim->blend_node_count = n;
 
     for (int i = 0; i < n; i++) {
         GltfNode *node = &anim->model->nodes[i];
         BlendGroup group = classify_blend_group(node->name);
         float factor = g_anim_blend_group_factors[group];
+        float offset = g_anim_blend_group_offsets[group];
+        float stagger = g_anim_blend_group_staggers[group];
+        int side = detect_side(node->name);
+        if (group == BLEND_GROUP_ROOT || group == BLEND_GROUP_SPINE) {
+            /* Hold torso until the second half so legs can blend sequentially. */
+            factor = 0.5f;
+            offset = 0.5f;
+        }
+        if ((group == BLEND_GROUP_LEGS || group == BLEND_GROUP_FEET) && side != 0) {
+            /* Make legs/feet clearly sequential: left half then right half. */
+            factor = 0.5f;
+            offset = (side > 0) ? 0.5f : 0.0f;
+        }
         if (factor <= 0.0f || factor > 1.0f) factor = 1.0f;
+        if (side > 0) offset += stagger;
+        if (offset < 0.0f) offset = 0.0f;
+        if (offset > 0.5f) offset = 0.5f;
         anim->blend_time_factors[i] = factor;
+        anim->blend_time_offsets[i] = offset;
+
+        if (group == BLEND_GROUP_LEGS || group == BLEND_GROUP_FEET ||
+            group == BLEND_GROUP_ARMS || group == BLEND_GROUP_HANDS) {
+            const char *side_label = (side < 0) ? "L" : (side > 0) ? "R" : "U";
+            const char *node_name = (node->name[0]) ? node->name : "(empty)";
+            printf("Blend timing: node=%s group=%d side=%s offset=%.2f factor=%.2f\n",
+                   node_name, group, side_label, offset, factor);
+        }
     }
 }
 
@@ -456,15 +532,17 @@ void animator_update(Animator *anim, float dt) {
             float *ss = &anim->snap_scales[i * 3];
             
             float factor = (anim->blend_time_factors && i < anim->blend_node_count) ? anim->blend_time_factors[i] : 1.0f;
+            float offset = (anim->blend_time_offsets && i < anim->blend_node_count) ? anim->blend_time_offsets[i] : 0.0f;
             if (factor <= 0.0f || factor > 1.0f) factor = 1.0f;
+            if (offset < 0.0f) offset = 0.0f;
+            if (offset > 0.9f) offset = 0.9f;
             float bone_t = eased_t;
-            if (factor < 1.0f) {
-                float denom = anim->blend_duration * factor;
-                if (denom > 0.0f) {
-                    float raw = anim->blend_time / denom;
-                    if (raw > 1.0f) raw = 1.0f;
-                    bone_t = ease_smoothstep(raw);
-                }
+            float denom = anim->blend_duration * factor;
+            if (denom > 0.0f) {
+                float raw = (anim->blend_time - anim->blend_duration * offset) / denom;
+                if (raw < 0.0f) raw = 0.0f;
+                if (raw > 1.0f) raw = 1.0f;
+                bone_t = ease_smoothstep(raw);
             }
 
             node->translation[0] = lerp(st[0], node->translation[0], bone_t);
@@ -513,6 +591,9 @@ void animator_update(Animator *anim, float dt) {
                     animator_blend_to(anim, anim->current_animation, loop_blend_time, remaining);
                     anim->next_anim_time = 0.0f;
                     anim->loop_blend_active = true;
+                    printf("Loop blend start: anim=%d duration=%.2f\n",
+                           anim->current_animation, loop_blend_time);
+                    fflush(stdout);
                     return;
                 }
                 while (anim->time > animation->duration) {

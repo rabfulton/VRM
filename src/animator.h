@@ -29,6 +29,7 @@ typedef struct {
 
     /* Blend time factor per node (fraction of master blend time) */
     float *blend_time_factors; /* 1 * node_count */
+    float *blend_time_offsets; /* 1 * node_count (fraction of blend duration) */
     int blend_node_count;
 
     /* Looping control */

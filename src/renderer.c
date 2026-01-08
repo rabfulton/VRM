@@ -785,6 +785,8 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
     glUniform1i(program->u_has_base_color_tex, 0);
     glDisable(GL_CULL_FACE);
   }
+  /* TEMP: disable culling for debugging interior faces */
+  glDisable(GL_CULL_FACE);
 
   glBindVertexArray(prim->vao);
   if (prim->ebo && prim->index_count > 0) {
@@ -924,7 +926,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
     glUseProgram(r->outline_program);
     glUniformMatrix4fv(r->u_outline_view, 1, GL_FALSE, camera->view[0]);
     glUniformMatrix4fv(r->u_outline_proj, 1, GL_FALSE, camera->proj[0]);
-    glUniform1f(r->u_outline_width, 0.002f);
+    glUniform1f(r->u_outline_width, 0.005f);
     float outline_color[3] = {0.1f, 0.08f, 0.12f};
     glUniform3fv(r->u_outline_color, 1, outline_color);
     if (r->use_bone_texture && r->bone_tex && r->u_outline_bone_tex >= 0) {
@@ -958,6 +960,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
         GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count)
                             ? &r->model->materials[prim->material_index] : NULL;
         if (mat && mat->alpha_mode == 2) continue; /* Skip transparent */
+        if (mat && mat->double_sided) continue; /* Skip interior-friendly materials */
         if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
           if (prim->joint_palette_count > 0) {
             renderer_update_bones(r, node->skin_index, node->world_matrix, prim);

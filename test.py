@@ -48,7 +48,7 @@ def cmd(c):
     time.sleep(0.05)
     return sock.recv(4096)
 
-cmd({"action": "load", "path": "/home/rab/code/vrm/test2.vrm"})
+cmd({"action": "load", "path": "/home/rab/code/vrm/test1.vrm"})
 cmd({"action": "set_visible", "visible": True})
 
 anims = sorted(glob.glob("/home/rab/code/vrm/animation/*.vrma") +
