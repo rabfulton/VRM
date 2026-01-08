@@ -27,6 +27,13 @@ typedef struct {
   GLint u_has_base_color_tex;
   GLint u_alpha_mode;
   GLint u_alpha_cutoff;
+  /* Morph target uniforms */
+  GLint u_morph_weights;
+  GLint u_morph_count;
+  GLint u_morph_tex;
+  GLint u_vertex_count;
+  GLint u_morph_verts_per_row;
+  GLint u_morph_rows_per_morph;
 } ShaderProgram;
 
 typedef enum {
@@ -107,8 +114,10 @@ typedef struct {
 bool renderer_init(Renderer *r);
 void renderer_cleanup(Renderer *r);
 void renderer_set_model(Renderer *r, GltfModel *model);
-void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_height);
-void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg, float scale);
+void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width,
+                   int fb_height);
+void renderer_set_model_transform(Renderer *r, const float *pos,
+                                  const float *rot_deg, float scale);
 void renderer_toggle_shader(Renderer *r);
 
 #endif

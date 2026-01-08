@@ -36,7 +36,8 @@ void gltf_unload(GltfModel *model) {
 }
 
 bool gltf_load_animation(GltfModel *model, const char *anim_path) {
-  if (!model->loaded) return false;
+  if (!model->loaded)
+    return false;
   return gltf_load_animation_impl(model, anim_path);
 }
 
@@ -61,19 +62,19 @@ static void update_node_transform(GltfModel *model, int node_idx,
 
   float local[16];
   /* Column-major order for OpenGL */
-  local[0] = (1 - 2*(yy + zz)) * node->scale[0];
-  local[1] = 2*(xy + wz) * node->scale[0];
-  local[2] = 2*(xz - wy) * node->scale[0];
+  local[0] = (1 - 2 * (yy + zz)) * node->scale[0];
+  local[1] = 2 * (xy + wz) * node->scale[0];
+  local[2] = 2 * (xz - wy) * node->scale[0];
   local[3] = 0;
 
-  local[4] = 2*(xy - wz) * node->scale[1];
-  local[5] = (1 - 2*(xx + zz)) * node->scale[1];
-  local[6] = 2*(yz + wx) * node->scale[1];
+  local[4] = 2 * (xy - wz) * node->scale[1];
+  local[5] = (1 - 2 * (xx + zz)) * node->scale[1];
+  local[6] = 2 * (yz + wx) * node->scale[1];
   local[7] = 0;
 
-  local[8] = 2*(xz + wy) * node->scale[2];
-  local[9] = 2*(yz - wx) * node->scale[2];
-  local[10] = (1 - 2*(xx + yy)) * node->scale[2];
+  local[8] = 2 * (xz + wy) * node->scale[2];
+  local[9] = 2 * (yz - wx) * node->scale[2];
+  local[10] = (1 - 2 * (xx + yy)) * node->scale[2];
   local[11] = 0;
 
   local[12] = node->translation[0];
@@ -117,8 +118,9 @@ int gltf_find_node(const GltfModel *model, const char *name) {
   return -1;
 }
 
-void gltf_get_screen_bounds(const GltfModel *model, const float *view, const float *proj,
-                            float *out_ndc_w, float *out_ndc_h) {
+void gltf_get_screen_bounds(const GltfModel *model, const float *view,
+                            const float *proj, float *out_ndc_w,
+                            float *out_ndc_h) {
   float min_x = 1e9f, max_x = -1e9f;
   float min_y = 1e9f, max_y = -1e9f;
 
@@ -140,17 +142,21 @@ void gltf_get_screen_bounds(const GltfModel *model, const float *view, const flo
     float wx = m[12], wy = m[13], wz = m[14];
 
     /* Transform to clip space */
-    float cx = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12];
-    float cy = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13];
-    float cw = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
+    float cx = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
+    float cy = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
+    float cw = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
 
     if (cw > 0.001f) {
       float ndcx = cx / cw;
       float ndcy = cy / cw;
-      if (ndcx < min_x) min_x = ndcx;
-      if (ndcx > max_x) max_x = ndcx;
-      if (ndcy < min_y) min_y = ndcy;
-      if (ndcy > max_y) max_y = ndcy;
+      if (ndcx < min_x)
+        min_x = ndcx;
+      if (ndcx > max_x)
+        max_x = ndcx;
+      if (ndcy < min_y)
+        min_y = ndcy;
+      if (ndcy > max_y)
+        max_y = ndcy;
     }
   }
 
@@ -159,35 +165,44 @@ void gltf_get_screen_bounds(const GltfModel *model, const float *view, const flo
   *out_ndc_h = (max_y - min_y) * 1.2f;
 }
 
-void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const float *proj,
-                               int screen_w, int screen_h,
-                               float *out_min_x, float *out_min_y, float *out_max_x, float *out_max_y) {
+void gltf_get_screen_bounds_px(const GltfModel *model, const float *view,
+                               const float *proj, int screen_w, int screen_h,
+                               float *out_min_x, float *out_min_y,
+                               float *out_max_x, float *out_max_y) {
   float min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
   float vp[16];
   for (int col = 0; col < 4; col++) {
     for (int row = 0; row < 4; row++) {
       float sum = 0;
-      for (int k = 0; k < 4; k++) sum += proj[k * 4 + row] * view[col * 4 + k];
+      for (int k = 0; k < 4; k++)
+        sum += proj[k * 4 + row] * view[col * 4 + k];
       vp[col * 4 + row] = sum;
     }
   }
   for (int i = 0; i < model->node_count; i++) {
     float *m = model->nodes[i].world_matrix;
     float wx = m[12], wy = m[13], wz = m[14];
-    float cx = vp[0]*wx + vp[4]*wy + vp[8]*wz + vp[12];
-    float cy = vp[1]*wx + vp[5]*wy + vp[9]*wz + vp[13];
-    float cw = vp[3]*wx + vp[7]*wy + vp[11]*wz + vp[15];
+    float cx = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
+    float cy = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
+    float cw = vp[3] * wx + vp[7] * wy + vp[11] * wz + vp[15];
     if (cw > 0.001f) {
       float ndcx = cx / cw, ndcy = cy / cw;
-      if (ndcx < min_x) min_x = ndcx;
-      if (ndcx > max_x) max_x = ndcx;
-      if (ndcy < min_y) min_y = ndcy;
-      if (ndcy > max_y) max_y = ndcy;
+      if (ndcx < min_x)
+        min_x = ndcx;
+      if (ndcx > max_x)
+        max_x = ndcx;
+      if (ndcy < min_y)
+        min_y = ndcy;
+      if (ndcy > max_y)
+        max_y = ndcy;
     }
   }
   /* Add margin and convert NDC to screen pixels (Y flipped) */
   float margin = 0.1f;
-  min_x -= margin; max_x += margin; min_y -= margin; max_y += margin;
+  min_x -= margin;
+  max_x += margin;
+  min_y -= margin;
+  max_y += margin;
   *out_min_x = (min_x * 0.5f + 0.5f) * screen_w;
   *out_max_x = (max_x * 0.5f + 0.5f) * screen_w;
   *out_min_y = (1.0f - (max_y * 0.5f + 0.5f)) * screen_h;
@@ -198,19 +213,26 @@ void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const 
 extern void animator_sample_frame(GltfModel *model, int anim_idx, float time);
 
 /* Compute world-space bounding box for animation (camera-independent) */
-static void compute_world_bounds(GltfModel *model, float *out_min, float *out_max) {
+static void compute_world_bounds(GltfModel *model, float *out_min,
+                                 float *out_max) {
   out_min[0] = out_min[1] = out_min[2] = 1e9f;
   out_max[0] = out_max[1] = out_max[2] = -1e9f;
-  
+
   for (int i = 0; i < model->node_count; i++) {
     float *m = model->nodes[i].world_matrix;
     float x = m[12], y = m[13], z = m[14];
-    if (x < out_min[0]) out_min[0] = x;
-    if (y < out_min[1]) out_min[1] = y;
-    if (z < out_min[2]) out_min[2] = z;
-    if (x > out_max[0]) out_max[0] = x;
-    if (y > out_max[1]) out_max[1] = y;
-    if (z > out_max[2]) out_max[2] = z;
+    if (x < out_min[0])
+      out_min[0] = x;
+    if (y < out_min[1])
+      out_min[1] = y;
+    if (z < out_min[2])
+      out_min[2] = z;
+    if (x > out_max[0])
+      out_max[0] = x;
+    if (y > out_max[1])
+      out_max[1] = y;
+    if (z > out_max[2])
+      out_max[2] = z;
   }
 }
 
@@ -218,8 +240,9 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
                                    float *out_world_w, float *out_world_h) {
   *out_world_w = 0.5f;
   *out_world_h = 1.0f;
-  
-  if (!model || !anim_path || model->animation_count == 0) return;
+
+  if (!model || !anim_path || model->animation_count == 0)
+    return;
 
   int node_count = model->node_count;
   float *saved_t = NULL;
@@ -242,13 +265,14 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
       memcpy(&saved_s[i * 3], node->scale, 3 * sizeof(float));
     }
   }
-  
+
   /* Build config filename */
   char cfg_path[512];
-  if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path))) return;
-  
+  if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path)))
+    return;
+
   float world_w, world_h;
-  
+
   /* Check if config cache is valid */
   struct stat anim_stat, cfg_stat;
   if (stat(anim_path, &anim_stat) == 0 && stat(cfg_path, &cfg_stat) == 0) {
@@ -263,38 +287,42 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
       }
     }
   }
-  
+
   /* Sample animation and compute world-space bounds */
   GltfAnimation *anim = &model->animations[0];
   float duration = anim->duration > 0 ? anim->duration : 1.0f;
   int samples = (int)(duration * 30);
-  if (samples < 10) samples = 10;
-  if (samples > 300) samples = 300;
-  
+  if (samples < 10)
+    samples = 10;
+  if (samples > 300)
+    samples = 300;
+
   float global_min[3] = {1e9f, 1e9f, 1e9f};
   float global_max[3] = {-1e9f, -1e9f, -1e9f};
-  
+
   for (int i = 0; i <= samples; i++) {
     float t = (float)i / samples * duration;
     animator_sample_frame(model, 0, t);
     gltf_update_transforms(model);
-    
+
     float frame_min[3], frame_max[3];
     compute_world_bounds(model, frame_min, frame_max);
-    
+
     for (int j = 0; j < 3; j++) {
-      if (frame_min[j] < global_min[j]) global_min[j] = frame_min[j];
-      if (frame_max[j] > global_max[j]) global_max[j] = frame_max[j];
+      if (frame_min[j] < global_min[j])
+        global_min[j] = frame_min[j];
+      if (frame_max[j] > global_max[j])
+        global_max[j] = frame_max[j];
     }
   }
-  
+
   /* Store world-space extents (add margin for mesh beyond bones) */
   world_w = (global_max[0] - global_min[0]) * 1.3f;
   world_h = (global_max[1] - global_min[1]) * 1.3f;
-  
+
   *out_world_w = world_w;
   *out_world_h = world_h;
-  
+
   /* Write cache to config */
   AnimConfig cfg = {0};
   cfg.bounds_world_w = world_w;
@@ -315,4 +343,99 @@ void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
   free(saved_t);
   free(saved_r);
   free(saved_s);
+}
+
+/* Helper for case-insensitive string compare */
+static int strcasecmp_local(const char *a, const char *b) {
+  while (*a && *b) {
+    char ca = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+    char cb = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+    if (ca != cb)
+      return ca - cb;
+    a++;
+    b++;
+  }
+  return *a - *b;
+}
+
+void gltf_set_expression(GltfModel *model, const char *name, float weight) {
+  if (!model || !name)
+    return;
+
+  /* Clamp weight */
+  if (weight < 0.0f)
+    weight = 0.0f;
+  if (weight > 1.0f)
+    weight = 1.0f;
+
+  printf("gltf_set_expression: name='%s' weight=%.2f\n", name, weight);
+
+  /* First, try VRM expression map */
+  if (model->vrm_expressions) {
+    VrmExpressionMap *map = model->vrm_expressions;
+    for (int i = 0; i < map->expression_count; i++) {
+      VrmExpression *expr = &map->expressions[i];
+      /* Match by name or preset_name */
+      if (strcasecmp_local(expr->name, name) == 0 ||
+          strcasecmp_local(expr->preset_name, name) == 0) {
+        /* Apply binary clamping if needed */
+        float w = expr->is_binary ? (weight >= 0.5f ? 1.0f : 0.0f) : weight;
+
+        printf("  Found expression '%s' preset='%s' binds=%d\n", expr->name,
+               expr->preset_name, expr->bind_count);
+
+        /* Apply to all binds */
+        for (int b = 0; b < expr->bind_count; b++) {
+          VrmExpressionBind *bind = &expr->binds[b];
+          printf("    Bind %d: mesh=%d morph=%d bind_weight=%.2f\n", b,
+                 bind->mesh_index, bind->morph_index, bind->weight);
+          if (bind->mesh_index >= 0 && bind->mesh_index < model->mesh_count) {
+            GltfMesh *mesh = &model->meshes[bind->mesh_index];
+            printf("      Mesh '%s' morph_count=%d morph_weights=%p\n",
+                   mesh->name, mesh->morph_target_count,
+                   (void *)mesh->morph_weights);
+            if (bind->morph_index >= 0 &&
+                bind->morph_index < mesh->morph_target_count &&
+                mesh->morph_weights) {
+              mesh->morph_weights[bind->morph_index] = w * bind->weight;
+              printf("      Set morph_weights[%d] = %.2f\n", bind->morph_index,
+                     w * bind->weight);
+            }
+          }
+        }
+        return;
+      }
+    }
+    /* No match found - show available expressions */
+    printf("  No match for '%s'. Available expressions:\n", name);
+    for (int i = 0; i < map->expression_count; i++) {
+      printf("    [%d] name='%s' preset='%s'\n", i, map->expressions[i].name,
+             map->expressions[i].preset_name);
+    }
+  }
+
+  /* Fallback: look for morph target name match in meshes */
+  /* This requires morph target names which we'll add in the impl */
+}
+
+int gltf_get_expression_names(const GltfModel *model,
+                              char names[][VRM_EXPRESSION_NAME_LEN],
+                              int max_names) {
+  if (!model || !names || max_names <= 0)
+    return 0;
+
+  int count = 0;
+
+  /* List expressions from VRM map */
+  if (model->vrm_expressions) {
+    VrmExpressionMap *map = model->vrm_expressions;
+    for (int i = 0; i < map->expression_count && count < max_names; i++) {
+      strncpy(names[count], map->expressions[i].name,
+              VRM_EXPRESSION_NAME_LEN - 1);
+      names[count][VRM_EXPRESSION_NAME_LEN - 1] = '\0';
+      count++;
+    }
+  }
+
+  return count;
 }

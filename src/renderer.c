@@ -19,53 +19,85 @@ static const char *skinned_vert_src =
     "layout(location = 2) in vec2 aTexCoord;\n"
     "layout(location = 3) in ivec4 aJoints;\n"
     "layout(location = 4) in vec4 aWeights;\n"
+    "\n"
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
+    "uniform mat4 uBones[128];\n"
     "uniform bool uUseSkinning;\n"
     "uniform bool uUseBoneTexture;\n"
     "uniform sampler2D uBoneTex;\n"
+    "\n"
+    "/* Morph target uniforms */\n"
+    "uniform float uMorphWeights[64];\n"
+    "uniform int uMorphCount;\n"
+    "uniform sampler2D "
+    "uMorphTex;\n"
+    "uniform int uVertexCount;\n"
+    "uniform int uMorphVertsPerRow;\n"
+    "uniform int uMorphRowsPerMorph;\n"
+    "\n"
     "out vec3 vNormal;\n"
     "out vec2 vTexCoord;\n"
     "out vec3 vWorldPos;\n"
+    "\n"
     "void main() {\n"
+    "    vec3 pos = aPos;\n"
+    "    vec3 norm = aNormal;\n"
+    "    /* Apply morph targets */\n"
+    "    if (uMorphCount > 0 && uVertexCount > 0) {\n"
+    "        int vid = gl_VertexID;\n"
+    "        if (vid < uVertexCount && uMorphVertsPerRow > 0 && uMorphRowsPerMorph > 0) {\n"
+    "            int rowWithin = vid / uMorphVertsPerRow;\n"
+    "            int col = (vid - rowWithin * uMorphVertsPerRow) * 2;\n"
+    "            for (int i = 0; i < uMorphCount && i < 64; i++){\n"
+    "                float w = uMorphWeights[i];\n"
+    "                if (w > 0.001){\n"
+    "                    int y = i * uMorphRowsPerMorph + rowWithin;\n"
+    "                    vec3 posDelta = texelFetch(uMorphTex, ivec2(col, y), 0).xyz;\n"
+    "                    vec3 normDelta = texelFetch(uMorphTex, ivec2(col + 1, y), 0).xyz;\n"
+    "                    pos += posDelta * w;\n"
+    "                    norm += normDelta * w;\n"
+    "                }\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
     "    mat4 skinMatrix;\n"
     "    if (uUseSkinning && (aWeights.x + aWeights.y + aWeights.z + aWeights.w) > 0.0) {\n"
     "        if (uUseBoneTexture) {\n"
     "            ivec2 row = ivec2(0, aJoints.x);\n"
     "            mat4 b0 = mat4(texelFetch(uBoneTex, row, 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "             texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
     "            row = ivec2(0, aJoints.y);\n"
     "            mat4 b1 = mat4(texelFetch(uBoneTex, row, 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "             texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
     "            row = ivec2(0, aJoints.z);\n"
     "            mat4 b2 = mat4(texelFetch(uBoneTex, row, 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "             texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
     "            row = ivec2(0, aJoints.w);\n"
     "            mat4 b3 = mat4(texelFetch(uBoneTex, row, 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
-    "                          texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
+    "             texelFetch(uBoneTex, row + ivec2(1,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(2,0), 0),\n"
+    "             texelFetch(uBoneTex, row + ivec2(3,0), 0));\n"
     "            skinMatrix = aWeights.x * b0 + aWeights.y * b1 + aWeights.z * b2 + aWeights.w * b3;\n"
-    "        } else {\n"
-    "            skinMatrix = aWeights.x * uBones[aJoints.x]\n"
-    "                       + aWeights.y * uBones[aJoints.y]\n"
-    "                       + aWeights.z * uBones[aJoints.z]\n"
-    "                       + aWeights.w * uBones[aJoints.w];\n"
+    "        } else{\n"
+    "            skinMatrix = aWeights.x * uBones[aJoints.x] + \n"
+    "             aWeights.y * uBones[aJoints.y] + \n"
+    "             aWeights.z * uBones[aJoints.z] + \n"
+    "             aWeights.w * uBones[aJoints.w];\n"
     "        }\n"
-    "    } else {\n"
-    "        skinMatrix = mat4(1.0);\n"
+    "    } else{\n"
+    "            skinMatrix = mat4(1.0);\n"
     "    }\n"
-    "    vec4 worldPos = uModel * skinMatrix * vec4(aPos, 1.0);\n"
+    "    vec4 worldPos = uModel * skinMatrix * vec4(pos, 1.0);\n"
     "    vWorldPos = worldPos.xyz;\n"
-    "    vNormal = mat3(transpose(inverse(uModel * skinMatrix))) * aNormal;\n"
+    "    vNormal = mat3(transpose(inverse(uModel * skinMatrix))) * norm;\n"
     "    vTexCoord = aTexCoord;\n"
     "    gl_Position = uProj * uView * worldPos;\n"
     "}\n";
@@ -79,7 +111,7 @@ static const char *shadow_vert_src =
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
+    "uniform mat4 uBones[128];\n"
     "uniform bool uUseSkinning;\n"
     "uniform bool uUseBoneTexture;\n"
     "uniform sampler2D uBoneTex;\n"
@@ -124,14 +156,14 @@ static const char *shadow_vert_src =
     "    gl_Position = uProj * uView * worldPos;\n"
     "}\n";
 
-static const char *shadow_frag_src =
-    "#version 330 core\n"
-    "out vec4 FragColor;\n"
-    "uniform float uShadowAlpha;\n"
-    "void main() {\n"
-    "    float a = uShadowAlpha;\n"
-    "    FragColor = vec4(a, a, a, a);\n"
-    "}\n";
+
+static const char *shadow_frag_src = "#version 330 core\n"
+                                     "out vec4 FragColor;\n"
+                                     "uniform float uShadowAlpha;\n"
+                                     "void main() {\n"
+                                     "    float a = uShadowAlpha;\n"
+                                     "    FragColor = vec4(a, a, a, a);\n"
+                                     "}\n";
 
 static const char *shadow_blur_vert_src =
     "#version 330 core\n"
@@ -296,7 +328,7 @@ static const char *outline_vert_src =
     "uniform mat4 uView;\n"
     "uniform mat4 uProj;\n"
     "uniform mat4 uModel;\n"
-    "uniform mat4 uBones[" STR(RENDERER_MAX_BONES) "];\n"
+    "uniform mat4 uBones[128];\n"
     "uniform bool uUseSkinning;\n"
     "uniform bool uUseBoneTexture;\n"
     "uniform sampler2D uBoneTex;\n"
@@ -385,15 +417,11 @@ static GLuint link_program(GLuint vert, GLuint frag) {
 }
 
 static void init_shadow_quad(Renderer *r) {
-  if (r->shadow_quad_vao) return;
-  float quad[] = {
-    -1.0f, -1.0f, 0.0f, 0.0f,
-     1.0f, -1.0f, 1.0f, 0.0f,
-     1.0f,  1.0f, 1.0f, 1.0f,
-    -1.0f, -1.0f, 0.0f, 0.0f,
-     1.0f,  1.0f, 1.0f, 1.0f,
-    -1.0f,  1.0f, 0.0f, 1.0f
-  };
+  if (r->shadow_quad_vao)
+    return;
+  float quad[] = {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f,  -1.0f, 1.0f, 0.0f,
+                  1.0f,  1.0f,  1.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
+                  1.0f,  1.0f,  1.0f, 1.0f, -1.0f, 1.0f,  0.0f, 1.0f};
   glGenVertexArrays(1, &r->shadow_quad_vao);
   glGenBuffers(1, &r->shadow_quad_vbo);
   glBindVertexArray(r->shadow_quad_vao);
@@ -402,7 +430,8 @@ static void init_shadow_quad(Renderer *r) {
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(2 * sizeof(float)));
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindVertexArray(0);
 }
@@ -410,42 +439,55 @@ static void init_shadow_quad(Renderer *r) {
 static void ensure_shadow_targets(Renderer *r, int w, int h) {
   int tw = w / 2;
   int th = h / 2;
-  if (tw < 128) tw = 128;
-  if (th < 128) th = 128;
-  if (tw > 1024) tw = 1024;
-  if (th > 1024) th = 1024;
+  if (tw < 128)
+    tw = 128;
+  if (th < 128)
+    th = 128;
+  if (tw > 1024)
+    tw = 1024;
+  if (th > 1024)
+    th = 1024;
 
-  if (r->shadow_tex_w == tw && r->shadow_tex_h == th && r->shadow_tex && r->shadow_blur_tex) {
+  if (r->shadow_tex_w == tw && r->shadow_tex_h == th && r->shadow_tex &&
+      r->shadow_blur_tex) {
     return;
   }
 
   r->shadow_tex_w = tw;
   r->shadow_tex_h = th;
 
-  if (!r->shadow_tex) glGenTextures(1, &r->shadow_tex);
+  if (!r->shadow_tex)
+    glGenTextures(1, &r->shadow_tex);
   glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               NULL);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-  if (!r->shadow_blur_tex) glGenTextures(1, &r->shadow_blur_tex);
+  if (!r->shadow_blur_tex)
+    glGenTextures(1, &r->shadow_blur_tex);
   glBindTexture(GL_TEXTURE_2D, r->shadow_blur_tex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               NULL);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
 
-  if (!r->shadow_fbo) glGenFramebuffers(1, &r->shadow_fbo);
+  if (!r->shadow_fbo)
+    glGenFramebuffers(1, &r->shadow_fbo);
   glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_fbo);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->shadow_tex, 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         r->shadow_tex, 0);
 
-  if (!r->shadow_blur_fbo) glGenFramebuffers(1, &r->shadow_blur_fbo);
+  if (!r->shadow_blur_fbo)
+    glGenFramebuffers(1, &r->shadow_blur_fbo);
   glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_blur_fbo);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->shadow_blur_tex, 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         r->shadow_blur_tex, 0);
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -454,28 +496,56 @@ static bool init_shader_program(ShaderProgram *program, const char *frag_src) {
   GLuint vert = compile_shader(GL_VERTEX_SHADER, skinned_vert_src);
   GLuint frag = compile_shader(GL_FRAGMENT_SHADER, frag_src);
   if (!vert || !frag) {
-    if (vert) glDeleteShader(vert);
-    if (frag) glDeleteShader(frag);
+    if (vert)
+      glDeleteShader(vert);
+    if (frag)
+      glDeleteShader(frag);
     return false;
   }
 
   program->program = link_program(vert, frag);
   glDeleteShader(vert);
   glDeleteShader(frag);
-  if (!program->program) return false;
+  if (!program->program)
+    return false;
 
   program->u_view = glGetUniformLocation(program->program, "uView");
   program->u_proj = glGetUniformLocation(program->program, "uProj");
   program->u_model = glGetUniformLocation(program->program, "uModel");
   program->u_bones = glGetUniformLocation(program->program, "uBones");
-  program->u_use_skinning = glGetUniformLocation(program->program, "uUseSkinning");
-  program->u_use_bone_texture = glGetUniformLocation(program->program, "uUseBoneTexture");
+  program->u_use_skinning =
+      glGetUniformLocation(program->program, "uUseSkinning");
+  program->u_use_bone_texture =
+      glGetUniformLocation(program->program, "uUseBoneTexture");
   program->u_bone_tex = glGetUniformLocation(program->program, "uBoneTex");
   program->u_base_color = glGetUniformLocation(program->program, "uBaseColor");
-  program->u_base_color_tex = glGetUniformLocation(program->program, "uBaseColorTex");
-  program->u_has_base_color_tex = glGetUniformLocation(program->program, "uHasBaseColorTex");
+  program->u_base_color_tex =
+      glGetUniformLocation(program->program, "uBaseColorTex");
+  program->u_has_base_color_tex =
+      glGetUniformLocation(program->program, "uHasBaseColorTex");
   program->u_alpha_mode = glGetUniformLocation(program->program, "uAlphaMode");
-  program->u_alpha_cutoff = glGetUniformLocation(program->program, "uAlphaCutoff");
+  program->u_alpha_cutoff =
+      glGetUniformLocation(program->program, "uAlphaCutoff");
+  /* Morph target uniforms */
+  program->u_morph_weights =
+      glGetUniformLocation(program->program, "uMorphWeights[0]");
+  if (program->u_morph_weights < 0) {
+    program->u_morph_weights =
+        glGetUniformLocation(program->program, "uMorphWeights");
+  }
+  program->u_morph_count =
+      glGetUniformLocation(program->program, "uMorphCount");
+  program->u_morph_tex = glGetUniformLocation(program->program, "uMorphTex");
+  program->u_vertex_count =
+      glGetUniformLocation(program->program, "uVertexCount");
+  program->u_morph_verts_per_row =
+      glGetUniformLocation(program->program, "uMorphVertsPerRow");
+  program->u_morph_rows_per_morph =
+      glGetUniformLocation(program->program, "uMorphRowsPerMorph");
+
+  printf("Shader morph uniforms: weights=%d count=%d tex=%d vtx=%d\n",
+         program->u_morph_weights, program->u_morph_count, program->u_morph_tex,
+         program->u_vertex_count);
 
   return true;
 }
@@ -484,14 +554,15 @@ bool renderer_init(Renderer *r) {
   memset(r, 0, sizeof(Renderer));
 
   /* Identity model transform */
-  r->model_transform[0] = r->model_transform[5] = r->model_transform[10] = r->model_transform[15] = 1.0f;
+  r->model_transform[0] = r->model_transform[5] = r->model_transform[10] =
+      r->model_transform[15] = 1.0f;
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LESS);
   glEnable(GL_MULTISAMPLE);
-  glDisable(GL_CULL_FACE);  /* Disable culling by default */
+  glDisable(GL_CULL_FACE); /* Disable culling by default */
 
   /* Main shader */
   if (!init_shader_program(&r->pbr, pbr_frag_src)) {
@@ -521,16 +592,24 @@ bool renderer_init(Renderer *r) {
       r->u_shadow_proj = glGetUniformLocation(r->shadow_program, "uProj");
       r->u_shadow_model = glGetUniformLocation(r->shadow_program, "uModel");
       r->u_shadow_bones = glGetUniformLocation(r->shadow_program, "uBones");
-      r->u_shadow_use_skinning = glGetUniformLocation(r->shadow_program, "uUseSkinning");
-      r->u_shadow_use_bone_texture = glGetUniformLocation(r->shadow_program, "uUseBoneTexture");
-      r->u_shadow_bone_tex = glGetUniformLocation(r->shadow_program, "uBoneTex");
-      r->u_shadow_offset = glGetUniformLocation(r->shadow_program, "uShadowOffset");
-      r->u_shadow_alpha = glGetUniformLocation(r->shadow_program, "uShadowAlpha");
-      r->u_shadow_scale = glGetUniformLocation(r->shadow_program, "uShadowScale");
+      r->u_shadow_use_skinning =
+          glGetUniformLocation(r->shadow_program, "uUseSkinning");
+      r->u_shadow_use_bone_texture =
+          glGetUniformLocation(r->shadow_program, "uUseBoneTexture");
+      r->u_shadow_bone_tex =
+          glGetUniformLocation(r->shadow_program, "uBoneTex");
+      r->u_shadow_offset =
+          glGetUniformLocation(r->shadow_program, "uShadowOffset");
+      r->u_shadow_alpha =
+          glGetUniformLocation(r->shadow_program, "uShadowAlpha");
+      r->u_shadow_scale =
+          glGetUniformLocation(r->shadow_program, "uShadowScale");
     }
   }
-  if (shadow_vert) glDeleteShader(shadow_vert);
-  if (shadow_frag) glDeleteShader(shadow_frag);
+  if (shadow_vert)
+    glDeleteShader(shadow_vert);
+  if (shadow_frag)
+    glDeleteShader(shadow_frag);
 
   /* Shadow blur/composite shaders */
   {
@@ -539,13 +618,18 @@ bool renderer_init(Renderer *r) {
     if (blur_vert && blur_frag) {
       r->shadow_blur_program = link_program(blur_vert, blur_frag);
       if (r->shadow_blur_program) {
-        r->u_shadow_blur_tex = glGetUniformLocation(r->shadow_blur_program, "uTex");
-        r->u_shadow_blur_texel = glGetUniformLocation(r->shadow_blur_program, "uTexelSize");
-        r->u_shadow_blur_dir = glGetUniformLocation(r->shadow_blur_program, "uDirection");
+        r->u_shadow_blur_tex =
+            glGetUniformLocation(r->shadow_blur_program, "uTex");
+        r->u_shadow_blur_texel =
+            glGetUniformLocation(r->shadow_blur_program, "uTexelSize");
+        r->u_shadow_blur_dir =
+            glGetUniformLocation(r->shadow_blur_program, "uDirection");
       }
     }
-    if (blur_vert) glDeleteShader(blur_vert);
-    if (blur_frag) glDeleteShader(blur_frag);
+    if (blur_vert)
+      glDeleteShader(blur_vert);
+    if (blur_frag)
+      glDeleteShader(blur_frag);
   }
   {
     GLuint comp_vert = compile_shader(GL_VERTEX_SHADER, shadow_blur_vert_src);
@@ -553,14 +637,20 @@ bool renderer_init(Renderer *r) {
     if (comp_vert && comp_frag) {
       r->shadow_comp_program = link_program(comp_vert, comp_frag);
       if (r->shadow_comp_program) {
-        r->u_shadow_comp_tex = glGetUniformLocation(r->shadow_comp_program, "uTex");
-        r->u_shadow_comp_screen = glGetUniformLocation(r->shadow_comp_program, "uScreenSize");
-        r->u_shadow_comp_offset = glGetUniformLocation(r->shadow_comp_program, "uOffsetPx");
-        r->u_shadow_comp_alpha = glGetUniformLocation(r->shadow_comp_program, "uShadowAlpha");
+        r->u_shadow_comp_tex =
+            glGetUniformLocation(r->shadow_comp_program, "uTex");
+        r->u_shadow_comp_screen =
+            glGetUniformLocation(r->shadow_comp_program, "uScreenSize");
+        r->u_shadow_comp_offset =
+            glGetUniformLocation(r->shadow_comp_program, "uOffsetPx");
+        r->u_shadow_comp_alpha =
+            glGetUniformLocation(r->shadow_comp_program, "uShadowAlpha");
       }
     }
-    if (comp_vert) glDeleteShader(comp_vert);
-    if (comp_frag) glDeleteShader(comp_frag);
+    if (comp_vert)
+      glDeleteShader(comp_vert);
+    if (comp_frag)
+      glDeleteShader(comp_frag);
   }
 
   init_shadow_quad(r);
@@ -575,15 +665,22 @@ bool renderer_init(Renderer *r) {
       r->u_outline_proj = glGetUniformLocation(r->outline_program, "uProj");
       r->u_outline_model = glGetUniformLocation(r->outline_program, "uModel");
       r->u_outline_bones = glGetUniformLocation(r->outline_program, "uBones");
-      r->u_outline_use_skinning = glGetUniformLocation(r->outline_program, "uUseSkinning");
-      r->u_outline_use_bone_texture = glGetUniformLocation(r->outline_program, "uUseBoneTexture");
-      r->u_outline_bone_tex = glGetUniformLocation(r->outline_program, "uBoneTex");
-      r->u_outline_width = glGetUniformLocation(r->outline_program, "uOutlineWidth");
-      r->u_outline_color = glGetUniformLocation(r->outline_program, "uOutlineColor");
+      r->u_outline_use_skinning =
+          glGetUniformLocation(r->outline_program, "uUseSkinning");
+      r->u_outline_use_bone_texture =
+          glGetUniformLocation(r->outline_program, "uUseBoneTexture");
+      r->u_outline_bone_tex =
+          glGetUniformLocation(r->outline_program, "uBoneTex");
+      r->u_outline_width =
+          glGetUniformLocation(r->outline_program, "uOutlineWidth");
+      r->u_outline_color =
+          glGetUniformLocation(r->outline_program, "uOutlineColor");
     }
   }
-  if (outline_vert) glDeleteShader(outline_vert);
-  if (outline_frag) glDeleteShader(outline_frag);
+  if (outline_vert)
+    glDeleteShader(outline_vert);
+  if (outline_frag)
+    glDeleteShader(outline_frag);
 
   /* Initialize bone matrices to identity */
   for (int i = 0; i < RENDERER_MAX_BONES; i++) {
@@ -598,21 +695,36 @@ bool renderer_init(Renderer *r) {
 }
 
 void renderer_cleanup(Renderer *r) {
-  if (!r->initialized) return;
-  if (r->pbr.program) glDeleteProgram(r->pbr.program);
-  if (r->toon.program) glDeleteProgram(r->toon.program);
-  if (r->anime.program) glDeleteProgram(r->anime.program);
-  if (r->shadow_program) glDeleteProgram(r->shadow_program);
-  if (r->shadow_blur_program) glDeleteProgram(r->shadow_blur_program);
-  if (r->shadow_comp_program) glDeleteProgram(r->shadow_comp_program);
-  if (r->outline_program) glDeleteProgram(r->outline_program);
-  if (r->bone_tex) glDeleteTextures(1, &r->bone_tex);
-  if (r->shadow_tex) glDeleteTextures(1, &r->shadow_tex);
-  if (r->shadow_blur_tex) glDeleteTextures(1, &r->shadow_blur_tex);
-  if (r->shadow_fbo) glDeleteFramebuffers(1, &r->shadow_fbo);
-  if (r->shadow_blur_fbo) glDeleteFramebuffers(1, &r->shadow_blur_fbo);
-  if (r->shadow_quad_vao) glDeleteVertexArrays(1, &r->shadow_quad_vao);
-  if (r->shadow_quad_vbo) glDeleteBuffers(1, &r->shadow_quad_vbo);
+  if (!r->initialized)
+    return;
+  if (r->pbr.program)
+    glDeleteProgram(r->pbr.program);
+  if (r->toon.program)
+    glDeleteProgram(r->toon.program);
+  if (r->anime.program)
+    glDeleteProgram(r->anime.program);
+  if (r->shadow_program)
+    glDeleteProgram(r->shadow_program);
+  if (r->shadow_blur_program)
+    glDeleteProgram(r->shadow_blur_program);
+  if (r->shadow_comp_program)
+    glDeleteProgram(r->shadow_comp_program);
+  if (r->outline_program)
+    glDeleteProgram(r->outline_program);
+  if (r->bone_tex)
+    glDeleteTextures(1, &r->bone_tex);
+  if (r->shadow_tex)
+    glDeleteTextures(1, &r->shadow_tex);
+  if (r->shadow_blur_tex)
+    glDeleteTextures(1, &r->shadow_blur_tex);
+  if (r->shadow_fbo)
+    glDeleteFramebuffers(1, &r->shadow_fbo);
+  if (r->shadow_blur_fbo)
+    glDeleteFramebuffers(1, &r->shadow_blur_fbo);
+  if (r->shadow_quad_vao)
+    glDeleteVertexArrays(1, &r->shadow_quad_vao);
+  if (r->shadow_quad_vbo)
+    glDeleteBuffers(1, &r->shadow_quad_vbo);
   free(r->bone_tex_data);
   memset(r, 0, sizeof(Renderer));
 }
@@ -632,7 +744,8 @@ void renderer_set_model(Renderer *r, GltfModel *model) {
       r->use_bone_texture = true;
       r->bone_tex_joints = max_joints;
       free(r->bone_tex_data);
-      r->bone_tex_data = (float *)malloc((size_t)r->bone_tex_joints * 16 * sizeof(float));
+      r->bone_tex_data =
+          (float *)malloc((size_t)r->bone_tex_joints * 16 * sizeof(float));
       if (!r->bone_tex) {
         glGenTextures(1, &r->bone_tex);
       }
@@ -644,7 +757,8 @@ void renderer_set_model(Renderer *r, GltfModel *model) {
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, r->bone_tex_joints, 0,
                    GL_RGBA, GL_FLOAT, NULL);
       glBindTexture(GL_TEXTURE_2D, 0);
-      printf("Renderer: bone texture enabled (%d joints)\n", r->bone_tex_joints);
+      printf("Renderer: bone texture enabled (%d joints)\n",
+             r->bone_tex_joints);
     } else {
       r->use_bone_texture = false;
       r->bone_tex_joints = 0;
@@ -672,9 +786,12 @@ static void mat4_mul(const float *a, const float *b, float *out) {
 
 static void renderer_update_bone_texture(Renderer *r, int skin_index,
                                          const float *mesh_world) {
-  if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count) return;
-  if (!r->model->skins[skin_index].inverse_bind_matrices) return;
-  if (!mesh_world || !r->use_bone_texture || !r->bone_tex_data) return;
+  if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count)
+    return;
+  if (!r->model->skins[skin_index].inverse_bind_matrices)
+    return;
+  if (!mesh_world || !r->use_bone_texture || !r->bone_tex_data)
+    return;
 
   mat4 mesh;
   mat4 mesh_inv;
@@ -713,9 +830,12 @@ static void renderer_update_bone_texture(Renderer *r, int skin_index,
 static void renderer_update_bones(Renderer *r, int skin_index,
                                   const float *mesh_world,
                                   const GltfPrimitive *prim) {
-  if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count) return;
-  if (!r->model->skins[skin_index].inverse_bind_matrices) return;
-  if (!mesh_world || !prim || prim->joint_palette_count <= 0) return;
+  if (!r->model || skin_index < 0 || skin_index >= r->model->skin_count)
+    return;
+  if (!r->model->skins[skin_index].inverse_bind_matrices)
+    return;
+  if (!mesh_world || !prim || prim->joint_palette_count <= 0)
+    return;
 
   mat4 mesh;
   mat4 mesh_inv;
@@ -737,9 +857,11 @@ static void renderer_update_bones(Renderer *r, int skin_index,
 
   for (int i = 0; i < palette_count; i++) {
     int joint_idx = prim->joint_palette[i];
-    if (joint_idx < 0 || joint_idx >= skin->joint_count) continue;
+    if (joint_idx < 0 || joint_idx >= skin->joint_count)
+      continue;
     int node_idx = skin->joints[joint_idx];
-    if (node_idx < 0 || node_idx >= r->model->node_count) continue;
+    if (node_idx < 0 || node_idx >= r->model->node_count)
+      continue;
 
     GltfNode *node = &r->model->nodes[node_idx];
     float *ibm = &skin->inverse_bind_matrices[joint_idx * 16];
@@ -752,10 +874,11 @@ static void renderer_update_bones(Renderer *r, int skin_index,
   }
 }
 
-static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
+static void draw_primitive(Renderer *r, GltfPrimitive *prim, GltfMesh *mesh) {
   ShaderProgram *program = r->active;
   GltfMaterial *mat = NULL;
-  if (prim->material_index >= 0 && prim->material_index < r->model->material_count) {
+  if (prim->material_index >= 0 &&
+      prim->material_index < r->model->material_count) {
     mat = &r->model->materials[prim->material_index];
   }
 
@@ -764,9 +887,11 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
     glUniform1i(program->u_alpha_mode, mat->alpha_mode);
     glUniform1f(program->u_alpha_cutoff, mat->alpha_cutoff);
 
-    if (mat->base_color_texture >= 0 && mat->base_color_texture < r->model->texture_count) {
+    if (mat->base_color_texture >= 0 &&
+        mat->base_color_texture < r->model->texture_count) {
       glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_2D, r->model->textures[mat->base_color_texture].id);
+      glBindTexture(GL_TEXTURE_2D,
+                    r->model->textures[mat->base_color_texture].id);
       glUniform1i(program->u_base_color_tex, 0);
       glUniform1i(program->u_has_base_color_tex, 1);
     } else {
@@ -788,6 +913,40 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
   /* TEMP: disable culling for debugging interior faces */
   glDisable(GL_CULL_FACE);
 
+  /* Upload morph target uniforms */
+  if (mesh && mesh->morph_weights && prim->morph_gpu_count > 0 &&
+      prim->morph_vbo) {
+    /* Debug: check if any weights are non-zero */
+    static int debug_morph_frame = 0;
+    if (++debug_morph_frame % 600 == 1) { /* Log every ~10s at 60fps */
+      float max_weight = 0.0f;
+      int max_idx = -1;
+      for (int i = 0; i < mesh->morph_target_count; i++) {
+        if (mesh->morph_weights[i] > max_weight) {
+          max_weight = mesh->morph_weights[i];
+          max_idx = i;
+        }
+      }
+      if (max_weight > 0.001f) {
+        printf("Morph debug: max weight=%.2f at idx=%d, gpu_count=%d, vtx=%d\n",
+               max_weight, max_idx, prim->morph_gpu_count, prim->vertex_count);
+      }
+    }
+    /* Upload morph weights from mesh */
+    glUniform1fv(program->u_morph_weights, prim->morph_gpu_count,
+                 mesh->morph_weights);
+    glUniform1i(program->u_morph_count, prim->morph_gpu_count);
+    glUniform1i(program->u_vertex_count, (int)prim->vertex_count);
+    glUniform1i(program->u_morph_verts_per_row, prim->morph_tex_verts_per_row);
+    glUniform1i(program->u_morph_rows_per_morph, prim->morph_tex_rows_per_morph);
+    /* Bind morph texture to unit 2 */
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, prim->morph_vbo);
+    glUniform1i(program->u_morph_tex, 2);
+  } else {
+    glUniform1i(program->u_morph_count, 0);
+  }
+
   glBindVertexArray(prim->vao);
   if (prim->ebo && prim->index_count > 0) {
     glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
@@ -797,18 +956,23 @@ static void draw_primitive(Renderer *r, GltfPrimitive *prim) {
   glBindVertexArray(0);
 }
 
-void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_height) {
-  if (!r->initialized) return;
+void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width,
+                   int fb_height) {
+  if (!r->initialized)
+    return;
 
-  if (!r->model || !r->model->loaded) return;
+  if (!r->model || !r->model->loaded)
+    return;
 
   mat4 mt;
   memcpy(mt, r->model_transform, sizeof(mat4));
 
   /* === Render silhouette to texture + blur + composite === */
-  if (r->shadow_program && r->shadow_blur_program && r->shadow_comp_program && fb_width > 0 && fb_height > 0) {
+  if (r->shadow_program && r->shadow_blur_program && r->shadow_comp_program &&
+      fb_width > 0 && fb_height > 0) {
     ensure_shadow_targets(r, fb_width, fb_height);
-    if (r->shadow_tex && r->shadow_blur_tex && r->shadow_fbo && r->shadow_blur_fbo) {
+    if (r->shadow_tex && r->shadow_blur_tex && r->shadow_fbo &&
+        r->shadow_blur_fbo) {
       GLint prev_fbo = 0;
       glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
 
@@ -837,27 +1001,32 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
 
       for (int i = 0; i < r->model->node_count; i++) {
         GltfNode *node = &r->model->nodes[i];
-        if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
+        if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count)
+          continue;
 
         mat4 combined;
-        glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+        glm_mat4_mul(mt, (vec4 *)node->world_matrix, combined);
 
         if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
           if (r->use_bone_texture) {
-            renderer_update_bone_texture(r, node->skin_index, node->world_matrix);
+            renderer_update_bone_texture(r, node->skin_index,
+                                         node->world_matrix);
           }
         }
         glUniform1i(r->u_shadow_use_skinning, 0);
         glUniform1i(r->u_shadow_use_bone_texture, 0);
-        glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float*)combined);
+        glUniformMatrix4fv(r->u_shadow_model, 1, GL_FALSE, (float *)combined);
 
         GltfMesh *mesh = &r->model->meshes[node->mesh_index];
         for (int j = 0; j < mesh->primitive_count; j++) {
           GltfPrimitive *prim = &mesh->primitives[j];
-          if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+          if (node->skin_index >= 0 &&
+              node->skin_index < r->model->skin_count && prim->has_skinning) {
             if (prim->joint_palette_count > 0) {
-              renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
-              glUniformMatrix4fv(r->u_shadow_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+              renderer_update_bones(r, node->skin_index, node->world_matrix,
+                                    prim);
+              glUniformMatrix4fv(r->u_shadow_bones, RENDERER_MAX_BONES,
+                                 GL_FALSE, r->bone_matrices);
               glUniform1i(r->u_shadow_use_skinning, 1);
               glUniform1i(r->u_shadow_use_bone_texture, 0);
             } else if (r->use_bone_texture) {
@@ -873,7 +1042,8 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
           }
           glBindVertexArray(prim->vao);
           if (prim->ebo && prim->index_count > 0) {
-            glDrawElements(prim->mode, prim->index_count, prim->index_type, NULL);
+            glDrawElements(prim->mode, prim->index_count, prim->index_type,
+                           NULL);
           } else if (prim->vertex_count > 0) {
             glDrawArrays(prim->mode, 0, (GLsizei)prim->vertex_count);
           }
@@ -884,7 +1054,8 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       glUseProgram(r->shadow_blur_program);
       glBindVertexArray(r->shadow_quad_vao);
       glUniform1i(r->u_shadow_blur_tex, 0);
-      glUniform2f(r->u_shadow_blur_texel, 1.0f / (float)r->shadow_tex_w, 1.0f / (float)r->shadow_tex_h);
+      glUniform2f(r->u_shadow_blur_texel, 1.0f / (float)r->shadow_tex_w,
+                  1.0f / (float)r->shadow_tex_h);
 
       glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_blur_fbo);
       glActiveTexture(GL_TEXTURE0);
@@ -916,8 +1087,14 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       glDrawArrays(GL_TRIANGLES, 0, 6);
       glBindVertexArray(0);
 
-      if (had_depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-      if (had_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+      if (had_depth)
+        glEnable(GL_DEPTH_TEST);
+      else
+        glDisable(GL_DEPTH_TEST);
+      if (had_blend)
+        glEnable(GL_BLEND);
+      else
+        glDisable(GL_BLEND);
     }
   }
 
@@ -940,10 +1117,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
 
     for (int i = 0; i < r->model->node_count; i++) {
       GltfNode *node = &r->model->nodes[i];
-      if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
+      if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count)
+        continue;
 
       mat4 combined;
-      glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+      glm_mat4_mul(mt, (vec4 *)node->world_matrix, combined);
 
       if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
         if (r->use_bone_texture) {
@@ -952,19 +1130,26 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       }
       glUniform1i(r->u_outline_use_skinning, 0);
       glUniform1i(r->u_outline_use_bone_texture, 0);
-      glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, (float*)combined);
+      glUniformMatrix4fv(r->u_outline_model, 1, GL_FALSE, (float *)combined);
 
       GltfMesh *mesh = &r->model->meshes[node->mesh_index];
       for (int j = 0; j < mesh->primitive_count; j++) {
         GltfPrimitive *prim = &mesh->primitives[j];
-        GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count)
-                            ? &r->model->materials[prim->material_index] : NULL;
-        if (mat && mat->alpha_mode == 2) continue; /* Skip transparent */
-        if (mat && mat->double_sided) continue; /* Skip interior-friendly materials */
-        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+        GltfMaterial *mat = (prim->material_index >= 0 &&
+                             prim->material_index < r->model->material_count)
+                                ? &r->model->materials[prim->material_index]
+                                : NULL;
+        if (mat && mat->alpha_mode == 2)
+          continue; /* Skip transparent */
+        if (mat && mat->double_sided)
+          continue; /* Skip interior-friendly materials */
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count &&
+            prim->has_skinning) {
           if (prim->joint_palette_count > 0) {
-            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
-            glUniformMatrix4fv(r->u_outline_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            renderer_update_bones(r, node->skin_index, node->world_matrix,
+                                  prim);
+            glUniformMatrix4fv(r->u_outline_bones, RENDERER_MAX_BONES, GL_FALSE,
+                               r->bone_matrices);
             glUniform1i(r->u_outline_use_skinning, 1);
             glUniform1i(r->u_outline_use_bone_texture, 0);
           } else if (r->use_bone_texture) {
@@ -1004,10 +1189,11 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
 
   for (int i = 0; i < r->model->node_count; i++) {
     GltfNode *node = &r->model->nodes[i];
-    if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count) continue;
+    if (node->mesh_index < 0 || node->mesh_index >= r->model->mesh_count)
+      continue;
 
     mat4 combined;
-    glm_mat4_mul(mt, (vec4*)node->world_matrix, combined);
+    glm_mat4_mul(mt, (vec4 *)node->world_matrix, combined);
 
     if (node->skin_index >= 0 && node->skin_index < r->model->skin_count) {
       if (r->use_bone_texture) {
@@ -1015,21 +1201,26 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
       }
     }
 
-    glUniformMatrix4fv(program->u_model, 1, GL_FALSE, (float*)combined);
+    glUniformMatrix4fv(program->u_model, 1, GL_FALSE, (float *)combined);
 
     GltfMesh *mesh = &r->model->meshes[node->mesh_index];
 
     /* Draw opaque first */
     for (int j = 0; j < mesh->primitive_count; j++) {
       GltfPrimitive *prim = &mesh->primitives[j];
-      GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count) 
-                          ? &r->model->materials[prim->material_index] : NULL;
+      GltfMaterial *mat = (prim->material_index >= 0 &&
+                           prim->material_index < r->model->material_count)
+                              ? &r->model->materials[prim->material_index]
+                              : NULL;
       if (!mat || mat->alpha_mode != 2) {
         glDepthMask(GL_TRUE);
-        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count &&
+            prim->has_skinning) {
           if (prim->joint_palette_count > 0) {
-            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
-            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            renderer_update_bones(r, node->skin_index, node->world_matrix,
+                                  prim);
+            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE,
+                               r->bone_matrices);
             glUniform1i(program->u_use_skinning, 1);
             glUniform1i(program->u_use_bone_texture, 0);
           } else if (r->use_bone_texture) {
@@ -1043,21 +1234,26 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
           glUniform1i(program->u_use_skinning, 0);
           glUniform1i(program->u_use_bone_texture, 0);
         }
-        draw_primitive(r, prim);
+        draw_primitive(r, prim, mesh);
       }
     }
 
     /* Draw transparent */
     for (int j = 0; j < mesh->primitive_count; j++) {
       GltfPrimitive *prim = &mesh->primitives[j];
-      GltfMaterial *mat = (prim->material_index >= 0 && prim->material_index < r->model->material_count) 
-                          ? &r->model->materials[prim->material_index] : NULL;
+      GltfMaterial *mat = (prim->material_index >= 0 &&
+                           prim->material_index < r->model->material_count)
+                              ? &r->model->materials[prim->material_index]
+                              : NULL;
       if (mat && mat->alpha_mode == 2) {
         glDepthMask(mat->alpha_write_depth ? GL_TRUE : GL_FALSE);
-        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count && prim->has_skinning) {
+        if (node->skin_index >= 0 && node->skin_index < r->model->skin_count &&
+            prim->has_skinning) {
           if (prim->joint_palette_count > 0) {
-            renderer_update_bones(r, node->skin_index, node->world_matrix, prim);
-            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE, r->bone_matrices);
+            renderer_update_bones(r, node->skin_index, node->world_matrix,
+                                  prim);
+            glUniformMatrix4fv(program->u_bones, RENDERER_MAX_BONES, GL_FALSE,
+                               r->bone_matrices);
             glUniform1i(program->u_use_skinning, 1);
             glUniform1i(program->u_use_bone_texture, 0);
           } else if (r->use_bone_texture) {
@@ -1071,7 +1267,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
           glUniform1i(program->u_use_skinning, 0);
           glUniform1i(program->u_use_bone_texture, 0);
         }
-        draw_primitive(r, prim);
+        draw_primitive(r, prim, mesh);
       }
     }
   }
@@ -1080,7 +1276,8 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width, int fb_
 }
 
 void renderer_toggle_shader(Renderer *r) {
-  if (!r->initialized) return;
+  if (!r->initialized)
+    return;
 
   if (r->shader_mode == RENDERER_SHADER_ANIME) {
     if (r->toon.program) {
@@ -1105,15 +1302,28 @@ void renderer_toggle_shader(Renderer *r) {
   }
 }
 
-void renderer_set_model_transform(Renderer *r, const float *pos, const float *rot_deg, float scale) {
+void renderer_set_model_transform(Renderer *r, const float *pos,
+                                  const float *rot_deg, float scale) {
   /* Build transform: T * Ry * Rx * Rz (yaw, pitch, roll order) */
   float cx = cosf(rot_deg[0] * 0.0174533f), sx = sinf(rot_deg[0] * 0.0174533f);
   float cy = cosf(rot_deg[1] * 0.0174533f), sy = sinf(rot_deg[1] * 0.0174533f);
   float cz = cosf(rot_deg[2] * 0.0174533f), sz = sinf(rot_deg[2] * 0.0174533f);
-  
+
   float *m = r->model_transform;
-  m[0] = (cy*cz + sy*sx*sz) * scale;  m[4] = (-cy*sz + sy*sx*cz) * scale; m[8]  = (sy*cx) * scale; m[12] = pos[0];
-  m[1] = (cx*sz) * scale;             m[5] = (cx*cz) * scale;             m[9]  = (-sx) * scale;   m[13] = pos[1];
-  m[2] = (-sy*cz + cy*sx*sz) * scale; m[6] = (sy*sz + cy*sx*cz) * scale;  m[10] = (cy*cx) * scale; m[14] = pos[2];
-  m[3] = 0;                 m[7] = 0;                 m[11] = 0;     m[15] = 1;
+  m[0] = (cy * cz + sy * sx * sz) * scale;
+  m[4] = (-cy * sz + sy * sx * cz) * scale;
+  m[8] = (sy * cx) * scale;
+  m[12] = pos[0];
+  m[1] = (cx * sz) * scale;
+  m[5] = (cx * cz) * scale;
+  m[9] = (-sx) * scale;
+  m[13] = pos[1];
+  m[2] = (-sy * cz + cy * sx * sz) * scale;
+  m[6] = (sy * sz + cy * sx * cz) * scale;
+  m[10] = (cy * cx) * scale;
+  m[14] = pos[2];
+  m[3] = 0;
+  m[7] = 0;
+  m[11] = 0;
+  m[15] = 1;
 }

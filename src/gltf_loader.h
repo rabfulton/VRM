@@ -10,7 +10,6 @@
 #include <epoxy/gl.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdint.h>
 
 /* Maximum limits */
 #define MAX_MESHES 256
@@ -21,6 +20,16 @@
 #define MAX_JOINTS 256
 #define MAX_ANIMATIONS 64
 #define GLTF_MAX_PALETTE_BONES 128
+#define MAX_MORPH_TARGETS 64
+#define MAX_VRM_EXPRESSIONS 64
+#define VRM_EXPRESSION_NAME_LEN 32
+
+/* Morph target (per primitive) */
+typedef struct {
+  float *position_deltas; /* 3 floats per vertex */
+  float *normal_deltas;   /* 3 floats per vertex, optional */
+  bool has_normals;
+} MorphTarget;
 
 /* Primitive (submesh) */
 typedef struct {
@@ -45,6 +54,14 @@ typedef struct {
 
   int joint_palette_count;
   int *joint_palette; /* Node indices used by this primitive */
+
+  /* Morph targets */
+  MorphTarget *morph_targets;
+  int morph_target_count;
+  GLuint morph_vbo;    /* Packed morph deltas for GPU */
+  int morph_gpu_count; /* Capped count for shader (max MAX_MORPH_TARGETS) */
+  int morph_tex_verts_per_row;
+  int morph_tex_rows_per_morph;
 } GltfPrimitive;
 
 /* Mesh */
@@ -101,7 +118,7 @@ typedef struct {
   float base_translation[3];
   float base_rotation[4];
   float base_scale[3];
-  
+
   int is_spring_bone; /* 1 if this is a spring bone (don't reset in animator) */
 
   /* Computed world matrix */
@@ -126,8 +143,8 @@ typedef enum {
 
 /* Animation sampler */
 typedef struct {
-  float *input;      /* Keyframe times */
-  float *output;     /* Keyframe values */
+  float *input;  /* Keyframe times */
+  float *output; /* Keyframe values */
   int keyframe_count;
   int output_stride; /* Components per keyframe (3 for vec3, 4 for quat) */
 } GltfAnimSampler;
@@ -153,27 +170,27 @@ typedef struct {
 
 /* Spring bone collider (supports sphere and capsule per spec) */
 typedef struct {
-  int node;           /* Node index the collider is attached to */
-  float offset[3];    /* Local offset from node */
-  float radius;       /* Collider radius */
-  int is_capsule;     /* 0=sphere, 1=capsule */
-  float tail[3];      /* Capsule tail in local coords (if capsule) */
+  int node;        /* Node index the collider is attached to */
+  float offset[3]; /* Local offset from node */
+  float radius;    /* Collider radius */
+  int is_capsule;  /* 0=sphere, 1=capsule */
+  float tail[3];   /* Capsule tail in local coords (if capsule) */
 } SpringCollider;
 
 /* Spring bone collider group */
 typedef struct {
-  int node;           /* Node the group is attached to */
+  int node; /* Node the group is attached to */
   SpringCollider *colliders;
   int collider_count;
 } SpringColliderGroup;
 
 /* Spring bone joint state (per VRMC_springBone-1.0 spec) */
 typedef struct {
-  int node;                     /* Node index */
-  float prev_tail[3];           /* Previous tail position (world) */
-  float current_tail[3];        /* Current tail position (world) */
-  float bone_axis[3];           /* Direction to child in local rest pose */
-  float bone_length;            /* Length to child in world units */
+  int node;                        /* Node index */
+  float prev_tail[3];              /* Previous tail position (world) */
+  float current_tail[3];           /* Current tail position (world) */
+  float bone_axis[3];              /* Direction to child in local rest pose */
+  float bone_length;               /* Length to child in world units */
   float initial_local_rotation[4]; /* Rest orientation (quaternion) */
   float initial_local_matrix[16];  /* Rest local matrix */
   /* Per-joint parameters (spec requires these per joint) */
@@ -186,13 +203,13 @@ typedef struct {
 
 /* Spring bone chain (SpringChain in spec) */
 typedef struct {
-  int *bones;         /* Node indices of joints in chain */
+  int *bones; /* Node indices of joints in chain */
   int bone_count;
   int *collider_groups; /* Indices into collider groups array */
   int collider_group_count;
-  int center;         /* Center space node index (-1 for world) */
-  SpringJoint *joints;  /* Runtime joint state (bone_count - 1 pairs) */
-  int joint_count;      /* Number of active joint pairs */
+  int center;            /* Center space node index (-1 for world) */
+  SpringJoint *joints;   /* Runtime joint state (bone_count - 1 pairs) */
+  int joint_count;       /* Number of active joint pairs */
   float avg_bone_length; /* Average bone length in chain */
 } SpringBoneGroup;
 
@@ -220,18 +237,20 @@ typedef struct {
   /* Animations */
   GltfAnimation *animations;
   int animation_count;
-  bool anim_needs_coord_flip;  /* True if animation has flipped coordinate system */
-  bool anim_is_mixamo;         /* True if animation uses Mixamo skeleton */
-  int anim_correction_mode;    /* 0: none, 1: auto, 2: rotX, 3: rotY, 4: rotZ
-                                 NOTE: Default is rotY 180 to match legacy VRMA/poses.glb
-                                 data in this repo. Do not remove without validating
-                                 against VRMA_01-07 and poses.glb. */
+  bool anim_needs_coord_flip; /* True if animation has flipped coordinate system
+                               */
+  bool anim_is_mixamo;        /* True if animation uses Mixamo skeleton */
+  int anim_correction_mode;   /* 0: none, 1: auto, 2: rotX, 3: rotY, 4: rotZ
+                                NOTE: Default is rotY 180 to match legacy
+                                VRMA/poses.glb   data in this repo. Do not remove
+                                without validating   against VRMA_01-07 and
+                                poses.glb. */
   float anim_global_correction[4];
   float anim_global_auto_correction[4];
 
   /* VRM humanoid bone mapping */
-  char (*humanoid_names)[32];  /* Array of bone names */
-  int *humanoid_bones;         /* Array of node indices */
+  char (*humanoid_names)[32]; /* Array of bone names */
+  int *humanoid_bones;        /* Array of node indices */
   int humanoid_bone_count;
 
   /* VRM spring bones */
@@ -239,6 +258,9 @@ typedef struct {
   int spring_group_count;
   SpringColliderGroup *spring_colliders;
   int spring_collider_count;
+
+  /* VRM expressions (blendshapes) - parsed from VRM 0.x/1.0 */
+  struct VrmExpressionMap *vrm_expressions;
 
   bool loaded;
 } GltfModel;
@@ -259,16 +281,50 @@ bool gltf_load_animation(GltfModel *model, const char *anim_path);
 int gltf_find_node(const GltfModel *model, const char *name);
 
 /* Compute screen-space bounding box from skeleton (returns NDC extents) */
-void gltf_get_screen_bounds(const GltfModel *model, const float *view, const float *proj,
-                            float *out_ndc_w, float *out_ndc_h);
+void gltf_get_screen_bounds(const GltfModel *model, const float *view,
+                            const float *proj, float *out_ndc_w,
+                            float *out_ndc_h);
 
 /* Compute screen-space bounding box in pixels (for input regions) */
-void gltf_get_screen_bounds_px(const GltfModel *model, const float *view, const float *proj,
-                               int screen_w, int screen_h,
-                               float *out_min_x, float *out_min_y, float *out_max_x, float *out_max_y);
+void gltf_get_screen_bounds_px(const GltfModel *model, const float *view,
+                               const float *proj, int screen_w, int screen_h,
+                               float *out_min_x, float *out_min_y,
+                               float *out_max_x, float *out_max_y);
 
 /* Compute max bounds over entire animation, with caching */
 void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
                                    float *out_world_w, float *out_world_h);
+
+/* VRM expression bind (morph target reference within an expression) */
+typedef struct {
+  int mesh_index;  /* Which mesh */
+  int morph_index; /* Which morph target in that mesh */
+  float weight;    /* Weight multiplier for this bind */
+} VrmExpressionBind;
+
+/* VRM expression (named blendshape group) */
+typedef struct {
+  char name[VRM_EXPRESSION_NAME_LEN];
+  char preset_name[VRM_EXPRESSION_NAME_LEN]; /* VRM preset like "aa", "blink",
+                                                etc. */
+  VrmExpressionBind *binds;
+  int bind_count;
+  bool is_binary; /* If true, weight should be 0 or 1 */
+} VrmExpression;
+
+/* VRM expression map (all expressions for a model) */
+typedef struct VrmExpressionMap {
+  VrmExpression *expressions;
+  int expression_count;
+} VrmExpressionMap;
+
+/* Set a VRM expression weight by name (uses expressions or fallback to morph
+ * names) */
+void gltf_set_expression(GltfModel *model, const char *name, float weight);
+
+/* Get list of available expression names */
+int gltf_get_expression_names(const GltfModel *model,
+                              char names[][VRM_EXPRESSION_NAME_LEN],
+                              int max_names);
 
 #endif /* GLTF_LOADER_H */
