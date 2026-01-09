@@ -16,6 +16,7 @@ Controls:
   1-5           - Set expression (A/I/U/E/O) with current weight
   w/s           - Increase/decrease expression weight
   c             - Clear all expression weights to 0
+  t             - Test audio playback (play test.wav with lip sync)
   q             - Quit
 """
 
@@ -118,6 +119,17 @@ def clear_expressions():
         cmd({"action": "set_expression", "name": vowel, "weight": 0.0})
     print("  Cleared all expression weights")
 
+def play_test_audio():
+    """Play test.wav to test lip sync."""
+    wav_path = os.path.join(ROOT, "test.wav")
+    if os.path.exists(wav_path):
+        # Enable lip sync and play the file
+        cmd({"action": "lip_sync_enable", "enabled": True})
+        cmd({"action": "play_audio_file", "path": wav_path})
+        print(f"  Playing audio: {wav_path} (lip sync enabled)")
+    else:
+        print(f"  Error: {wav_path} not found")
+
 old = termios.tcgetattr(sys.stdin)
 try:
     tty.setcbreak(sys.stdin.fileno())
@@ -127,6 +139,7 @@ try:
     print("9/0 - Adjust spring drag")
     print("-/= - Adjust spring gravity")
     print("e=list expressions, 1-5=set vowel (A/I/U/E/O), w/s=weight, c=clear")
+    print("t=test audio (play test.wav with lip sync)")
     show_spring()
     play(idx)
     while True:
@@ -162,6 +175,7 @@ try:
             elif k == 'w': expr_weight = min(1.0, expr_weight + 0.1); print(f"  Expression weight: {expr_weight:.2f}")
             elif k == 's': expr_weight = max(0.0, expr_weight - 0.1); print(f"  Expression weight: {expr_weight:.2f}")
             elif k == 'c': clear_expressions()
+            elif k == 't': play_test_audio()
     print(f"\n=== Final values ===")
     print(f"spring: stiffness={stiff:.2f} drag={drag:.2f} gravity={grav:.2f}")
     print(f"blend: duration={blend_dur:.2f}s" if isinstance(blend_dur, float) else f"blend: duration={blend_dur}")

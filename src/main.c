@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "../deps/cjson/cJSON.h"
+#include "../deps/miniaudio.h"
 #include "anim_config.h"
 #include "animator.h"
 #include "audio.h"
@@ -21,6 +22,7 @@
 #include "settings.h"
 #include "spring_bones.h"
 #include "ui_library/ui.h"
+#include "viseme.h"
 
 typedef struct {
   PlatformWindow *window;
@@ -31,6 +33,7 @@ typedef struct {
   Animator animator;
   IpcServer ipc;
   AudioSystem audio;
+  VisemeAnalyzer viseme;
   GLuint msaa_fbo, msaa_color, msaa_depth;
   int msaa_samples, fb_width, fb_height;
   int ui_fb_width, ui_fb_height;
@@ -592,6 +595,8 @@ static void on_ipc_command(const char *action, void *params, int id,
     app.running = false;
   } else if (strcmp(action, "audio_stream_begin") == 0) {
     audio_clear(&app.audio);
+    viseme_reset(&app.viseme);
+    viseme_set_enabled(&app.viseme, true);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "audio_stream_chunk") == 0) {
     cJSON *data = cJSON_GetObjectItem(json, "data");
@@ -602,10 +607,14 @@ static void on_ipc_command(const char *action, void *params, int id,
       // We process int16 samples. Ensure we align.
       uint8_t *buf = malloc(max_out);
       if (buf) {
+        // Capture sample position BEFORE writing
+        int64_t chunk_start = (int64_t)app.audio.total_written;
         size_t decoded_bytes = base64_decode(data->valuestring, len, buf);
         // Write to ring buffer
         size_t samples = decoded_bytes / sizeof(int16_t);
         size_t written = audio_write(&app.audio, (int16_t *)buf, samples);
+        // Analyze for lip sync
+        viseme_analyze(&app.viseme, (int16_t *)buf, written, chunk_start);
         free(buf);
         if (written == samples) {
           ipc_respond(&app.ipc, id, true, NULL);
@@ -624,15 +633,65 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "play_audio_file") == 0) {
     cJSON *path = cJSON_GetObjectItem(json, "path");
     if (path && path->valuestring) {
-      audio_clear(&app.audio); // Optional: clear previous stream/file
-      if (audio_play_wav(&app.audio, path->valuestring)) {
-        ipc_respond(&app.ipc, id, true, NULL);
+      audio_clear(&app.audio);
+      viseme_reset(&app.viseme);
+
+      // Load and analyze the WAV file
+      // We need to load it ourselves to get the PCM data for analysis
+      ma_decoder_config config =
+          ma_decoder_config_init(ma_format_s16, 1, 24000);
+      ma_decoder decoder;
+
+      if (ma_decoder_init_file(path->valuestring, &config, &decoder) ==
+          MA_SUCCESS) {
+        ma_uint64 length = 0;
+        ma_decoder_get_length_in_pcm_frames(&decoder, &length);
+
+        size_t free_space = audio_free_space(&app.audio);
+        if (length > (ma_uint64)free_space) {
+          length = free_space;
+        }
+
+        int16_t *temp_buf = (int16_t *)malloc(length * sizeof(int16_t));
+        if (temp_buf) {
+          ma_uint64 frames_read = 0;
+          ma_decoder_read_pcm_frames(&decoder, temp_buf, length, &frames_read);
+
+          // Capture start position and analyze for lip sync
+          int64_t chunk_start = (int64_t)app.audio.total_written;
+          audio_write(&app.audio, temp_buf, (size_t)frames_read);
+          viseme_analyze(&app.viseme, temp_buf, (size_t)frames_read,
+                         chunk_start);
+
+          free(temp_buf);
+          printf("Audio: Loaded %llu samples from %s (with lip sync)\n",
+                 (unsigned long long)frames_read, path->valuestring);
+          ipc_respond(&app.ipc, id, true, NULL);
+        } else {
+          ipc_respond(&app.ipc, id, false, "OOM");
+        }
+        ma_decoder_uninit(&decoder);
       } else {
         ipc_respond(&app.ipc, id, false, "Failed to load WAV");
       }
     } else {
       ipc_respond(&app.ipc, id, false, "Missing path");
     }
+  } else if (strcmp(action, "lip_sync_enable") == 0) {
+    cJSON *en = cJSON_GetObjectItem(json, "enabled");
+    viseme_set_enabled(&app.viseme, en ? cJSON_IsTrue(en) : true);
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "lip_sync_config") == 0) {
+    cJSON *gain = cJSON_GetObjectItem(json, "gain");
+    cJSON *threshold = cJSON_GetObjectItem(json, "threshold");
+    cJSON *smoothing = cJSON_GetObjectItem(json, "smoothing");
+    if (gain)
+      viseme_set_gain(&app.viseme, (float)gain->valuedouble);
+    if (threshold)
+      viseme_set_threshold(&app.viseme, (float)threshold->valuedouble);
+    if (smoothing)
+      viseme_set_smoothing(&app.viseme, (float)smoothing->valuedouble);
+    ipc_respond(&app.ipc, id, true, NULL);
   } else {
     ipc_respond(&app.ipc, id, false, "Unknown action");
   }
@@ -1033,9 +1092,6 @@ int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
 
-  if (!ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, NULL))
-    fprintf(stderr, "Failed to start IPC server\n");
-
   app.auto_resize = true;
 
   app.window = platform_create_window(400, 600, "VRM Overlay", true, false);
@@ -1127,6 +1183,7 @@ int main(int argc, char *argv[]) {
   /* App init */
   audio_init(&app.audio);
   audio_start(&app.audio);
+  viseme_init(&app.viseme);
   ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, &app);
   platform_make_context_current(app.ui_window);
   update_display_metrics_for_window(app.ui_window);
@@ -1153,6 +1210,7 @@ int main(int argc, char *argv[]) {
   while (app.running && !platform_should_close(app.window)) {
     platform_make_context_current(app.window);
     platform_poll_events();
+    ipc_poll(&app.ipc);
 
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
@@ -1165,6 +1223,16 @@ int main(int argc, char *argv[]) {
       gltf_update_transforms(&app.model);
       spring_bones_update(&app.model, dt);
       gltf_update_transforms(&app.model);
+
+      /* Apply lip sync viseme weights to expressions */
+      VisemeFrame vf;
+      if (viseme_sample(&app.viseme, (int64_t)app.audio.total_read, &vf)) {
+        gltf_set_expression(&app.model, "A", vf.weights[VISEME_A]);
+        gltf_set_expression(&app.model, "I", vf.weights[VISEME_I]);
+        gltf_set_expression(&app.model, "U", vf.weights[VISEME_U]);
+        gltf_set_expression(&app.model, "E", vf.weights[VISEME_E]);
+        gltf_set_expression(&app.model, "O", vf.weights[VISEME_O]);
+      }
     }
 
     update_input_region();
@@ -1269,6 +1337,7 @@ int main(int argc, char *argv[]) {
 
   gltf_unload(&app.model);
   renderer_cleanup(&app.renderer);
+  viseme_free(&app.viseme);
   audio_free(&app.audio);
   ipc_cleanup(&app.ipc);
   if (app.ui_window)
