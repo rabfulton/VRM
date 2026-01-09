@@ -11,6 +11,7 @@
 #include "../deps/cjson/cJSON.h"
 #include "anim_config.h"
 #include "animator.h"
+#include "audio.h"
 #include "camera.h"
 #include "debug_ui.h"
 #include "gltf_loader.h"
@@ -29,6 +30,7 @@ typedef struct {
   GltfModel model;
   Animator animator;
   IpcServer ipc;
+  AudioSystem audio;
   GLuint msaa_fbo, msaa_color, msaa_depth;
   int msaa_samples, fb_width, fb_height;
   int ui_fb_width, ui_fb_height;
@@ -257,6 +259,39 @@ static void update_input_region(void) {
     platform_set_input_region(app.window, x, y, w, h);
   else
     platform_clear_input_region(app.window);
+}
+
+/* Base64 decoder helper */
+static int b64_char_value(char c) {
+  if (c >= 'A' && c <= 'Z')
+    return c - 'A';
+  if (c >= 'a' && c <= 'z')
+    return c - 'a' + 26;
+  if (c >= '0' && c <= '9')
+    return c - '0' + 52;
+  if (c == '+')
+    return 62;
+  if (c == '/')
+    return 63;
+  return 0;
+}
+
+static size_t base64_decode(const char *src, size_t len, uint8_t *out) {
+  size_t i = 0, j = 0;
+  while (i < len) {
+    uint32_t v = b64_char_value(src[i]) << 18;
+    v |= (i + 1 < len ? b64_char_value(src[i + 1]) : 0) << 12;
+    v |= (i + 2 < len ? b64_char_value(src[i + 2]) : 0) << 6;
+    v |= (i + 3 < len ? b64_char_value(src[i + 3]) : 0);
+
+    out[j++] = (v >> 16) & 0xFF;
+    if (j < len * 3 / 4 && i + 2 < len && src[i + 2] != '=')
+      out[j++] = (v >> 8) & 0xFF;
+    if (j < len * 3 / 4 && i + 3 < len && src[i + 3] != '=')
+      out[j++] = v & 0xFF;
+    i += 4;
+  }
+  return j;
 }
 
 /* IPC command handler */
@@ -555,6 +590,49 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "shutdown") == 0) {
     ipc_respond(&app.ipc, id, true, NULL);
     app.running = false;
+  } else if (strcmp(action, "audio_stream_begin") == 0) {
+    audio_clear(&app.audio);
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "audio_stream_chunk") == 0) {
+    cJSON *data = cJSON_GetObjectItem(json, "data");
+    if (data && data->valuestring) {
+      size_t len = strlen(data->valuestring);
+      // Allocate temp buffer for decoded data (max size)
+      size_t max_out = len * 3 / 4;
+      // We process int16 samples. Ensure we align.
+      uint8_t *buf = malloc(max_out);
+      if (buf) {
+        size_t decoded_bytes = base64_decode(data->valuestring, len, buf);
+        // Write to ring buffer
+        size_t samples = decoded_bytes / sizeof(int16_t);
+        size_t written = audio_write(&app.audio, (int16_t *)buf, samples);
+        free(buf);
+        if (written == samples) {
+          ipc_respond(&app.ipc, id, true, NULL);
+        } else {
+          ipc_respond(&app.ipc, id, false, "Buffer full");
+        }
+      } else {
+        ipc_respond(&app.ipc, id, false, "OOM");
+      }
+    } else {
+      ipc_respond(&app.ipc, id, false, "No data");
+    }
+  } else if (strcmp(action, "audio_stream_end") == 0) {
+    // Optional: flush or just ack
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "play_audio_file") == 0) {
+    cJSON *path = cJSON_GetObjectItem(json, "path");
+    if (path && path->valuestring) {
+      audio_clear(&app.audio); // Optional: clear previous stream/file
+      if (audio_play_wav(&app.audio, path->valuestring)) {
+        ipc_respond(&app.ipc, id, true, NULL);
+      } else {
+        ipc_respond(&app.ipc, id, false, "Failed to load WAV");
+      }
+    } else {
+      ipc_respond(&app.ipc, id, false, "Missing path");
+    }
   } else {
     ipc_respond(&app.ipc, id, false, "Unknown action");
   }
@@ -1046,7 +1124,10 @@ int main(int argc, char *argv[]) {
   app.camera.azimuth = 3.14f;
   app.camera.aspect = (float)w / (float)h;
 
-  animator_init(&app.animator);
+  /* App init */
+  audio_init(&app.audio);
+  audio_start(&app.audio);
+  ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, &app);
   platform_make_context_current(app.ui_window);
   update_display_metrics_for_window(app.ui_window);
   ui_init_overlay(&app);
@@ -1072,7 +1153,6 @@ int main(int argc, char *argv[]) {
   while (app.running && !platform_should_close(app.window)) {
     platform_make_context_current(app.window);
     platform_poll_events();
-    ipc_poll(&app.ipc);
 
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
@@ -1189,6 +1269,7 @@ int main(int argc, char *argv[]) {
 
   gltf_unload(&app.model);
   renderer_cleanup(&app.renderer);
+  audio_free(&app.audio);
   ipc_cleanup(&app.ipc);
   if (app.ui_window)
     platform_destroy_window(app.ui_window);

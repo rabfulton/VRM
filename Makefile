@@ -8,9 +8,9 @@ CFLAGS += $(shell pkg-config --cflags glfw3 epoxy)
 CXXFLAGS += $(shell pkg-config --cflags glfw3 epoxy)
 INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb -Isrc/ui_library
 
-LDFLAGS = $(shell pkg-config --libs glfw3 epoxy) -lm -lstdc++ -lX11 -lXext
+LDFLAGS = $(shell pkg-config --libs glfw3 epoxy) -lm -lstdc++ -lX11 -lXext -lpthread -ldl
 
-C_SRC = src/main.c src/platform.c src/renderer.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c src/spring_bones.c src/anim_config.c src/settings.c src/debug_ui.c src/ui_library/ui.c src/ui_library/import.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/platform.c src/renderer.c src/audio.c src/camera.c src/gltf_loader.c src/ipc.c src/animator.c src/spring_bones.c src/anim_config.c src/settings.c src/debug_ui.c src/ui_library/ui.c src/ui_library/import.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp
 
 C_OBJ = $(C_SRC:.c=.o)
