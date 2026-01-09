@@ -1,38 +1,32 @@
 /*
- * Event System - Generic Time-Based Data Scheduling
- * ==================================================
+ * Event System - Generic Time-Based Event Scheduling
+ * ===================================================
  *
- * This module provides two primitives for scheduling and consuming time-stamped
- * data in a producer-consumer pattern:
+ * This module provides two primitives:
  *
- * 1. EventStream - For CONTINUOUS, interpolatable data (e.g., viseme weights,
- *    blend shapes, transform curves). Data is sampled at render time with
- *    automatic interpolation between keyframes.
+ * 1. EventStream - For CONTINUOUS, interpolatable data (e.g., viseme weights).
+ *    Data is sampled at render time with automatic interpolation between
+ *    keyframes. Used by the lip sync system.
  *
- * 2. EventQueue - For DISCRETE, one-shot triggers (e.g., play animation,
- *    toggle feature, fire callback). Events are consumed when their scheduled
- *    time arrives.
+ * 2. Event System - For DISCRETE, stateful events (e.g., blinks, winks,
+ *    animation triggers, audio cues). Events have a lifecycle:
+ *    SCHEDULED → ACTIVE → COMPLETE (with optional WAITING, PAUSED, CANCELED).
  *
  * DESIGN PRINCIPLES:
- * - SPSC (Single Producer, Single Consumer) lock-free ring buffers
- * - Render loop stays in control (pull-based, not callback-driven)
- * - Multiple time domains: audio sample indices or wall-clock seconds
- * - Flexible payloads: up to 64 bytes inline, no heap allocation
+ * - Scheduler manages ordering/state/looping; subsystems manage execution
+ * - Multi-clock: separate updates for wall time (seconds) vs audio samples
+ * - Thread-safe: IPC pushes commands, main thread drains and applies
+ * - Fixed-size pool for predictable memory usage
  *
- * TYPICAL USAGE (Lip Sync Example):
- *   Producer (IPC audio ingest):
- *     event_stream_push(&stream, sample_time, &viseme_weights);
+ * TYPICAL USAGE:
+ *   // IPC thread: schedule a blink
+ *   event_cmd_schedule(&blink_event);
  *
- *   Consumer (render loop):
- *     if (event_stream_sample(&stream, playback_time, &weights, NULL)) {
- *       apply_viseme(weights);
- *     }
- *     event_stream_prune(&stream, playback_time - retention);
- *
- * FUTURE EXTENSIBILITY:
- * - Animation triggers, camera cues, expression sets
- * - Multiple streams per entity (face, body, accessories)
- * - Network-synchronized events with clock correction
+ *   // Main loop:
+ *   event_drain_commands();
+ *   event_update_seconds(now_ns);
+ *   event_update_audio(now_samples);
+ *   event_foreach_active(EVENT_TYPE_BLINK, process_blink, &app);
  */
 
 #ifndef EVENT_H
@@ -44,122 +38,228 @@
 #include <stdint.h>
 
 // ============================================================================
+// Configuration
+// ============================================================================
+
+#define EVENT_POOL_CAPACITY 512
+#define EVENT_MAX_PAYLOAD 48
+#define EVENT_CMD_QUEUE_CAPACITY 64
+
+// ============================================================================
 // Time Domains
 // ============================================================================
 
 typedef enum {
-  EVENT_DOMAIN_AUDIO_SAMPLES, // int64_t samples @ 24kHz
-  EVENT_DOMAIN_SECONDS,       // double seconds (stored as int64 micros)
+  EVENT_DOMAIN_SECONDS = 0,       // Wall time in nanoseconds (CLOCK_MONOTONIC)
+  EVENT_DOMAIN_AUDIO_SAMPLES = 1, // Audio sample index @ 24kHz
 } EventDomain;
 
-// Convert between domains (requires knowing sample rate)
-static inline int64_t event_time_to_samples(double seconds, int sample_rate) {
-  return (int64_t)(seconds * sample_rate);
-}
+// Assumed sample rate for AUDIO_SAMPLES timebase (keep in sync with audio system)
+#define EVENT_AUDIO_SAMPLE_RATE 24000
 
-static inline double event_time_to_seconds(int64_t samples, int sample_rate) {
-  return (double)samples / sample_rate;
+// Conversion helpers
+static inline int64_t event_ms_to_ns(int64_t ms) { return ms * 1000000LL; }
+static inline int64_t event_ns_to_ms(int64_t ns) { return ns / 1000000LL; }
+static inline int64_t event_samples_to_ns(int64_t samples, int sample_rate) {
+  return (samples * 1000000000LL) / sample_rate;
+}
+static inline int64_t event_ns_to_samples(int64_t ns, int sample_rate) {
+  return (ns * sample_rate) / 1000000000LL;
+}
+static inline int64_t event_ms_to_samples(int64_t ms) {
+  return (ms * EVENT_AUDIO_SAMPLE_RATE) / 1000LL;
 }
 
 // ============================================================================
-// Continuous Streams (for interpolatable data like visemes)
+// Event State Machine
 // ============================================================================
 
-#define EVENT_STREAM_CAPACITY 2048 // Power of 2, ~20sec of viseme data @ 100Hz
+typedef enum {
+  EVENT_STATE_FREE = 0,  // Slot is unused
+  EVENT_STATE_SCHEDULED, // Waiting for start_time
+  EVENT_STATE_WAITING,   // Blocked on dependency (after_event_id)
+  EVENT_STATE_ACTIVE,    // Being processed by subsystem
+  EVENT_STATE_PAUSED,    // Temporarily frozen
+  EVENT_STATE_COMPLETE,  // Finished (may reschedule if looping)
+  EVENT_STATE_CANCELED,  // Canceled; subsystem must cleanup
+} EventState;
+
+// ============================================================================
+// Event Types (extend as needed)
+// ============================================================================
+
+typedef enum {
+  EVENT_TYPE_NONE = 0,
+  EVENT_TYPE_BLINK,
+  EVENT_TYPE_WINK_L,
+  EVENT_TYPE_WINK_R,
+  EVENT_TYPE_EXPRESSION_SET,
+  EVENT_TYPE_ANIM_TRIGGER,
+  EVENT_TYPE_AUDIO_CUE,
+  EVENT_TYPE_CUSTOM = 100,
+} EventType;
+
+// ============================================================================
+// Event Flags
+// ============================================================================
+
+#define EVENT_FLAG_NONE 0x0000
+#define EVENT_FLAG_SUBSYSTEM_OWNS_TIMING 0x0001 // Subsystem decides completion
+#define EVENT_FLAG_AUTO_COMPLETE 0x0002    // Scheduler completes when now >= start_time+duration
+#define EVENT_FLAG_RECALC_ON_REPEAT 0x0004 // Recalculate start_time on loop
+#define EVENT_FLAG_ALLOW_STACKING 0x0008   // Multiple same type/track OK
+
+// ============================================================================
+// Event Structure
+// ============================================================================
+
+typedef struct {
+  // Identity
+  uint32_t id;       // Unique event ID (0 = invalid)
+  uint16_t type;     // EventType
+  uint16_t track_id; // Which entity/channel this targets
+
+  // Time
+  EventDomain domain;
+  int64_t start_time; // Absolute time in domain units
+  int64_t duration;   // 0 = instant, otherwise length in domain units
+
+  // State
+  EventState state;
+
+  // Dependency
+  uint32_t after_event_id; // 0 = none; wait for this event to complete first
+
+  // Repeat behavior
+  int16_t loop_count;    // -1 = infinite, 0 = no repeat, N = repeat N times
+  int64_t loop_interval; // Start-to-start interval between repeats (0 = use duration)
+
+  // Behavior
+  uint16_t flags;
+
+  // Payload
+  uint16_t payload_size;
+  uint8_t payload[EVENT_MAX_PAYLOAD];
+} Event;
+
+// ============================================================================
+// Command Queue (for thread-safe scheduling from IPC)
+// ============================================================================
+
+typedef enum {
+  EVENT_CMD_SCHEDULE,
+  EVENT_CMD_CANCEL,
+  EVENT_CMD_MODIFY,
+  EVENT_CMD_PAUSE,
+  EVENT_CMD_RESUME,
+} EventCmdType;
+
+typedef struct {
+  EventCmdType cmd_type;
+  uint32_t event_id; // For cancel/modify/pause/resume
+  Event event;       // For schedule (copied in)
+} EventCmd;
+
+// ============================================================================
+// EventStream (for continuous data like visemes) - unchanged from before
+// ============================================================================
+
+#define EVENT_STREAM_CAPACITY 2048
 #define EVENT_STREAM_MASK (EVENT_STREAM_CAPACITY - 1)
 #define EVENT_STREAM_MAX_PAYLOAD 64
 
-// Keyframe in a continuous stream
 typedef struct {
-  int64_t time;                              // Timestamp in domain units
-  uint8_t payload[EVENT_STREAM_MAX_PAYLOAD]; // Inline payload
+  int64_t time;
+  uint8_t payload[EVENT_STREAM_MAX_PAYLOAD];
 } StreamKeyframe;
 
-// SPSC ring buffer for continuous data
 typedef struct {
   StreamKeyframe buffer[EVENT_STREAM_CAPACITY];
-  _Atomic size_t write_pos; // Producer writes here
-  size_t read_pos; // Consumer reads here (single consumer, no atomic needed)
-  size_t payload_size; // Actual payload size in bytes
+  _Atomic size_t write_pos;
+  size_t read_pos;
+  size_t payload_size;
   EventDomain domain;
-  int64_t last_sample_time; // For hold-last-value behavior
-  bool has_last_value;      // Whether we have any data to hold
-  uint8_t last_value[EVENT_STREAM_MAX_PAYLOAD]; // Cached last sampled value
+  int64_t last_sample_time;
+  bool has_last_value;
+  uint8_t last_value[EVENT_STREAM_MAX_PAYLOAD];
 } EventStream;
 
-// Interpolation function pointer
-// Interpolates between `a` and `b` at factor `t` (0-1), writes to `out`
 typedef void (*LerpFunc)(const void *a, const void *b, float t, void *out,
                          size_t size);
 
-// Default linear interpolation for float arrays
+// EventStream API (unchanged)
 void event_lerp_floats(const void *a, const void *b, float t, void *out,
                        size_t size);
-
-// Producer API
 void event_stream_init(EventStream *s, EventDomain domain, size_t payload_size);
 void event_stream_reset(EventStream *s);
 bool event_stream_push(EventStream *s, int64_t time, const void *payload);
-
-// Consumer API
-// Sample at time `t`, interpolating if possible. Returns false if no data.
-// `lerp` can be NULL to use default float interpolation
 bool event_stream_sample(EventStream *s, int64_t t, void *out_payload,
                          LerpFunc lerp);
-
-// Maintenance
 void event_stream_prune(EventStream *s, int64_t cutoff);
 size_t event_stream_depth(const EventStream *s);
 int64_t event_stream_oldest_time(const EventStream *s);
 int64_t event_stream_newest_time(const EventStream *s);
 
 // ============================================================================
-// Discrete Event Queue (for one-shot triggers)
+// Event System API
 // ============================================================================
 
-typedef enum {
-  EVENT_TYPE_ANIMATION_PLAY, // Play named animation
-  EVENT_TYPE_EXPRESSION_SET, // Set expression weight
-  EVENT_TYPE_FEATURE_TOGGLE, // Enable/disable feature
-  EVENT_TYPE_CUSTOM,         // User-defined
-} DiscreteEventType;
+// Initialize the event system (call once at startup)
+void event_system_init(void);
 
-#define EVENT_DISCRETE_MAX_PAYLOAD 56
+// Shutdown and free resources
+void event_system_shutdown(void);
 
-typedef struct {
-  int64_t time;      // When to fire
-  uint16_t type;     // DiscreteEventType
-  uint16_t track_id; // Target entity/channel
-  uint16_t payload_size;
-  uint16_t _reserved;
-  uint8_t payload[EVENT_DISCRETE_MAX_PAYLOAD]; // Inline payload
-} DiscreteEvent;
+// --- Thread-safe command queue (called from IPC thread) ---
 
-#define EVENT_QUEUE_CAPACITY 64
-#define EVENT_QUEUE_MASK (EVENT_QUEUE_CAPACITY - 1)
+// Queue a new event for scheduling (returns immediately; event ID returned via
+// callback or can be incremented client-side)
+bool event_cmd_schedule(const Event *e);
 
-typedef struct {
-  DiscreteEvent buffer[EVENT_QUEUE_CAPACITY];
-  _Atomic size_t write_pos;
-  size_t read_pos;
-  EventDomain domain;
-} EventQueue;
+// Queue a cancel command
+bool event_cmd_cancel(uint32_t event_id);
 
-// Producer API
-void event_queue_init(EventQueue *q, EventDomain domain);
-void event_queue_reset(EventQueue *q);
-bool event_queue_push(EventQueue *q, const DiscreteEvent *e);
+// Queue a pause command
+bool event_cmd_pause(uint32_t event_id);
 
-// Consumer API
-// Pop all events with time <= `now`. Returns number popped.
-// Events are copied to `out` array (caller provides buffer).
-size_t event_queue_pop_until(EventQueue *q, int64_t now, DiscreteEvent *out,
-                             size_t max_out);
+// Queue a resume command
+bool event_cmd_resume(uint32_t event_id);
 
-// Peek next event time (for scheduling). Returns INT64_MAX if empty.
-int64_t event_queue_peek_time(const EventQueue *q);
+// --- Main thread API (called from main loop) ---
 
-// Debug
-size_t event_queue_depth(const EventQueue *q);
+// Drain pending commands from the queue and apply them
+void event_drain_commands(void);
+
+// Advance scheduled → active for wall time events
+void event_update_seconds(int64_t now_ns);
+
+// Advance scheduled → active for audio sample events
+void event_update_audio(int64_t now_samples);
+
+// --- Subsystem API ---
+
+// Iterate all active events of a given type
+typedef void (*EventCallback)(Event *e, void *ctx);
+void event_foreach_active(uint16_t type, EventCallback cb, void *ctx);
+
+// Iterate all active events (any type)
+void event_foreach_active_all(EventCallback cb, void *ctx);
+
+// Mark an event as complete (subsystem signals it's done processing)
+bool event_mark_complete(uint32_t event_id);
+
+// --- Direct API (main thread only, for internal use) ---
+
+// Schedule an event directly (returns event ID, 0 on failure)
+uint32_t event_schedule(const Event *e);
+
+// Cancel an event
+bool event_cancel(uint32_t event_id);
+
+// Get event by ID (returns NULL if not found or freed)
+Event *event_get(uint32_t event_id);
+
+// Get next available event ID (for client tracking)
+uint32_t event_next_id(void);
 
 #endif // EVENT_H

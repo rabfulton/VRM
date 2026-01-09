@@ -15,6 +15,7 @@
 #include "audio.h"
 #include "camera.h"
 #include "debug_ui.h"
+#include "event.h"
 #include "gltf_loader.h"
 #include "ipc.h"
 #include "platform.h"
@@ -1184,6 +1185,7 @@ int main(int argc, char *argv[]) {
   audio_init(&app.audio);
   audio_start(&app.audio);
   viseme_init(&app.viseme);
+  event_system_init();
   ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, &app);
   platform_make_context_current(app.ui_window);
   update_display_metrics_for_window(app.ui_window);
@@ -1211,6 +1213,13 @@ int main(int argc, char *argv[]) {
     platform_make_context_current(app.window);
     platform_poll_events();
     ipc_poll(&app.ipc);
+
+    // Event system updates
+    event_drain_commands();
+    int64_t now_ns = (int64_t)(platform_get_time() * 1e9);
+    int64_t now_samples = (int64_t)app.audio.total_read;
+    event_update_seconds(now_ns);
+    event_update_audio(now_samples);
 
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
