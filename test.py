@@ -17,6 +17,7 @@ Controls:
   w/s           - Increase/decrease expression weight
   c             - Clear all expression weights to 0
   t             - Test audio playback (play test.wav with lip sync)
+  g             - Toggle auto-blink
   q             - Quit
 """
 
@@ -74,6 +75,9 @@ axis_names = ["none", "auto", "rotX 180", "rotY 180", "rotZ 180"]
 expr_weight = 1.0
 expr_vowels = ["a", "i", "u", "e", "o"]  # VRM preset names (single letters)
 
+# Auto-blink state
+auto_blink_enabled = False
+
 def play(i, blend=False):
     cmd({"action": "load_animation", "path": anims[i]})
     if blend:
@@ -130,6 +134,21 @@ def play_test_audio():
     else:
         print(f"  Error: {wav_path} not found")
 
+def toggle_auto_blink():
+    """Toggle auto-blinking."""
+    global auto_blink_enabled
+    auto_blink_enabled = not auto_blink_enabled
+    resp = cmd({"action": "auto_blink_enable", "enabled": auto_blink_enabled})
+    if auto_blink_enabled:
+        try:
+            data = json.loads(resp.decode())
+            event_id = data.get("event_id", "?")
+            print(f"  Auto-blink ENABLED (event_id={event_id})")
+        except:
+            print(f"  Auto-blink ENABLED")
+    else:
+        print(f"  Auto-blink DISABLED")
+
 old = termios.tcgetattr(sys.stdin)
 try:
     tty.setcbreak(sys.stdin.fileno())
@@ -139,7 +158,7 @@ try:
     print("9/0 - Adjust spring drag")
     print("-/= - Adjust spring gravity")
     print("e=list expressions, 1-5=set vowel (A/I/U/E/O), w/s=weight, c=clear")
-    print("t=test audio (play test.wav with lip sync)")
+    print("t=test audio (play test.wav with lip sync), g=toggle auto-blink")
     show_spring()
     play(idx)
     while True:
@@ -176,6 +195,7 @@ try:
             elif k == 's': expr_weight = max(0.0, expr_weight - 0.1); print(f"  Expression weight: {expr_weight:.2f}")
             elif k == 'c': clear_expressions()
             elif k == 't': play_test_audio()
+            elif k == 'g': toggle_auto_blink()
     print(f"\n=== Final values ===")
     print(f"spring: stiffness={stiff:.2f} drag={drag:.2f} gravity={grav:.2f}")
     print(f"blend: duration={blend_dur:.2f}s" if isinstance(blend_dur, float) else f"blend: duration={blend_dur}")

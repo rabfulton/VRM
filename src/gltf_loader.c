@@ -368,7 +368,7 @@ void gltf_set_expression(GltfModel *model, const char *name, float weight) {
   if (weight > 1.0f)
     weight = 1.0f;
 
-  printf("gltf_set_expression: name='%s' weight=%.2f\n", name, weight);
+  // printf("gltf_set_expression: name='%s' weight=%.2f\n", name, weight);
 
   /* First, try VRM expression map */
   if (model->vrm_expressions) {
@@ -380,26 +380,15 @@ void gltf_set_expression(GltfModel *model, const char *name, float weight) {
           strcasecmp_local(expr->preset_name, name) == 0) {
         /* Apply binary clamping if needed */
         float w = expr->is_binary ? (weight >= 0.5f ? 1.0f : 0.0f) : weight;
-
-        printf("  Found expression '%s' preset='%s' binds=%d\n", expr->name,
-               expr->preset_name, expr->bind_count);
-
         /* Apply to all binds */
         for (int b = 0; b < expr->bind_count; b++) {
           VrmExpressionBind *bind = &expr->binds[b];
-          printf("    Bind %d: mesh=%d morph=%d bind_weight=%.2f\n", b,
-                 bind->mesh_index, bind->morph_index, bind->weight);
           if (bind->mesh_index >= 0 && bind->mesh_index < model->mesh_count) {
             GltfMesh *mesh = &model->meshes[bind->mesh_index];
-            printf("      Mesh '%s' morph_count=%d morph_weights=%p\n",
-                   mesh->name, mesh->morph_target_count,
-                   (void *)mesh->morph_weights);
             if (bind->morph_index >= 0 &&
                 bind->morph_index < mesh->morph_target_count &&
                 mesh->morph_weights) {
               mesh->morph_weights[bind->morph_index] = w * bind->weight;
-              printf("      Set morph_weights[%d] = %.2f\n", bind->morph_index,
-                     w * bind->weight);
             }
           }
         }

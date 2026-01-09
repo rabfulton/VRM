@@ -51,6 +51,11 @@ typedef struct {
   float model_scale;
   char current_anim_path[512];
   bool has_current_anim;
+  // Auto-blink state
+  bool auto_blink_enabled;
+  float auto_blink_rate;     // Blinks per minute
+  float auto_blink_duration; // Blink duration in ms
+  uint32_t auto_blink_event_id;
 } VrmApp;
 
 static VrmApp app = {0};
@@ -296,6 +301,125 @@ static size_t base64_decode(const char *src, size_t len, uint8_t *out) {
     i += 4;
   }
   return j;
+}
+
+/* ============================================================================
+ * Auto-Blink Processing
+ * ============================================================================
+ */
+
+// Simple pseudo-random number generator (xorshift32)
+static uint32_t g_rand_state = 12345;
+static uint32_t rand_u32(void) {
+  g_rand_state ^= g_rand_state << 13;
+  g_rand_state ^= g_rand_state >> 17;
+  g_rand_state ^= g_rand_state << 5;
+  return g_rand_state;
+}
+
+static float rand_float(void) { return (float)rand_u32() / (float)UINT32_MAX; }
+
+// Generate random blink interval using exponential distribution
+// Given rate in blinks/minute, returns interval in nanoseconds
+static int64_t random_blink_interval_ns(float rate_per_minute) {
+  if (rate_per_minute <= 0)
+    rate_per_minute = 14.0f;
+  float rate_per_second = rate_per_minute / 60.0f;
+
+  // Exponential distribution: -ln(U) / λ where U is uniform(0,1)
+  float u = rand_float();
+  if (u < 1e-6f)
+    u = 1e-6f; // Avoid log(0)
+  float interval_seconds = -logf(u) / rate_per_second;
+
+  // Clamp to reasonable range: 0.5s to 10s
+  if (interval_seconds < 0.5f)
+    interval_seconds = 0.5f;
+  if (interval_seconds > 10.0f)
+    interval_seconds = 10.0f;
+
+  return (int64_t)(interval_seconds * 1e9);
+}
+
+// Schedule a new blink event
+static uint32_t schedule_blink(int64_t start_time_ns, float duration_ms) {
+  Event blink = {0};
+  blink.type = EVENT_TYPE_BLINK;
+  blink.track_id = 0;
+  blink.domain = EVENT_DOMAIN_SECONDS;
+  blink.start_time = start_time_ns;
+  blink.duration = event_ms_to_ns((int64_t)duration_ms);
+  blink.loop_count =
+      0; // Single shot - we reschedule manually for random timing
+  blink.flags = EVENT_FLAG_SUBSYSTEM_OWNS_TIMING;
+
+  return event_schedule(&blink);
+}
+
+// Blink event processor callback
+static void process_blink(Event *e, void *ctx) {
+  VrmApp *a = (VrmApp *)ctx;
+
+  if (e->state == EVENT_STATE_CANCELED) {
+    // Cleanup - open eyes
+    if (a->model_loaded) {
+      gltf_set_expression(&a->model, "Blink", 0.0f);
+    }
+    event_mark_complete(e->id);
+    a->auto_blink_event_id = 0;
+    return;
+  }
+
+  if (e->state != EVENT_STATE_ACTIVE)
+    return;
+  if (!a->model_loaded)
+    return;
+
+  // Set blink expression
+  gltf_set_expression(&a->model, "Blink", 1.0f);
+
+  // Check if blink duration is complete
+  int64_t now_ns = (int64_t)(platform_get_time() * 1e9);
+  if (now_ns >= e->start_time + e->duration) {
+    // Open eyes
+    gltf_set_expression(&a->model, "Blink", 0.0f);
+    event_mark_complete(e->id);
+
+    // Schedule next blink if still enabled
+    if (a->auto_blink_enabled) {
+      int64_t next_interval = random_blink_interval_ns(a->auto_blink_rate);
+      a->auto_blink_event_id =
+          schedule_blink(now_ns + next_interval, a->auto_blink_duration);
+    } else {
+      a->auto_blink_event_id = 0;
+    }
+  }
+}
+
+// Start auto-blinking
+static void auto_blink_start(void) {
+  if (app.auto_blink_event_id != 0)
+    return; // Already running
+
+  int64_t now_ns = (int64_t)(platform_get_time() * 1e9);
+  int64_t first_interval = random_blink_interval_ns(app.auto_blink_rate);
+  app.auto_blink_event_id =
+      schedule_blink(now_ns + first_interval, app.auto_blink_duration);
+  printf("Auto-blink started (rate=%.1f/min, duration=%.0fms, first_id=%u)\n",
+         app.auto_blink_rate, app.auto_blink_duration, app.auto_blink_event_id);
+}
+
+// Stop auto-blinking
+static void auto_blink_stop(void) {
+  if (app.auto_blink_event_id != 0) {
+    event_cancel(app.auto_blink_event_id);
+    app.auto_blink_event_id = 0;
+  }
+  // Ensure eyes are open
+  if (app.model_loaded) {
+    gltf_set_expression(&app.model, "Blink", 0.0f);
+  }
+  printf("Auto-blink stopped\n");
 }
 
 /* IPC command handler */
@@ -692,6 +816,49 @@ static void on_ipc_command(const char *action, void *params, int id,
       viseme_set_threshold(&app.viseme, (float)threshold->valuedouble);
     if (smoothing)
       viseme_set_smoothing(&app.viseme, (float)smoothing->valuedouble);
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "auto_blink_enable") == 0) {
+    cJSON *en = cJSON_GetObjectItem(json, "enabled");
+    bool enabled = en ? cJSON_IsTrue(en) : true;
+
+    if (enabled && !app.auto_blink_enabled) {
+      app.auto_blink_enabled = true;
+      auto_blink_start();
+      // Return event_id in response
+      cJSON *result = cJSON_CreateObject();
+      cJSON_AddNumberToObject(result, "event_id", app.auto_blink_event_id);
+      char *json_str = cJSON_PrintUnformatted(result);
+      ipc_respond(&app.ipc, id, true, json_str);
+      free(json_str);
+      cJSON_Delete(result);
+    } else if (!enabled && app.auto_blink_enabled) {
+      app.auto_blink_enabled = false;
+      auto_blink_stop();
+      ipc_respond(&app.ipc, id, true, NULL);
+    } else {
+      ipc_respond(&app.ipc, id, true, NULL);
+    }
+  } else if (strcmp(action, "auto_blink_config") == 0) {
+    cJSON *rate = cJSON_GetObjectItem(json, "rate");
+    cJSON *duration = cJSON_GetObjectItem(json, "duration");
+
+    if (rate && cJSON_IsNumber(rate)) {
+      app.auto_blink_rate = (float)rate->valuedouble;
+      if (app.auto_blink_rate < 1.0f)
+        app.auto_blink_rate = 1.0f;
+      if (app.auto_blink_rate > 60.0f)
+        app.auto_blink_rate = 60.0f;
+    }
+    if (duration && cJSON_IsNumber(duration)) {
+      app.auto_blink_duration = (float)duration->valuedouble;
+      if (app.auto_blink_duration < 50.0f)
+        app.auto_blink_duration = 50.0f;
+      if (app.auto_blink_duration > 500.0f)
+        app.auto_blink_duration = 500.0f;
+    }
+
+    printf("Auto-blink config: rate=%.1f/min, duration=%.0fms\n",
+           app.auto_blink_rate, app.auto_blink_duration);
     ipc_respond(&app.ipc, id, true, NULL);
   } else {
     ipc_respond(&app.ipc, id, false, "Unknown action");
@@ -1186,6 +1353,15 @@ int main(int argc, char *argv[]) {
   audio_start(&app.audio);
   viseme_init(&app.viseme);
   event_system_init();
+
+  // Initialize auto-blink defaults
+  app.auto_blink_enabled = false;
+  app.auto_blink_rate = 14.0f;      // 14 blinks per minute
+  app.auto_blink_duration = 150.0f; // 150ms blink duration
+  app.auto_blink_event_id = 0;
+  // Seed random number generator with current time
+  g_rand_state = (uint32_t)(platform_get_time() * 1000000.0);
+
   ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, &app);
   platform_make_context_current(app.ui_window);
   update_display_metrics_for_window(app.ui_window);
@@ -1220,6 +1396,9 @@ int main(int argc, char *argv[]) {
     int64_t now_samples = (int64_t)app.audio.total_read;
     event_update_seconds(now_ns);
     event_update_audio(now_samples);
+
+    // Process blink events
+    event_foreach_active(EVENT_TYPE_BLINK, process_blink, &app);
 
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
