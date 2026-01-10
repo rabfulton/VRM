@@ -49,10 +49,41 @@ except Exception:
     overlay_proc.terminate()
     raise
 
+sock.settimeout(2.0)
+_next_id = 1
+_recv_buf = b""
+
 def cmd(c):
+    global _next_id, _recv_buf
+    if "id" not in c:
+        c = dict(c)
+        c["id"] = _next_id
+        _next_id += 1
+
+    expect_id = c["id"]
     sock.send((json.dumps(c) + "\n").encode())
-    time.sleep(0.05)
-    return sock.recv(4096)
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        while b"\n" in _recv_buf:
+            line, _recv_buf = _recv_buf.split(b"\n", 1)
+            if not line:
+                continue
+            msg = json.loads(line.decode())
+            if msg.get("id") == expect_id:
+                return msg
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            continue
+        if not chunk:
+            raise RuntimeError("IPC socket closed")
+        _recv_buf += chunk
+
+    raise TimeoutError(f"No IPC response for id={expect_id}, action={c.get('action')}")
+
+resp = cmd({"action": "set_anim_backend", "backend": "ozz"})
+print(f"set backend: {resp}")
 
 cmd({"action": "load", "path": "/home/rab/code/vrm/test1.vrm"})
 cmd({"action": "set_visible", "visible": True})
@@ -100,17 +131,14 @@ def set_axis(mode):
 def list_expressions():
     """List all available expressions for the loaded model."""
     resp = cmd({"action": "list_expressions"})
-    try:
-        data = json.loads(resp.decode())
-        if "expressions" in data:
-            names = data["expressions"]
-            print(f"  Available expressions ({len(names)}):")
-            for i, name in enumerate(names):
-                print(f"    {i+1:2}. {name}")
-        else:
-            print(f"  Response: {data}")
-    except json.JSONDecodeError:
-        print(f"  Raw response: {resp}")
+    data = resp.get("data", resp)
+    if "expressions" in data:
+        names = data["expressions"]
+        print(f"  Available expressions ({len(names)}):")
+        for i, name in enumerate(names):
+            print(f"    {i+1:2}. {name}")
+    else:
+        print(f"  Response: {resp}")
 
 def set_expression(name, weight):
     """Set expression weight by name."""
@@ -140,12 +168,9 @@ def toggle_auto_blink():
     auto_blink_enabled = not auto_blink_enabled
     resp = cmd({"action": "auto_blink_enable", "enabled": auto_blink_enabled})
     if auto_blink_enabled:
-        try:
-            data = json.loads(resp.decode())
-            event_id = data.get("event_id", "?")
-            print(f"  Auto-blink ENABLED (event_id={event_id})")
-        except:
-            print(f"  Auto-blink ENABLED")
+        data = resp.get("data", {})
+        event_id = data.get("event_id", "?")
+        print(f"  Auto-blink ENABLED (event_id={event_id})")
     else:
         print(f"  Auto-blink DISABLED")
 
@@ -215,4 +240,3 @@ finally:
             overlay_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             overlay_proc.terminate()
-

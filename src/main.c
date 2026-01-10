@@ -448,13 +448,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       gltf_update_transforms(&app.model);
       spring_bones_init(&app.model);
       renderer_set_model(&app.renderer, &app.model);
-      app.animator.model = &app.model;
-      if (app.animator.current_animation < 0 ||
-          app.animator.current_animation >= app.model.animation_count) {
-        app.animator.current_animation = app.model.animation_count > 0 ? 0 : -1;
-        app.animator.time = 0.0f;
-        app.animator.next_animation = -1;
-      }
+      animator_set_model(&app.animator, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
       update_ui_window_layout();
       app.last_time = platform_get_time();
@@ -578,9 +572,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       if (app.auto_resize)
         compute_and_cache_bounds(path->valuestring);
       if (app.model.animation_count > 0) {
-        int loop_remaining = animator_compute_loop_remaining(&app.animator, 0);
-        animator_blend_to(&app.animator, 0, g_anim_blend_time_default,
-                          loop_remaining);
+        animator_set_animation(&app.animator, 0);
       }
       app.last_time = platform_get_time();
       ipc_respond(&app.ipc, id, true, NULL);
@@ -600,9 +592,25 @@ static void on_ipc_command(const char *action, void *params, int id,
     if (idx)
       animator_set_animation(&app.animator, idx->valueint);
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_anim_backend") == 0) {
+    cJSON *b = cJSON_GetObjectItem(json, "backend");
+    if (b && cJSON_IsString(b) && b->valuestring) {
+      if (strcmp(b->valuestring, "ozz") == 0) {
+        animator_set_use_ozz(&app.animator, true);
+      } else if (strcmp(b->valuestring, "legacy") == 0) {
+        animator_set_use_ozz(&app.animator, false);
+      }
+    }
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "backend",
+                            animator_get_use_ozz(&app.animator) ? "ozz"
+                                                               : "legacy");
+    char *json_str = cJSON_PrintUnformatted(result);
+    ipc_respond_data(&app.ipc, id, json_str);
+    free(json_str);
+    cJSON_Delete(result);
   } else if (strcmp(action, "blend_to") == 0) {
-    cJSON *idx = cJSON_GetObjectItem(json, "index"),
-          *dur = cJSON_GetObjectItem(json, "duration");
+    cJSON *idx = cJSON_GetObjectItem(json, "index");
     cJSON *loop = cJSON_GetObjectItem(json, "loop"),
           *count = cJSON_GetObjectItem(json, "count");
     int loop_remaining = 0;
@@ -623,17 +631,8 @@ static void on_ipc_command(const char *action, void *params, int id,
         loop_remaining =
             animator_compute_loop_remaining(&app.animator, idx->valueint);
       }
-      float blend_time;
-      if (dur && cJSON_IsString(dur) && strcmp(dur->valuestring, "auto") == 0) {
-        blend_time =
-            animator_compute_auto_blend_time(&app.animator, idx->valueint);
-      } else if (dur && cJSON_IsNumber(dur)) {
-        blend_time = (float)dur->valuedouble;
-      } else {
-        blend_time = g_anim_blend_time_default;
-      }
-      animator_blend_to(&app.animator, idx->valueint, blend_time,
-                        loop_remaining);
+      animator_set_animation(&app.animator, idx->valueint);
+      app.animator.loop_remaining = loop_remaining;
     }
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_position") == 0) {
@@ -828,7 +827,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       cJSON *result = cJSON_CreateObject();
       cJSON_AddNumberToObject(result, "event_id", app.auto_blink_event_id);
       char *json_str = cJSON_PrintUnformatted(result);
-      ipc_respond(&app.ipc, id, true, json_str);
+      ipc_respond_data(&app.ipc, id, json_str);
       free(json_str);
       cJSON_Delete(result);
     } else if (!enabled && app.auto_blink_enabled) {
