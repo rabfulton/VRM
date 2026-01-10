@@ -53,5 +53,6 @@ void animator_sample_frame(GltfModel *model, int anim_idx, float time);
 // Optional: enable sampling via ozz bridge (if compiled in).
 void animator_set_use_ozz(Animator *anim, bool enabled);
 bool animator_get_use_ozz(const Animator *anim);
+void animator_rebuild_ozz(Animator *anim, bool keep_snapshot);
 
 #endif

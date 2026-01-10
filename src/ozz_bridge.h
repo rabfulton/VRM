@@ -33,7 +33,7 @@ bool ozz_bridge_sample_into_model(GltfModel *model, int anim_index,
 // seconds. `from_index` is the current animation, `from_time` is current
 // playback time.
 void ozz_bridge_blend_start(int from_index, float from_time, int to_index,
-                            float duration);
+                            float to_time, float duration);
 
 // Advance blend state by `dt` seconds and sample/blend into model.
 // Returns true if blend is still active, false if complete or not blending.
@@ -56,10 +56,18 @@ void ozz_bridge_snapshot_pose(GltfModel *model, int anim_index, float time_sec);
 // Returns true if a snapshot is currently available.
 bool ozz_bridge_snapshot_available(void);
 
+// Invalidates any stored snapshot (e.g., after changing correction mode).
+void ozz_bridge_snapshot_invalidate(void);
+
 // Start a blend from the snapshot (captured by ozz_bridge_snapshot_pose)
 // to animation `to_index` over `duration` seconds.
 // Returns true if blending was started.
-bool ozz_bridge_blend_from_snapshot(int to_index, float duration);
+bool ozz_bridge_blend_from_snapshot(int to_index, float to_time, float duration);
+
+// Finds a good starting time in `to_index` that best matches the current model
+// pose. Returns seconds in [0, duration]. `samples` controls search granularity.
+float ozz_bridge_match_start_time(GltfModel *model, int to_index,
+                                  float blend_duration, int samples);
 
 #ifdef __cplusplus
 }

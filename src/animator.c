@@ -439,9 +439,9 @@ void animator_update(Animator *anim, float dt) {
           }
           ozz_bridge_snapshot_pose(model, anim->current_animation,
                                    animation->duration);
-          // Blend from the end pose to the start of the same clip.
+          // Blend from the end pose to the wrapped time of the same clip.
           (void)ozz_bridge_blend_from_snapshot(
-              anim->current_animation, g_anim_seam_blend_time_default);
+              anim->current_animation, anim->time, g_anim_seam_blend_time_default);
         }
 #endif
       }
@@ -648,12 +648,14 @@ void animator_blend_to(Animator *anim, int index, float duration,
   if (g_ozz_ready && g_ozz_enabled && duration > 0.001f) {
     const int from_index = anim->current_animation;
     const float from_time = anim->time;
+    const float to_time =
+        ozz_bridge_match_start_time(anim->model, index, duration, 24);
 
     // Prefer blending from a pre-captured snapshot (used across animation
     // loads, when the source clip may no longer exist).
-    if (ozz_bridge_blend_from_snapshot(index, duration)) {
+    if (ozz_bridge_blend_from_snapshot(index, to_time, duration)) {
       anim->current_animation = index;
-      anim->time = 0.f;
+      anim->time = to_time;
       anim->loop_remaining = loop_remaining;
       anim->current_animation_loopable = animation_is_loopable(anim, index);
       return;
@@ -662,9 +664,9 @@ void animator_blend_to(Animator *anim, int index, float duration,
     // Otherwise blend directly from the currently playing clip/time.
     if (from_index >= 0 && from_index < anim->model->animation_count &&
         from_index != index) {
-      ozz_bridge_blend_start(from_index, from_time, index, duration);
+      ozz_bridge_blend_start(from_index, from_time, index, to_time, duration);
       anim->current_animation = index;
-      anim->time = 0.f;
+      anim->time = to_time;
       anim->loop_remaining = loop_remaining;
       anim->current_animation_loopable = animation_is_loopable(anim, index);
       return;
@@ -715,5 +717,20 @@ bool animator_get_use_ozz(const Animator *anim) {
   return g_ozz_enabled;
 #else
   return false;
+#endif
+}
+
+void animator_rebuild_ozz(Animator *anim, bool keep_snapshot) {
+  (void)anim;
+  (void)keep_snapshot;
+#ifdef VRM_USE_OZZ_JOLT
+  if (!g_ozz_enabled) {
+    g_ozz_ready = false;
+    return;
+  }
+  if (!keep_snapshot) {
+    ozz_bridge_snapshot_invalidate();
+  }
+  g_ozz_ready = ozz_bridge_set_model(anim ? anim->model : NULL);
 #endif
 }

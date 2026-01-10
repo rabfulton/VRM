@@ -260,6 +260,15 @@ static void update_anim_correction_mode(int mode) {
   fflush(stdout);
 }
 
+static void rebuild_ozz_after_correction_change(bool keep_snapshot) {
+  (void)keep_snapshot;
+#ifdef VRM_USE_OZZ_JOLT
+  if (animator_get_use_ozz(&app.animator)) {
+    animator_rebuild_ozz(&app.animator, keep_snapshot);
+  }
+#endif
+}
+
 static void update_input_region(void) {
   if (!app.model_loaded) {
     platform_clear_input_region(app.window);
@@ -465,8 +474,8 @@ static void on_ipc_command(const char *action, void *params, int id,
       gltf_update_transforms(&app.model);
       spring_bones_init(&app.model);
       renderer_set_model(&app.renderer, &app.model);
-      animator_set_model(&app.animator, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
+      animator_set_model(&app.animator, &app.model);
       update_ui_window_layout();
       app.last_time = platform_get_time();
       printf("Loaded: %s (%d animations)\n", path->valuestring,
@@ -562,8 +571,8 @@ static void on_ipc_command(const char *action, void *params, int id,
     }
 #endif
     if (gltf_load_animation(&app.model, path->valuestring)) {
-      animator_set_model(&app.animator, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
+      animator_set_model(&app.animator, &app.model);
       app.has_current_anim = false;
       app.current_anim_path[0] = '\0';
       snprintf(app.current_anim_path, sizeof(app.current_anim_path), "%s",
@@ -766,6 +775,7 @@ static void on_ipc_command(const char *action, void *params, int id,
     cJSON *m = cJSON_GetObjectItem(json, "mode");
     if (m)
       update_anim_correction_mode(m->valueint);
+    rebuild_ozz_after_correction_change(false);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_expression") == 0) {
     cJSON *name = cJSON_GetObjectItem(json, "name");
@@ -1130,18 +1140,23 @@ static void on_key(int key, int action, void *user) {
     break;
   case PLATFORM_KEY_1:
     update_anim_correction_mode(0);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_2:
     update_anim_correction_mode(1);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_3:
     update_anim_correction_mode(2);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_4:
     update_anim_correction_mode(3);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_5:
     update_anim_correction_mode(4);
+    rebuild_ozz_after_correction_change(false);
     break;
   }
 }
