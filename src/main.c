@@ -25,6 +25,10 @@
 #include "ui_library/ui.h"
 #include "viseme.h"
 
+#ifdef VRM_USE_OZZ_JOLT
+#include "ozz_bridge.h"
+#endif
+
 typedef struct {
   PlatformWindow *window;
   PlatformWindow *ui_window;
@@ -533,6 +537,17 @@ static void on_ipc_command(const char *action, void *params, int id,
       hide_ui_window();
       printf("UI debug: closed UI during animation load\n");
     }
+#ifdef VRM_USE_OZZ_JOLT
+    // Snapshot current pose before loading new animation (for cross-fade
+    // blending)
+    bool snapshot_taken = false;
+    if (animator_get_use_ozz(&app.animator) &&
+        app.animator.current_animation >= 0) {
+      ozz_bridge_snapshot_pose(&app.model, app.animator.current_animation,
+                               app.animator.time);
+      snapshot_taken = ozz_bridge_snapshot_available();
+    }
+#endif
     if (gltf_load_animation(&app.model, path->valuestring)) {
       animator_set_model(&app.animator, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
@@ -571,9 +586,27 @@ static void on_ipc_command(const char *action, void *params, int id,
       debug_ui_sync_spring_params();
       if (app.auto_resize)
         compute_and_cache_bounds(path->valuestring);
+#ifdef VRM_USE_OZZ_JOLT
+      // Prevent one-frame "snap" to the new clip before the client sends
+      // blend_to: keep the current node TRS until play/blend commands arrive.
+      if (animator_get_use_ozz(&app.animator) && snapshot_taken) {
+        animator_pause(&app.animator);
+      }
+
+      // If we captured a snapshot prior to load, keep the current pose and let
+      // the next blend_to consume the snapshot; sampling the new clip here
+      // causes a visible pop that defeats cross-fading.
+      if (!(animator_get_use_ozz(&app.animator) &&
+            ozz_bridge_snapshot_available())) {
+        if (app.model.animation_count > 0) {
+          animator_set_animation(&app.animator, 0);
+        }
+      }
+#else
       if (app.model.animation_count > 0) {
         animator_set_animation(&app.animator, 0);
       }
+#endif
       app.last_time = platform_get_time();
       ipc_respond(&app.ipc, id, true, NULL);
     } else {
@@ -604,17 +637,28 @@ static void on_ipc_command(const char *action, void *params, int id,
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "backend",
                             animator_get_use_ozz(&app.animator) ? "ozz"
-                                                               : "legacy");
+                                                                : "legacy");
     char *json_str = cJSON_PrintUnformatted(result);
     ipc_respond_data(&app.ipc, id, json_str);
     free(json_str);
     cJSON_Delete(result);
   } else if (strcmp(action, "blend_to") == 0) {
     cJSON *idx = cJSON_GetObjectItem(json, "index");
+    cJSON *dur = cJSON_GetObjectItem(json, "duration");
     cJSON *loop = cJSON_GetObjectItem(json, "loop"),
           *count = cJSON_GetObjectItem(json, "count");
     int loop_remaining = 0;
     bool loop_specified = false;
+
+    // Parse blend duration (default to auto-compute if not specified or "auto")
+    float duration = 0.0f;
+    if (dur && cJSON_IsNumber(dur)) {
+      duration = (float)dur->valuedouble;
+    } else if (dur && cJSON_IsString(dur) &&
+               strcmp(dur->valuestring, "auto") == 0) {
+      // Will compute auto blend time below
+      duration = -1.0f;
+    }
 
     if (count && cJSON_IsNumber(count)) {
       int plays = count->valueint;
@@ -631,8 +675,14 @@ static void on_ipc_command(const char *action, void *params, int id,
         loop_remaining =
             animator_compute_loop_remaining(&app.animator, idx->valueint);
       }
-      animator_set_animation(&app.animator, idx->valueint);
-      app.animator.loop_remaining = loop_remaining;
+      // Auto blend time if requested
+      if (duration < 0.0f) {
+        duration =
+            animator_compute_auto_blend_time(&app.animator, idx->valueint);
+      }
+      // Use animator_blend_to for cross-fade (handles ozz blending when
+      // enabled)
+      animator_blend_to(&app.animator, idx->valueint, duration, loop_remaining);
     }
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_position") == 0) {

@@ -193,8 +193,14 @@ try:
             elif k in "nN ": idx = (idx + 1) % len(anims); play(idx)
             elif k in "pP": idx = (idx - 1) % len(anims); play(idx)
             elif k in "bB": idx = (idx + 1) % len(anims); play(idx, blend=True)
-            elif k == '[': blend_dur = max(0.05, blend_dur - 0.1);
-            elif k == ']': blend_dur = min(10.0, blend_dur + 0.1);
+            elif k == '[':
+                if blend_dur == "auto": blend_dur = 1.5
+                blend_dur = max(0.05, blend_dur - 0.1)
+                print(f"  Blend duration: {blend_dur:.2f}s")
+            elif k == ']':
+                if blend_dur == "auto": blend_dur = 1.5
+                blend_dur = min(10.0, blend_dur + 0.1)
+                print(f"  Blend duration: {blend_dur:.2f}s")
             # Axis correction keys
             elif k == 'x': set_axis(2)
             elif k == 'y': set_axis(3)

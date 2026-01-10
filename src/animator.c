@@ -50,10 +50,10 @@ void animator_set_model(Animator *anim, GltfModel *model) {
   anim->model = model;
   anim->time = 0;
   anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
-  anim->loop_remaining = (anim->current_animation >= 0)
-                             ? animator_compute_loop_remaining(
-                                   anim, anim->current_animation)
-                             : 0;
+  anim->loop_remaining =
+      (anim->current_animation >= 0)
+          ? animator_compute_loop_remaining(anim, anim->current_animation)
+          : 0;
 
 #ifdef VRM_USE_OZZ_JOLT
   g_ozz_ready = g_ozz_enabled ? ozz_bridge_set_model(model) : false;
@@ -430,9 +430,25 @@ void animator_update(Animator *anim, float dt) {
   // Sample pose into model nodes
 #ifdef VRM_USE_OZZ_JOLT
   if (g_ozz_ready && g_ozz_enabled) {
-    if (!ozz_bridge_sample_into_model(model, anim->current_animation,
-                                      anim->time)) {
-      sample_animation(model, animation, anim->time);
+    // Check if blend is active
+    if (ozz_bridge_blend_active()) {
+      bool still_blending = ozz_bridge_blend_tick(model, dt);
+      if (!still_blending) {
+        // Blend complete: switch current_animation to target
+        int target = ozz_bridge_blend_target();
+        if (target < 0) {
+          // blend_target returns -1 when not blending, so read from our saved
+          // target In this case, blend already finished and updated the pose
+        }
+        // Animation switch is handled by animator_blend_to setting
+        // pending_animation
+      }
+    } else {
+      // Normal single-animation sampling
+      if (!ozz_bridge_sample_into_model(model, anim->current_animation,
+                                        anim->time)) {
+        sample_animation(model, animation, anim->time);
+      }
     }
   } else {
     sample_animation(model, animation, anim->time);
@@ -478,7 +494,8 @@ void animator_set_animation(Animator *anim, int index) {
     anim->current_animation = index;
     anim->time = 0;
     anim->loop_remaining = animator_compute_loop_remaining(anim, index);
-    GltfAnimation *animation = &anim->model->animations[anim->current_animation];
+    GltfAnimation *animation =
+        &anim->model->animations[anim->current_animation];
 #ifdef VRM_USE_OZZ_JOLT
     if (g_ozz_ready && g_ozz_enabled) {
       if (!ozz_bridge_sample_into_model(anim->model, anim->current_animation,
@@ -593,11 +610,38 @@ float animator_compute_auto_blend_time(Animator *anim, int to_anim) {
 
 void animator_blend_to(Animator *anim, int index, float duration,
                        int loop_remaining) {
-  (void)duration;
   if (!anim->model)
     return;
   if (index < 0 || index >= anim->model->animation_count)
     return;
+
+#ifdef VRM_USE_OZZ_JOLT
+  if (g_ozz_ready && g_ozz_enabled && duration > 0.001f) {
+    const int from_index = anim->current_animation;
+    const float from_time = anim->time;
+
+    // Prefer blending from a pre-captured snapshot (used across animation
+    // loads, when the source clip may no longer exist).
+    if (ozz_bridge_blend_from_snapshot(index, duration)) {
+      anim->current_animation = index;
+      anim->time = 0.f;
+      anim->loop_remaining = loop_remaining;
+      return;
+    }
+
+    // Otherwise blend directly from the currently playing clip/time.
+    if (from_index >= 0 && from_index < anim->model->animation_count &&
+        from_index != index) {
+      ozz_bridge_blend_start(from_index, from_time, index, duration);
+      anim->current_animation = index;
+      anim->time = 0.f;
+      anim->loop_remaining = loop_remaining;
+      return;
+    }
+  }
+#endif
+
+  // Fallback: immediate switch (legacy or no ozz)
   animator_set_animation(anim, index);
   anim->loop_remaining = loop_remaining;
 }
