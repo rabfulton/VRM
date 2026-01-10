@@ -17,6 +17,7 @@ typedef struct {
 
     /* Looping control */
     int loop_remaining;       /* -1 = infinite, 0 = no loop, >0 = repeats left */
+    bool current_animation_loopable;
 } Animator;
 
 typedef enum {
@@ -33,6 +34,7 @@ typedef enum {
 } BlendGroup;
 
 extern float g_anim_blend_time_default;
+extern float g_anim_seam_blend_time_default;
 extern float g_anim_blend_group_factors[BLEND_GROUP_COUNT];
 
 void animator_init(Animator *anim);

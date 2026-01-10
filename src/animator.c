@@ -16,6 +16,7 @@ static bool g_ozz_enabled = false;
 #endif
 
 float g_anim_blend_time_default = 3.0f;
+float g_anim_seam_blend_time_default = 0.15f;
 float g_anim_blend_group_factors[BLEND_GROUP_COUNT] = {
     1.0f, /* root */
     1.0f, /* spine */
@@ -35,6 +36,7 @@ void animator_init(Animator *anim) {
   anim->speed = 1.0f;
   anim->current_animation = -1;
   anim->loop_remaining = 0;
+  anim->current_animation_loopable = false;
 }
 
 void animator_cleanup(Animator *anim) {
@@ -50,10 +52,11 @@ void animator_set_model(Animator *anim, GltfModel *model) {
   anim->model = model;
   anim->time = 0;
   anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
-  anim->loop_remaining =
+  anim->current_animation_loopable =
       (anim->current_animation >= 0)
-          ? animator_compute_loop_remaining(anim, anim->current_animation)
-          : 0;
+          ? animation_is_loopable(anim, anim->current_animation)
+          : false;
+  anim->loop_remaining = (anim->current_animation_loopable) ? -1 : 0;
 
 #ifdef VRM_USE_OZZ_JOLT
   g_ozz_ready = g_ozz_enabled ? ozz_bridge_set_model(model) : false;
@@ -398,7 +401,8 @@ void animator_update(Animator *anim, float dt) {
 
   /* Normal playback */
   GltfAnimation *animation = &model->animations[anim->current_animation];
-  anim->time += dt * anim->speed;
+  const float dt_scaled = dt * anim->speed;
+  anim->time += dt_scaled;
 
   /* Loop */
   if (animation->duration > 0) {
@@ -406,16 +410,40 @@ void animator_update(Animator *anim, float dt) {
       if (anim->loop_remaining == 0) {
         anim->time = animation->duration;
       } else {
+        bool did_wrap = false;
         while (anim->time > animation->duration) {
           anim->time -= animation->duration;
+          did_wrap = true;
           if (anim->loop_remaining > 0) {
             anim->loop_remaining--;
             if (anim->loop_remaining == 0) {
               anim->time = animation->duration;
+              did_wrap = false;
               break;
             }
           }
         }
+
+#ifdef VRM_USE_OZZ_JOLT
+        // Optional seam blending for forced loops on non-loopable clips.
+        // If the clip doesn't match at the seam, cross-fade the end pose into
+        // the beginning to avoid a hard pop.
+        if (did_wrap && g_ozz_ready && g_ozz_enabled &&
+            !anim->current_animation_loopable &&
+            g_anim_seam_blend_time_default > 0.001f &&
+            !ozz_bridge_blend_active()) {
+          // Snapshot the end pose (t=duration) as the "from" pose.
+          if (!ozz_bridge_sample_into_model(model, anim->current_animation,
+                                            animation->duration)) {
+            sample_animation(model, animation, animation->duration);
+          }
+          ozz_bridge_snapshot_pose(model, anim->current_animation,
+                                   animation->duration);
+          // Blend from the end pose to the start of the same clip.
+          (void)ozz_bridge_blend_from_snapshot(
+              anim->current_animation, g_anim_seam_blend_time_default);
+        }
+#endif
       }
     }
     while (anim->time < 0) {
@@ -432,7 +460,7 @@ void animator_update(Animator *anim, float dt) {
   if (g_ozz_ready && g_ozz_enabled) {
     // Check if blend is active
     if (ozz_bridge_blend_active()) {
-      bool still_blending = ozz_bridge_blend_tick(model, dt);
+      bool still_blending = ozz_bridge_blend_tick(model, dt_scaled);
       if (!still_blending) {
         // Blend complete: switch current_animation to target
         int target = ozz_bridge_blend_target();
@@ -493,7 +521,8 @@ void animator_set_animation(Animator *anim, int index) {
   if (index >= 0 && index < anim->model->animation_count) {
     anim->current_animation = index;
     anim->time = 0;
-    anim->loop_remaining = animator_compute_loop_remaining(anim, index);
+    anim->current_animation_loopable = animation_is_loopable(anim, index);
+    anim->loop_remaining = anim->current_animation_loopable ? -1 : 0;
     GltfAnimation *animation =
         &anim->model->animations[anim->current_animation];
 #ifdef VRM_USE_OZZ_JOLT
@@ -626,6 +655,7 @@ void animator_blend_to(Animator *anim, int index, float duration,
       anim->current_animation = index;
       anim->time = 0.f;
       anim->loop_remaining = loop_remaining;
+      anim->current_animation_loopable = animation_is_loopable(anim, index);
       return;
     }
 
@@ -636,6 +666,7 @@ void animator_blend_to(Animator *anim, int index, float duration,
       anim->current_animation = index;
       anim->time = 0.f;
       anim->loop_remaining = loop_remaining;
+      anim->current_animation_loopable = animation_is_loopable(anim, index);
       return;
     }
   }
