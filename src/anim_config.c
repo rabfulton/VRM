@@ -95,6 +95,9 @@ bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
         } else if (strcmp(key, "spring.cloth_taper") == 0) {
             out_cfg->spring_cloth_taper = fval;
             out_cfg->has_spring_cloth_taper = true;
+        } else if (strcmp(key, "anim.seam_blend_time") == 0) {
+            out_cfg->anim_seam_blend_time = fval;
+            out_cfg->has_anim_seam_blend_time = true;
         } else if (strcmp(key, "bounds.world_w") == 0) {
             out_cfg->bounds_world_w = fval;
             out_cfg->has_bounds_world_w = true;
@@ -230,6 +233,17 @@ bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
         if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
         else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
             snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "spring.cloth_taper");
+            snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
+            pair_count++;
+        }
+    }
+    if (cfg->has_anim_seam_blend_time) {
+        char val[64];
+        snprintf(val, sizeof(val), "%.3f", cfg->anim_seam_blend_time);
+        int idx = kv_find(pairs, pair_count, "anim.seam_blend_time");
+        if (idx >= 0) snprintf(pairs[idx].value, sizeof(pairs[idx].value), "%s", val);
+        else if (pair_count < (int)(sizeof(pairs) / sizeof(pairs[0]))) {
+            snprintf(pairs[pair_count].key, sizeof(pairs[pair_count].key), "%s", "anim.seam_blend_time");
             snprintf(pairs[pair_count].value, sizeof(pairs[pair_count].value), "%s", val);
             pair_count++;
         }

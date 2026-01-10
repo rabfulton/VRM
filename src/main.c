@@ -74,6 +74,7 @@ extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness, g_spring_cloth_drag,
     g_spring_cloth_gravity, g_spring_cloth_taper;
+extern float g_anim_seam_blend_time_default;
 
 static void update_ui_window_layout(void);
 static void build_view_with_model_transform(float out_view[16]);
@@ -82,6 +83,7 @@ static void show_ui_window(void);
 static void hide_ui_window(void);
 static void reset_springs_from_ui(void);
 static void save_springs_to_config(void);
+static void save_anim_params_to_config(void);
 
 static void update_display_metrics_for_window(PlatformWindow *win) {
   int win_w = 0, win_h = 0;
@@ -124,6 +126,17 @@ static void save_springs_to_config(void) {
   cfg.has_spring_cloth_drag = true;
   cfg.has_spring_cloth_gravity = true;
   cfg.has_spring_cloth_taper = true;
+  if (!anim_config_save(app.current_anim_path, &cfg)) {
+    printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
+  }
+}
+
+static void save_anim_params_to_config(void) {
+  if (!app.has_current_anim)
+    return;
+  AnimConfig cfg = {0};
+  cfg.anim_seam_blend_time = g_anim_seam_blend_time_default;
+  cfg.has_anim_seam_blend_time = true;
   if (!anim_config_save(app.current_anim_path, &cfg)) {
     printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
   }
@@ -564,6 +577,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       g_spring_cloth_drag = 1.2f;
       g_spring_cloth_gravity = 1.0f;
       g_spring_cloth_taper = 0.6f;
+      g_anim_seam_blend_time_default = 0.15f;
       AnimConfig cfg = {0};
       if (anim_config_load(app.current_anim_path, &cfg)) {
         if (cfg.has_spring_stiffness)
@@ -582,8 +596,11 @@ static void on_ipc_command(const char *action, void *params, int id,
           g_spring_cloth_gravity = cfg.spring_cloth_gravity;
         if (cfg.has_spring_cloth_taper)
           g_spring_cloth_taper = cfg.spring_cloth_taper;
+        if (cfg.has_anim_seam_blend_time)
+          g_anim_seam_blend_time_default = cfg.anim_seam_blend_time;
       }
       debug_ui_sync_spring_params();
+      debug_ui_sync_anim_params();
       if (app.auto_resize)
         compute_and_cache_bounds(path->valuestring);
 #ifdef VRM_USE_OZZ_JOLT
@@ -724,6 +741,24 @@ static void on_ipc_command(const char *action, void *params, int id,
       g_spring_gravity = (float)grav->valuedouble;
     debug_ui_sync_spring_params();
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_seam_blend") == 0) {
+    cJSON *dur = cJSON_GetObjectItem(json, "duration");
+    if (dur && cJSON_IsNumber(dur)) {
+      float v = (float)dur->valuedouble;
+      if (v < 0.0f)
+        v = 0.0f;
+      if (v > 1.0f)
+        v = 1.0f;
+      g_anim_seam_blend_time_default = v;
+      debug_ui_sync_anim_params();
+    }
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "seam_blend_time",
+                            g_anim_seam_blend_time_default);
+    char *json_str = cJSON_PrintUnformatted(result);
+    ipc_respond_data(&app.ipc, id, json_str);
+    free(json_str);
+    cJSON_Delete(result);
   } else if (strcmp(action, "reset_spring") == 0) {
     spring_bones_reset(&app.model);
     ipc_respond(&app.ipc, id, true, NULL);
@@ -1301,6 +1336,7 @@ static void ui_init_overlay(VrmApp *s) {
   debug_ui_set_interface(s->ui);
   debug_ui_set_spring_reset(reset_springs_from_ui);
   debug_ui_set_spring_save(save_springs_to_config);
+  debug_ui_set_anim_save(save_anim_params_to_config);
 
   s->pie_menu_id = -1;
 }

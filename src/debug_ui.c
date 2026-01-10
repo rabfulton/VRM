@@ -31,6 +31,7 @@ typedef enum {
 
 typedef enum {
     ANIM_PARAM_BLEND_TIME = 0,
+    ANIM_PARAM_SEAM_BLEND_TIME,
     ANIM_PARAM_GROUP_ROOT,
     ANIM_PARAM_GROUP_SPINE,
     ANIM_PARAM_GROUP_HEAD,
@@ -56,6 +57,7 @@ static const char *ui_pie_menu_labels[UI_PIE_MAX_ELEMENT] = {
 static ui_interface_t *debug_ui = NULL;
 static void (*spring_reset_fn)(void) = NULL;
 static void (*spring_save_fn)(void) = NULL;
+static void (*anim_save_fn)(void) = NULL;
 static int32_t spring_menu_id = -1;
 static uint32_t spring_param_ids[SPRING_PARAM_MAX_ELEMENT] = {0};
 static int32_t anim_menu_id = -1;
@@ -93,6 +95,10 @@ void debug_ui_set_spring_reset(void (*fn)(void)) {
 
 void debug_ui_set_spring_save(void (*fn)(void)) {
     spring_save_fn = fn;
+}
+
+void debug_ui_set_anim_save(void (*fn)(void)) {
+    anim_save_fn = fn;
 }
 
 int debug_ui_consume_close_guard(void) {
@@ -216,6 +222,9 @@ void debug_ui_sync_anim_params(void) {
     if (anim_param_ids[ANIM_PARAM_BLEND_TIME]) {
         ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], g_anim_blend_time_default);
     }
+    if (anim_param_ids[ANIM_PARAM_SEAM_BLEND_TIME]) {
+        ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_SEAM_BLEND_TIME], g_anim_seam_blend_time_default);
+    }
     if (anim_param_ids[ANIM_PARAM_GROUP_ROOT]) {
         ui_write_parameter(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_ROOT], g_anim_blend_group_factors[BLEND_GROUP_ROOT]);
     }
@@ -329,6 +338,20 @@ static void on_anim_blend_time(int id) {
     if (!debug_ui) return;
     float v = ui_read_parameter(debug_ui, (uint32_t)id);
     g_anim_blend_time_default = clampf(v, 0.05f, 3.0f);
+}
+
+static void on_anim_seam_blend_time(int id) {
+    if (!debug_ui) return;
+    float v = ui_read_parameter(debug_ui, (uint32_t)id);
+    g_anim_seam_blend_time_default = clampf(v, 0.0f, 1.0f);
+}
+
+static void on_anim_menu_save(int id) {
+    (void)id;
+    printf("UI debug: animation menu save pressed\n");
+    if (anim_save_fn) anim_save_fn();
+    anim_menu_close_pending = 1;
+    ui_close_request = 1;
 }
 
 static void on_anim_group_root(int id) {
@@ -594,6 +617,19 @@ static void animation_menu(void) {
     ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], UI_ACTION_ON_PRESS);
     ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_BLEND_TIME], on_anim_blend_time);
 
+    ui_parameter_t seam_blend_time = {
+        .w = 440.0f,
+        .value = g_anim_seam_blend_time_default,
+        .start_val = 0.0f,
+        .end_val = 1.0f,
+        .step_size = 0.01f,
+        .steps_per_pixel = 0.2f,
+        .title = "Loop Seam Blend (sec)"
+    };
+    anim_param_ids[ANIM_PARAM_SEAM_BLEND_TIME] = (uint32_t)ui_element_init(debug_ui, &seam_blend_time, 0, UI_PARAMETER);
+    ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_SEAM_BLEND_TIME], UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_SEAM_BLEND_TIME], on_anim_seam_blend_time);
+
     ui_parameter_t group_root = {
         .w = 440.0f,
         .value = g_anim_blend_group_factors[BLEND_GROUP_ROOT],
@@ -711,6 +747,11 @@ static void animation_menu(void) {
     ui_set_element_flags(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_OTHER], UI_ACTION_ON_PRESS);
     ui_set_callback(debug_ui, anim_param_ids[ANIM_PARAM_GROUP_OTHER], on_anim_group_other);
 
+    ui_button_t save_btn = {.str = "Save", .w = 0, .h = 0, .state = 0};
+    uint32_t save_id = (uint32_t)ui_element_init(debug_ui, &save_btn, 0, UI_BUTTON_ROUND);
+    ui_set_element_flags(debug_ui, save_id, UI_ACTION_ON_PRESS);
+    ui_set_callback(debug_ui, save_id, on_anim_menu_save);
+    ui_set_align(debug_ui, UI_RIGHT);
     ui_button_t close_btn = {.str = "Close", .w = 0, .h = 0, .state = 0};
     uint32_t close_id = (uint32_t)ui_element_init(debug_ui, &close_btn, 0, UI_BUTTON_ROUND);
     ui_set_element_flags(debug_ui, close_id, UI_ACTION_ON_RELEASE);
