@@ -13,6 +13,7 @@ typedef struct {
     float spring_cloth_drag;
     float spring_cloth_gravity;
     float spring_cloth_taper;
+    float anim_seam_blend_time;
     float bounds_world_w;
     float bounds_world_h;
     bool has_spring_stiffness;
@@ -23,6 +24,7 @@ typedef struct {
     bool has_spring_cloth_drag;
     bool has_spring_cloth_gravity;
     bool has_spring_cloth_taper;
+    bool has_anim_seam_blend_time;
     bool has_bounds_world_w;
     bool has_bounds_world_h;
 } AnimConfig;

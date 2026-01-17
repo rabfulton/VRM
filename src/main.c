@@ -25,6 +25,10 @@
 #include "ui_library/ui.h"
 #include "viseme.h"
 
+#ifdef VRM_USE_OZZ_JOLT
+#include "ozz_bridge.h"
+#endif
+
 typedef struct {
   PlatformWindow *window;
   PlatformWindow *ui_window;
@@ -70,6 +74,7 @@ extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness, g_spring_cloth_drag,
     g_spring_cloth_gravity, g_spring_cloth_taper;
+extern float g_anim_seam_blend_time_default;
 
 static void update_ui_window_layout(void);
 static void build_view_with_model_transform(float out_view[16]);
@@ -78,6 +83,7 @@ static void show_ui_window(void);
 static void hide_ui_window(void);
 static void reset_springs_from_ui(void);
 static void save_springs_to_config(void);
+static void save_anim_params_to_config(void);
 
 static void update_display_metrics_for_window(PlatformWindow *win) {
   int win_w = 0, win_h = 0;
@@ -120,6 +126,17 @@ static void save_springs_to_config(void) {
   cfg.has_spring_cloth_drag = true;
   cfg.has_spring_cloth_gravity = true;
   cfg.has_spring_cloth_taper = true;
+  if (!anim_config_save(app.current_anim_path, &cfg)) {
+    printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
+  }
+}
+
+static void save_anim_params_to_config(void) {
+  if (!app.has_current_anim)
+    return;
+  AnimConfig cfg = {0};
+  cfg.anim_seam_blend_time = g_anim_seam_blend_time_default;
+  cfg.has_anim_seam_blend_time = true;
   if (!anim_config_save(app.current_anim_path, &cfg)) {
     printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
   }
@@ -241,6 +258,15 @@ static void update_anim_correction_mode(int mode) {
     printf("Anim correction: rotZ 180\n");
   }
   fflush(stdout);
+}
+
+static void rebuild_ozz_after_correction_change(bool keep_snapshot) {
+  (void)keep_snapshot;
+#ifdef VRM_USE_OZZ_JOLT
+  if (animator_get_use_ozz(&app.animator)) {
+    animator_rebuild_ozz(&app.animator, keep_snapshot);
+  }
+#endif
 }
 
 static void update_input_region(void) {
@@ -448,14 +474,8 @@ static void on_ipc_command(const char *action, void *params, int id,
       gltf_update_transforms(&app.model);
       spring_bones_init(&app.model);
       renderer_set_model(&app.renderer, &app.model);
-      app.animator.model = &app.model;
-      if (app.animator.current_animation < 0 ||
-          app.animator.current_animation >= app.model.animation_count) {
-        app.animator.current_animation = app.model.animation_count > 0 ? 0 : -1;
-        app.animator.time = 0.0f;
-        app.animator.next_animation = -1;
-      }
       update_anim_correction_mode(app.model.anim_correction_mode);
+      animator_set_model(&app.animator, &app.model);
       update_ui_window_layout();
       app.last_time = platform_get_time();
       printf("Loaded: %s (%d animations)\n", path->valuestring,
@@ -539,9 +559,20 @@ static void on_ipc_command(const char *action, void *params, int id,
       hide_ui_window();
       printf("UI debug: closed UI during animation load\n");
     }
+#ifdef VRM_USE_OZZ_JOLT
+    // Snapshot current pose before loading new animation (for cross-fade
+    // blending)
+    bool snapshot_taken = false;
+    if (animator_get_use_ozz(&app.animator) &&
+        app.animator.current_animation >= 0) {
+      ozz_bridge_snapshot_pose(&app.model, app.animator.current_animation,
+                               app.animator.time);
+      snapshot_taken = ozz_bridge_snapshot_available();
+    }
+#endif
     if (gltf_load_animation(&app.model, path->valuestring)) {
-      animator_set_model(&app.animator, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
+      animator_set_model(&app.animator, &app.model);
       app.has_current_anim = false;
       app.current_anim_path[0] = '\0';
       snprintf(app.current_anim_path, sizeof(app.current_anim_path), "%s",
@@ -555,6 +586,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       g_spring_cloth_drag = 1.2f;
       g_spring_cloth_gravity = 1.0f;
       g_spring_cloth_taper = 0.6f;
+      g_anim_seam_blend_time_default = 0.15f;
       AnimConfig cfg = {0};
       if (anim_config_load(app.current_anim_path, &cfg)) {
         if (cfg.has_spring_stiffness)
@@ -573,15 +605,34 @@ static void on_ipc_command(const char *action, void *params, int id,
           g_spring_cloth_gravity = cfg.spring_cloth_gravity;
         if (cfg.has_spring_cloth_taper)
           g_spring_cloth_taper = cfg.spring_cloth_taper;
+        if (cfg.has_anim_seam_blend_time)
+          g_anim_seam_blend_time_default = cfg.anim_seam_blend_time;
       }
       debug_ui_sync_spring_params();
+      debug_ui_sync_anim_params();
       if (app.auto_resize)
         compute_and_cache_bounds(path->valuestring);
-      if (app.model.animation_count > 0) {
-        int loop_remaining = animator_compute_loop_remaining(&app.animator, 0);
-        animator_blend_to(&app.animator, 0, g_anim_blend_time_default,
-                          loop_remaining);
+#ifdef VRM_USE_OZZ_JOLT
+      // Prevent one-frame "snap" to the new clip before the client sends
+      // blend_to: keep the current node TRS until play/blend commands arrive.
+      if (animator_get_use_ozz(&app.animator) && snapshot_taken) {
+        animator_pause(&app.animator);
       }
+
+      // If we captured a snapshot prior to load, keep the current pose and let
+      // the next blend_to consume the snapshot; sampling the new clip here
+      // causes a visible pop that defeats cross-fading.
+      if (!(animator_get_use_ozz(&app.animator) &&
+            ozz_bridge_snapshot_available())) {
+        if (app.model.animation_count > 0) {
+          animator_set_animation(&app.animator, 0);
+        }
+      }
+#else
+      if (app.model.animation_count > 0) {
+        animator_set_animation(&app.animator, 0);
+      }
+#endif
       app.last_time = platform_get_time();
       ipc_respond(&app.ipc, id, true, NULL);
     } else {
@@ -600,13 +651,40 @@ static void on_ipc_command(const char *action, void *params, int id,
     if (idx)
       animator_set_animation(&app.animator, idx->valueint);
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_anim_backend") == 0) {
+    cJSON *b = cJSON_GetObjectItem(json, "backend");
+    if (b && cJSON_IsString(b) && b->valuestring) {
+      if (strcmp(b->valuestring, "ozz") == 0) {
+        animator_set_use_ozz(&app.animator, true);
+      } else if (strcmp(b->valuestring, "legacy") == 0) {
+        animator_set_use_ozz(&app.animator, false);
+      }
+    }
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "backend",
+                            animator_get_use_ozz(&app.animator) ? "ozz"
+                                                                : "legacy");
+    char *json_str = cJSON_PrintUnformatted(result);
+    ipc_respond_data(&app.ipc, id, json_str);
+    free(json_str);
+    cJSON_Delete(result);
   } else if (strcmp(action, "blend_to") == 0) {
-    cJSON *idx = cJSON_GetObjectItem(json, "index"),
-          *dur = cJSON_GetObjectItem(json, "duration");
+    cJSON *idx = cJSON_GetObjectItem(json, "index");
+    cJSON *dur = cJSON_GetObjectItem(json, "duration");
     cJSON *loop = cJSON_GetObjectItem(json, "loop"),
           *count = cJSON_GetObjectItem(json, "count");
     int loop_remaining = 0;
     bool loop_specified = false;
+
+    // Parse blend duration (default to auto-compute if not specified or "auto")
+    float duration = 0.0f;
+    if (dur && cJSON_IsNumber(dur)) {
+      duration = (float)dur->valuedouble;
+    } else if (dur && cJSON_IsString(dur) &&
+               strcmp(dur->valuestring, "auto") == 0) {
+      // Will compute auto blend time below
+      duration = -1.0f;
+    }
 
     if (count && cJSON_IsNumber(count)) {
       int plays = count->valueint;
@@ -623,17 +701,14 @@ static void on_ipc_command(const char *action, void *params, int id,
         loop_remaining =
             animator_compute_loop_remaining(&app.animator, idx->valueint);
       }
-      float blend_time;
-      if (dur && cJSON_IsString(dur) && strcmp(dur->valuestring, "auto") == 0) {
-        blend_time =
+      // Auto blend time if requested
+      if (duration < 0.0f) {
+        duration =
             animator_compute_auto_blend_time(&app.animator, idx->valueint);
-      } else if (dur && cJSON_IsNumber(dur)) {
-        blend_time = (float)dur->valuedouble;
-      } else {
-        blend_time = g_anim_blend_time_default;
       }
-      animator_blend_to(&app.animator, idx->valueint, blend_time,
-                        loop_remaining);
+      // Use animator_blend_to for cross-fade (handles ozz blending when
+      // enabled)
+      animator_blend_to(&app.animator, idx->valueint, duration, loop_remaining);
     }
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_position") == 0) {
@@ -675,6 +750,24 @@ static void on_ipc_command(const char *action, void *params, int id,
       g_spring_gravity = (float)grav->valuedouble;
     debug_ui_sync_spring_params();
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_seam_blend") == 0) {
+    cJSON *dur = cJSON_GetObjectItem(json, "duration");
+    if (dur && cJSON_IsNumber(dur)) {
+      float v = (float)dur->valuedouble;
+      if (v < 0.0f)
+        v = 0.0f;
+      if (v > 1.0f)
+        v = 1.0f;
+      g_anim_seam_blend_time_default = v;
+      debug_ui_sync_anim_params();
+    }
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "seam_blend_time",
+                            g_anim_seam_blend_time_default);
+    char *json_str = cJSON_PrintUnformatted(result);
+    ipc_respond_data(&app.ipc, id, json_str);
+    free(json_str);
+    cJSON_Delete(result);
   } else if (strcmp(action, "reset_spring") == 0) {
     spring_bones_reset(&app.model);
     ipc_respond(&app.ipc, id, true, NULL);
@@ -682,6 +775,7 @@ static void on_ipc_command(const char *action, void *params, int id,
     cJSON *m = cJSON_GetObjectItem(json, "mode");
     if (m)
       update_anim_correction_mode(m->valueint);
+    rebuild_ozz_after_correction_change(false);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_expression") == 0) {
     cJSON *name = cJSON_GetObjectItem(json, "name");
@@ -828,7 +922,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       cJSON *result = cJSON_CreateObject();
       cJSON_AddNumberToObject(result, "event_id", app.auto_blink_event_id);
       char *json_str = cJSON_PrintUnformatted(result);
-      ipc_respond(&app.ipc, id, true, json_str);
+      ipc_respond_data(&app.ipc, id, json_str);
       free(json_str);
       cJSON_Delete(result);
     } else if (!enabled && app.auto_blink_enabled) {
@@ -1046,18 +1140,23 @@ static void on_key(int key, int action, void *user) {
     break;
   case PLATFORM_KEY_1:
     update_anim_correction_mode(0);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_2:
     update_anim_correction_mode(1);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_3:
     update_anim_correction_mode(2);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_4:
     update_anim_correction_mode(3);
+    rebuild_ozz_after_correction_change(false);
     break;
   case PLATFORM_KEY_5:
     update_anim_correction_mode(4);
+    rebuild_ozz_after_correction_change(false);
     break;
   }
 }
@@ -1252,6 +1351,7 @@ static void ui_init_overlay(VrmApp *s) {
   debug_ui_set_interface(s->ui);
   debug_ui_set_spring_reset(reset_springs_from_ui);
   debug_ui_set_spring_save(save_springs_to_config);
+  debug_ui_set_anim_save(save_anim_params_to_config);
 
   s->pie_menu_id = -1;
 }
