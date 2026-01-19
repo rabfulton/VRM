@@ -1,13 +1,7 @@
 #include "viseme.h"
 #include <alloca.h>
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
-
-// Analysis parameters
-#define SAMPLE_RATE 24000
-#define FRAME_SIZE_MS 10
-#define FRAME_SIZE_SAMPLES (SAMPLE_RATE * FRAME_SIZE_MS / 1000) // 240 samples
 
 // Frequency band thresholds (in terms of zero-crossing rate)
 // ZCR of ~500Hz tone at 24kHz = 500/24000 * 2 = 0.042 crossings per sample
@@ -15,14 +9,17 @@
 #define ZCR_LOW_THRESHOLD 0.05f  // Below this = low frequency content
 #define ZCR_HIGH_THRESHOLD 0.12f // Above this = high frequency content
 
+static void viseme_ring_reset(VisemeAnalyzer *v) {
+  for (size_t i = 0; i < VISEME_RING_CAPACITY; i++) {
+    v->ring_frame_index[i] = INT64_MIN;
+    memset(&v->ring[i], 0, sizeof(VisemeFrame));
+  }
+}
+
 void viseme_init(VisemeAnalyzer *v) {
   if (!v)
     return;
   memset(v, 0, sizeof(VisemeAnalyzer));
-
-  // Initialize event stream for viseme data
-  event_stream_init(&v->stream, EVENT_DOMAIN_AUDIO_SAMPLES,
-                    sizeof(VisemeFrame));
 
   // Default parameters
   v->gain = 1.0f;
@@ -32,20 +29,32 @@ void viseme_init(VisemeAnalyzer *v) {
 
   // Zero initial state
   memset(&v->smoothed, 0, sizeof(VisemeFrame));
+  memset(&v->last_value, 0, sizeof(VisemeFrame));
+  v->has_last_value = false;
+  v->pending_len = 0;
+  v->pending_start_sample = 0;
+  v->expected_next_sample = 0;
+  v->has_expected = false;
+  viseme_ring_reset(v);
 }
 
 void viseme_free(VisemeAnalyzer *v) {
   if (!v)
     return;
-  // EventStream doesn't need explicit cleanup
   memset(v, 0, sizeof(VisemeAnalyzer));
 }
 
 void viseme_reset(VisemeAnalyzer *v) {
   if (!v)
     return;
-  event_stream_reset(&v->stream);
+  viseme_ring_reset(v);
   memset(&v->smoothed, 0, sizeof(VisemeFrame));
+  memset(&v->last_value, 0, sizeof(VisemeFrame));
+  v->has_last_value = false;
+  v->pending_len = 0;
+  v->pending_start_sample = 0;
+  v->expected_next_sample = 0;
+  v->has_expected = false;
   v->frames_analyzed = 0;
 }
 
@@ -117,6 +126,16 @@ static float compute_envelope_variance(const int16_t *samples, size_t count) {
   return variance;
 }
 
+static void viseme_ring_store(VisemeAnalyzer *v, int64_t frame_start_sample,
+                              const VisemeFrame *frame) {
+  int64_t frame_index = frame_start_sample / (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+  size_t slot = (size_t)frame_index & VISEME_RING_MASK;
+  v->ring[slot] = *frame;
+  v->ring_frame_index[slot] = frame_index;
+  v->last_value = *frame;
+  v->has_last_value = true;
+}
+
 // Map audio features to vowel weights
 // This is a heuristic mapping:
 // - RMS controls overall mouth openness
@@ -173,58 +192,78 @@ void viseme_analyze(VisemeAnalyzer *v, const int16_t *samples, size_t count,
     return;
   }
   if (!v->enabled) {
-    printf("Viseme: analyze skipped - not enabled\n");
     return;
   }
 
-  printf("Viseme: analyzing %zu samples starting at %lld (enabled=%d)\n", count,
-         (long long)chunk_start_sample, v->enabled);
+  if (v->has_expected && chunk_start_sample != v->expected_next_sample) {
+    // Discontinuity: reset alignment state and restart accumulation.
+    v->pending_len = 0;
+    v->has_expected = false;
+  }
 
-  // Process in frames
-  size_t offset = 0;
-  size_t frames_processed = 0;
-  float max_rms = 0.0f;
+  const int16_t *p = samples;
+  size_t remaining = count;
+  int64_t pos = chunk_start_sample;
 
-  while (offset + FRAME_SIZE_SAMPLES <= count) {
-    const int16_t *frame = samples + offset;
-    int64_t frame_time = chunk_start_sample + (int64_t)offset;
+  // Initialize an aligned frame accumulator if we're starting fresh.
+  if (v->pending_len == 0 && !v->has_expected) {
+    int64_t frame_start =
+        (pos / (int64_t)VISEME_FRAME_SIZE_SAMPLES) * (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+    v->pending_start_sample = frame_start;
+    int64_t missing = pos - frame_start;
+    if (missing > 0 && missing < (int64_t)VISEME_FRAME_SIZE_SAMPLES) {
+      memset(v->pending, 0, (size_t)missing * sizeof(int16_t));
+      v->pending_len = (size_t)missing;
+    }
+    v->has_expected = true;
+    v->expected_next_sample = pos;
+  }
 
-    // Compute features
-    float rms = compute_rms(frame, FRAME_SIZE_SAMPLES, v->gain);
-    float zcr = compute_zcr(frame, FRAME_SIZE_SAMPLES);
-    float env_var = compute_envelope_variance(frame, FRAME_SIZE_SAMPLES);
+  while (remaining > 0) {
+    // If needed, initialize pending_start_sample on first use.
+    if (v->pending_len == 0) {
+      v->pending_start_sample =
+          (pos / (int64_t)VISEME_FRAME_SIZE_SAMPLES) * (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+    }
 
-    if (rms > max_rms)
-      max_rms = rms;
+    size_t need = VISEME_FRAME_SIZE_SAMPLES - v->pending_len;
+    size_t take = remaining < need ? remaining : need;
+    memcpy(v->pending + v->pending_len, p, take * sizeof(int16_t));
+    v->pending_len += take;
 
-    // Map to vowels
+    p += take;
+    remaining -= take;
+    pos += (int64_t)take;
+    v->expected_next_sample = pos;
+
+    if (v->pending_len < VISEME_FRAME_SIZE_SAMPLES) {
+      break;
+    }
+
+    // Compute features for the completed frame.
+    float rms = compute_rms(v->pending, VISEME_FRAME_SIZE_SAMPLES, v->gain);
+    float zcr = compute_zcr(v->pending, VISEME_FRAME_SIZE_SAMPLES);
+    float env_var = compute_envelope_variance(v->pending, VISEME_FRAME_SIZE_SAMPLES);
+
     VisemeFrame raw;
     if (rms < v->threshold) {
-      // Silence - close mouth
       memset(&raw, 0, sizeof(VisemeFrame));
     } else {
       map_to_vowels(rms, zcr, env_var, &raw);
     }
 
-    // Apply smoothing
     float alpha = v->smoothing;
     for (int i = 0; i < VISEME_COUNT; i++) {
       v->smoothed.weights[i] =
           alpha * raw.weights[i] + (1.0f - alpha) * v->smoothed.weights[i];
     }
 
-    // Push to stream
-    event_stream_push(&v->stream, frame_time, &v->smoothed);
+    viseme_ring_store(v, v->pending_start_sample, &v->smoothed);
     v->frames_analyzed++;
-    frames_processed++;
 
-    offset += FRAME_SIZE_SAMPLES;
+    v->pending_start_sample += (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+    v->pending_len = 0;
   }
-
-  printf("Viseme: processed %zu frames, max_rms=%.4f, threshold=%.4f, "
-         "stream_depth=%zu\n",
-         frames_processed, max_rms, v->threshold,
-         event_stream_depth(&v->stream));
 }
 
 bool viseme_sample(VisemeAnalyzer *v, int64_t playback_sample,
@@ -237,13 +276,43 @@ bool viseme_sample(VisemeAnalyzer *v, int64_t playback_sample,
     return false;
   }
 
-  // Sample from event stream
-  bool ok = event_stream_sample(&v->stream, playback_sample, out, NULL);
+  int64_t frame_index =
+      playback_sample / (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+  int64_t frame_start_sample =
+      frame_index * (int64_t)VISEME_FRAME_SIZE_SAMPLES;
+  float t = (float)(playback_sample - frame_start_sample) /
+            (float)VISEME_FRAME_SIZE_SAMPLES;
+  if (t < 0.0f)
+    t = 0.0f;
+  if (t > 1.0f)
+    t = 1.0f;
 
-  // Prune old data (keep ~1 second of history)
-  event_stream_prune(&v->stream, playback_sample - SAMPLE_RATE);
+  size_t slot_a = (size_t)frame_index & VISEME_RING_MASK;
+  bool has_a = (v->ring_frame_index[slot_a] == frame_index);
 
-  return ok;
+  VisemeFrame a;
+  if (has_a) {
+    a = v->ring[slot_a];
+  } else if (v->has_last_value) {
+    a = v->last_value;
+  } else {
+    memset(out, 0, sizeof(VisemeFrame));
+    return false;
+  }
+
+  int64_t next_index = frame_index + 1;
+  size_t slot_b = (size_t)next_index & VISEME_RING_MASK;
+  bool has_b = (v->ring_frame_index[slot_b] == next_index);
+  if (!has_b) {
+    *out = a;
+    return true;
+  }
+
+  VisemeFrame b = v->ring[slot_b];
+  for (int i = 0; i < VISEME_COUNT; i++) {
+    out->weights[i] = a.weights[i] + t * (b.weights[i] - a.weights[i]);
+  }
+  return true;
 }
 
 void viseme_set_enabled(VisemeAnalyzer *v, bool enabled) {
@@ -252,6 +321,8 @@ void viseme_set_enabled(VisemeAnalyzer *v, bool enabled) {
   v->enabled = enabled;
   if (!enabled) {
     memset(&v->smoothed, 0, sizeof(VisemeFrame));
+    memset(&v->last_value, 0, sizeof(VisemeFrame));
+    v->has_last_value = false;
   }
 }
 

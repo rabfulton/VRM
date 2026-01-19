@@ -849,6 +849,25 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "audio_stream_end") == 0) {
     // Optional: flush or just ack
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "audio_status") == 0) {
+    cJSON *result = cJSON_CreateObject();
+    size_t available = audio_available(&app.audio);
+    size_t free_space = audio_free_space(&app.audio);
+    cJSON_AddNumberToObject(result, "sample_rate", AUDIO_SAMPLE_RATE);
+    cJSON_AddNumberToObject(result, "channels", AUDIO_CHANNELS);
+    cJSON_AddBoolToObject(result, "active", app.audio.active);
+    cJSON_AddNumberToObject(result, "available_samples", (double)available);
+    cJSON_AddNumberToObject(result, "free_samples", (double)free_space);
+    cJSON_AddNumberToObject(result, "total_written", (double)app.audio.total_written);
+    cJSON_AddNumberToObject(result, "total_read", (double)app.audio.total_read);
+    cJSON_AddNumberToObject(result, "available_seconds",
+                            (double)available / (double)AUDIO_SAMPLE_RATE);
+    cJSON_AddNumberToObject(result, "free_seconds",
+                            (double)free_space / (double)AUDIO_SAMPLE_RATE);
+    char *json_str = cJSON_PrintUnformatted(result);
+    ipc_respond_data(&app.ipc, id, json_str);
+    free(json_str);
+    cJSON_Delete(result);
   } else if (strcmp(action, "play_audio_file") == 0) {
     cJSON *path = cJSON_GetObjectItem(json, "path");
     if (path && path->valuestring) {

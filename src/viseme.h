@@ -1,8 +1,9 @@
 #ifndef VISEME_H
 #define VISEME_H
 
-#include "event.h"
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 // Vowel indices
 #define VISEME_A 0
@@ -12,14 +13,32 @@
 #define VISEME_O 4
 #define VISEME_COUNT 5
 
-// Viseme frame payload (matches EventStream payload)
+// Analysis parameters
+#define VISEME_SAMPLE_RATE 24000
+#define VISEME_FRAME_SIZE_MS 10
+#define VISEME_FRAME_SIZE_SAMPLES (VISEME_SAMPLE_RATE * VISEME_FRAME_SIZE_MS / 1000) // 240
+
+// Viseme ring buffer (indexed by frame index, i.e. sample/VISEME_FRAME_SIZE_SAMPLES)
+// Sized to comfortably exceed the audio ring buffer horizon (~87s).
+#define VISEME_RING_CAPACITY 16384
+#define VISEME_RING_MASK (VISEME_RING_CAPACITY - 1)
+
 typedef struct {
   float weights[VISEME_COUNT]; // A, I, U, E, O [0-1]
 } VisemeFrame;
 
 typedef struct {
-  // Output stream (consumed by render loop)
-  EventStream stream;
+  // Viseme frames aligned to the audio sample timeline.
+  // Each slot is tagged with the absolute frame index to avoid ambiguity on wrap.
+  VisemeFrame ring[VISEME_RING_CAPACITY];
+  int64_t ring_frame_index[VISEME_RING_CAPACITY];
+
+  // Partial frame accumulator for chunk boundary alignment.
+  int16_t pending[VISEME_FRAME_SIZE_SAMPLES];
+  size_t pending_len;
+  int64_t pending_start_sample;
+  int64_t expected_next_sample;
+  bool has_expected;
 
   // Analysis parameters
   float gain;      // Input gain multiplier (default 1.0)
@@ -28,6 +47,8 @@ typedef struct {
 
   // Internal state
   VisemeFrame smoothed; // Current smoothed output
+  VisemeFrame last_value;
+  bool has_last_value;
   bool enabled;
 
   // Stats

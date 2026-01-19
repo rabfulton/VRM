@@ -164,7 +164,7 @@ typedef struct {
 // EventStream (for continuous data like visemes) - unchanged from before
 // ============================================================================
 
-#define EVENT_STREAM_CAPACITY 2048
+#define EVENT_STREAM_CAPACITY 8192
 #define EVENT_STREAM_MASK (EVENT_STREAM_CAPACITY - 1)
 #define EVENT_STREAM_MAX_PAYLOAD 64
 

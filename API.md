@@ -151,6 +151,30 @@ Load and play a WAV file from disk.
 ```
 This loads the entire file into the internal ring buffer.
 
+#### audio_status
+Query the current audio ring buffer status.
+```json
+{"action": "audio_status"}
+```
+Response:
+```json
+{
+  "id": 0,
+  "status": "ok",
+  "data": {
+    "sample_rate": 24000,
+    "channels": 1,
+    "active": true,
+    "available_samples": 12345,
+    "free_samples": 67890,
+    "total_written": 123456,
+    "total_read": 111111,
+    "available_seconds": 0.51,
+    "free_seconds": 2.83
+  }
+}
+```
+
 #### audio_stream_begin
 Reset the audio buffer and prepare for a new stream.
 ```json
