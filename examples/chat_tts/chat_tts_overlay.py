@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
 import queue
 import re
-import socket
 import subprocess
 import sys
 import threading
 import time
 import traceback
-import wave
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -31,6 +28,10 @@ DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from vrm_overlay import IpcClient
+from vrm_overlay.speech import TtsAudioWorker
+from vrm_overlay.tts import SpeechConfig, create_tts
 
 DEFAULT_VRM_PATH = str((REPO_ROOT / "test.vrm").resolve())
 DEFAULT_ANIM_PATH = str((REPO_ROOT / "animation" / "Relax.vrma").resolve())
@@ -93,6 +94,7 @@ class Settings:
     auto_blink: bool = True
     piper_bin: str = os.environ.get("PIPER_BIN", "piper")
     piper_model: str = os.environ.get("PIPER_MODEL", "")
+    tts: dict = field(default_factory=lambda: asdict(SpeechConfig()))
 
     @classmethod
     def load(cls, path: Path) -> "Settings":
@@ -100,6 +102,11 @@ class Settings:
             raw = json.loads(path.read_text(encoding="utf-8"))
             allowed = {f.name for f in dataclass_fields(cls)}
             merged = {**asdict(cls()), **{k: v for (k, v) in raw.items() if k in allowed}}
+            # Preserve an explicitly configured Piper voice from older settings.
+            if "tts" not in raw and raw.get("piper_model"):
+                merged["tts"] = asdict(SpeechConfig(provider="piper", model="piper",
+                                                   executable=merged["piper_bin"], model_path=merged["piper_model"]))
+            merged["tts"] = asdict(SpeechConfig.from_dict(merged["tts"]))
             return cls(**merged)
         except FileNotFoundError:
             return cls()
@@ -109,130 +116,6 @@ class Settings:
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(self), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-class IpcClient:
-    def __init__(self, socket_path: str):
-        self.socket_path = socket_path
-        self._lock = threading.Lock()
-        self._sock: Optional[socket.socket] = None
-
-    def connect(self) -> None:
-        with self._lock:
-            if self._sock is not None:
-                return
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.connect(self.socket_path)
-            self._sock = sock
-
-    def close(self) -> None:
-        with self._lock:
-            if self._sock is None:
-                return
-            try:
-                self._sock.close()
-            finally:
-                self._sock = None
-
-    def request(self, payload: dict, timeout_s: float = 1.0) -> Optional[dict]:
-        data = (json.dumps(payload) + "\n").encode("utf-8")
-        with self._lock:
-            if self._sock is None:
-                self.connect()
-            assert self._sock is not None
-            prev_timeout = self._sock.gettimeout()
-            try:
-                # Don't let a short recv timeout affect sendall().
-                self._sock.settimeout(None)
-                self._sock.sendall(data)
-                self._sock.settimeout(timeout_s)
-            finally:
-                # recv loop below uses the per-request timeout; restore at the end.
-                pass
-            buf = bytearray()
-            try:
-                while b"\n" not in buf:
-                    chunk = self._sock.recv(65536)
-                    if not chunk:
-                        break
-                    buf.extend(chunk)
-            except socket.timeout:
-                return None
-            finally:
-                try:
-                    self._sock.settimeout(prev_timeout)
-                except Exception:
-                    pass
-        if not buf:
-            return None
-        try:
-            line = bytes(buf).split(b"\n", 1)[0]
-            return json.loads(line.decode("utf-8"))
-        except Exception:
-            return None
-
-    def send_only(self, payload: dict, timeout_s: float = 5.0) -> None:
-        data = (json.dumps(payload) + "\n").encode("utf-8")
-        with self._lock:
-            if self._sock is None:
-                self.connect()
-            assert self._sock is not None
-            prev_timeout = self._sock.gettimeout()
-            try:
-                self._sock.settimeout(timeout_s)
-                self._sock.sendall(data)
-            except (BrokenPipeError, TimeoutError, OSError):
-                try:
-                    self._sock.close()
-                except Exception:
-                    pass
-                self._sock = None
-                self.connect()
-                assert self._sock is not None
-                self._sock.settimeout(timeout_s)
-                self._sock.sendall(data)
-            finally:
-                try:
-                    self._sock.settimeout(prev_timeout)
-                except Exception:
-                    pass
-
-    def audio_stream_begin(self) -> None:
-        self.send_only({"action": "audio_stream_begin"}, timeout_s=2.0)
-
-    def audio_stream_chunk(self, pcm_bytes: bytes) -> None:
-        b64 = base64.b64encode(pcm_bytes).decode("ascii")
-        self.send_only({"action": "audio_stream_chunk", "data": b64}, timeout_s=5.0)
-
-    def audio_stream_end(self) -> None:
-        self.send_only({"action": "audio_stream_end"}, timeout_s=2.0)
-
-    def lip_sync_enable(self, enabled: bool = True) -> None:
-        self.send_only({"action": "lip_sync_enable", "enabled": bool(enabled)}, timeout_s=2.0)
-
-    def audio_status(self) -> Optional[dict]:
-        resp = self.request({"action": "audio_status"}, timeout_s=1.0)
-        if not resp:
-            return None
-        return resp.get("data") or resp
-
-    def auto_blink_enable(self, enabled: bool = True) -> Optional[dict]:
-        return self.request({"action": "auto_blink_enable", "enabled": bool(enabled)}, timeout_s=1.0)
-
-    def load_model(self, path: str) -> None:
-        self.request({"action": "load", "path": path}, timeout_s=5.0)
-
-    def load_animation(self, path: str) -> None:
-        self.request({"action": "load_animation", "path": path}, timeout_s=5.0)
-
-    def play(self) -> None:
-        self.request({"action": "play"}, timeout_s=1.0)
-
-    def blend_to(self, index: int, duration: float = 0.15, loop: bool = True) -> None:
-        self.request(
-            {"action": "blend_to", "index": int(index), "duration": float(duration), "loop": bool(loop)},
-            timeout_s=2.0,
-        )
 
 
 class SentenceSegmenter:
@@ -388,149 +271,6 @@ def apply_theme(root: tk.Tk, theme: str) -> dict:
     return colors
 
 
-def wav_path_to_pcm24k_mono_s16le(wav_path: Path) -> bytes:
-    with wave.open(str(wav_path), "rb") as wf:
-        channels = wf.getnchannels()
-        sampwidth = wf.getsampwidth()
-        rate = wf.getframerate()
-        frames = wf.readframes(wf.getnframes())
-
-    if channels not in (1, 2):
-        raise ValueError(f"Unsupported channel count: {channels}")
-    if sampwidth not in (1, 2, 3, 4):
-        raise ValueError(f"Unsupported sample width: {sampwidth}")
-
-    # Decode to signed mono int16 samples.
-    samples_i16 = _decode_wav_pcm_to_mono_i16(frames, channels=channels, sampwidth=sampwidth)
-
-    # Resample to 24kHz if needed.
-    if rate != 24000:
-        samples_i16 = _resample_i16_linear(samples_i16, src_rate=rate, dst_rate=24000)
-
-    return samples_i16.tobytes()
-
-
-def _decode_wav_pcm_to_mono_i16(frames: bytes, channels: int, sampwidth: int) -> "array.array":
-    import array
-
-    if sampwidth == 2:
-        a = array.array("h")
-        a.frombytes(frames)
-        if sys.byteorder != "little":
-            a.byteswap()
-        if channels == 1:
-            return a
-        out = array.array("h")
-        out.extend(((a[i] + a[i + 1]) // 2) for i in range(0, len(a) - 1, 2))
-        return out
-
-    if sampwidth == 1:
-        # 8-bit PCM is unsigned in WAV.
-        raw = memoryview(frames)
-        if channels == 1:
-            mono = [(b - 128) << 8 for b in raw]
-        else:
-            mono = [(((raw[i] - 128) + (raw[i + 1] - 128)) // 2) << 8 for i in range(0, len(raw) - 1, 2)]
-        out = array.array("h", mono)
-        return out
-
-    if sampwidth == 4:
-        # Assume signed 32-bit PCM; downscale to int16.
-        a32 = array.array("i")
-        a32.frombytes(frames)
-        if sys.byteorder != "little":
-            a32.byteswap()
-        if channels == 2:
-            a32 = array.array("i", ((a32[i] + a32[i + 1]) // 2 for i in range(0, len(a32) - 1, 2)))
-        out = array.array("h", (_clamp_i16(x >> 16) for x in a32))
-        return out
-
-    # 24-bit PCM (3 bytes per sample), little-endian.
-    b = memoryview(frames)
-    step = 3 * channels
-    out = array.array("h")
-
-    def read_s24_le(off: int) -> int:
-        v = int(b[off]) | (int(b[off + 1]) << 8) | (int(b[off + 2]) << 16)
-        if v & 0x800000:
-            v -= 0x1000000
-        return v
-
-    for off in range(0, len(b) - (step - 1), step):
-        if channels == 1:
-            s = read_s24_le(off)
-        else:
-            s = (read_s24_le(off) + read_s24_le(off + 3)) // 2
-        out.append(_clamp_i16(s >> 8))
-    return out
-
-
-def _resample_i16_linear(samples: "array.array", src_rate: int, dst_rate: int) -> "array.array":
-    import array
-
-    if src_rate <= 0 or dst_rate <= 0:
-        return samples
-    if src_rate == dst_rate:
-        return samples
-    if len(samples) < 2:
-        return samples
-
-    scale = src_rate / float(dst_rate)
-    out_len = max(1, int(len(samples) / scale))
-    out = array.array("h")
-    out.extend([0] * out_len)
-
-    for i in range(out_len):
-        pos = i * scale
-        idx = int(pos)
-        frac = pos - idx
-        if idx >= len(samples) - 1:
-            out[i] = samples[-1]
-        else:
-            a = samples[idx]
-            b = samples[idx + 1]
-            v = int(round(a * (1.0 - frac) + b * frac))
-            out[i] = _clamp_i16(v)
-    return out
-
-
-def _clamp_i16(v: int) -> int:
-    if v > 32767:
-        return 32767
-    if v < -32768:
-        return -32768
-    return int(v)
-
-
-class PiperTts:
-    def __init__(self, piper_bin: str, model_path: str):
-        self.piper_bin = piper_bin
-        self.model_path = model_path
-
-    def synth_wav(self, text: str, out_path: Path, timeout_s: float = 60.0) -> None:
-        if not self.model_path:
-            raise RuntimeError(
-                "Missing Piper model path. Set it in Settings (Piper model) or via PIPER_MODEL env var."
-            )
-        model_path = Path(self.model_path).expanduser()
-        if not model_path.exists():
-            raise RuntimeError(f"Piper model not found: {str(model_path)}")
-
-        # Many Piper installs require a config file next to the .onnx:
-        #   voice.onnx
-        #   voice.onnx.json
-        cfg_path = Path(str(model_path) + ".json")
-        if not cfg_path.exists():
-            raise RuntimeError(
-                "Piper config missing. Expected a JSON next to the model: "
-                f"{str(cfg_path)} (download the matching .onnx.json for your voice)."
-            )
-
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [self.piper_bin, "--model", str(model_path), "--output_file", str(out_path)]
-        subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=timeout_s)
-
-
 def iter_chat_completions_stream(
     endpoint: str,
     api_key: str,
@@ -598,112 +338,6 @@ def iter_chat_completions_stream(
                 pass
 
 
-class TtsAudioWorker(threading.Thread):
-    def __init__(self, ipc: IpcClient, tts: PiperTts, on_error: Callable[[str], None], log: logging.Logger):
-        super().__init__(daemon=True)
-        self._ipc = ipc
-        self._tts = tts
-        self._on_error = on_error
-        self._log = log
-        self._END_STREAM = object()
-        self._STOP = object()
-        self._q: "queue.Queue[object]" = queue.Queue()
-        self._stop = threading.Event()
-        self._active_stream = threading.Event()
-        self._reported_tts_error = False
-
-    def stop(self) -> None:
-        self._stop.set()
-        self._q.put(self._STOP)
-
-    def cancel_current(self) -> None:
-        while True:
-            try:
-                self._q.get_nowait()
-            except queue.Empty:
-                break
-        if self._active_stream.is_set():
-            try:
-                self._ipc.audio_stream_begin()
-                self._ipc.audio_stream_end()
-            except Exception:
-                pass
-        self._active_stream.clear()
-
-    def begin_stream(self) -> None:
-        try:
-            self._ipc.lip_sync_enable(True)
-        except Exception:
-            pass
-        self._ipc.audio_stream_begin()
-        self._active_stream.set()
-
-    def end_stream(self) -> None:
-        if self._active_stream.is_set():
-            self._ipc.audio_stream_end()
-        self._active_stream.clear()
-
-    def enqueue_sentence(self, sentence: str) -> None:
-        self._q.put(sentence)
-
-    def enqueue_end_stream(self) -> None:
-        self._q.put(self._END_STREAM)
-
-    def run(self) -> None:
-        tmp_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "vrm-overlay-chat-tts"
-        idx = 0
-        max_buffer_s = 12.0
-        sleep_s = 0.02
-        while not self._stop.is_set():
-            item = self._q.get()
-            if item is self._STOP:
-                return
-            if item is self._END_STREAM:
-                try:
-                    self.end_stream()
-                except Exception:
-                    pass
-                continue
-            sentence = str(item)
-            if not sentence.strip():
-                continue
-            idx += 1
-            wav_path = tmp_dir / f"tts_{int(time.time())}_{idx}.wav"
-            try:
-                self._tts.synth_wav(sentence, wav_path)
-                pcm = wav_path_to_pcm24k_mono_s16le(wav_path)
-                # Keep each NDJSON command line well under the overlay's IPC read buffer (8192 bytes).
-                # base64 expands by ~4/3, plus JSON overhead.
-                chunk_size = 2048
-                chunks_sent = 0
-                for off in range(0, len(pcm), chunk_size):
-                    if self._stop.is_set():
-                        return
-                    chunk = pcm[off : off + chunk_size]
-                    self._ipc.audio_stream_chunk(chunk)
-                    chunks_sent += 1
-                    if (chunks_sent % 16) == 0:
-                        st = self._ipc.audio_status()
-                        if st and isinstance(st, dict):
-                            avail_s = float(st.get("available_seconds", 0.0) or 0.0)
-                            while avail_s > max_buffer_s and not self._stop.is_set():
-                                time.sleep(sleep_s)
-                                st = self._ipc.audio_status()
-                                if not st or not isinstance(st, dict):
-                                    break
-                                avail_s = float(st.get("available_seconds", 0.0) or 0.0)
-            except Exception as e:
-                self._log.error("TTS failed: %s\n%s", str(e), traceback.format_exc())
-                if not self._reported_tts_error:
-                    self._reported_tts_error = True
-                    self._on_error(
-                        f"TTS failed: {e}\n"
-                        f"Fix Settings → Piper model/bin.\n"
-                        f"Log: {str(_log_path())}"
-                    )
-                continue
-
-
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent: tk.Tk, settings: Settings):
         super().__init__(parent)
@@ -727,8 +361,14 @@ class SettingsDialog(tk.Toplevel):
         self.var_connect_timeout = tk.StringVar(value=str(settings.connect_timeout_s))
         self.var_read_timeout = tk.StringVar(value=str(settings.read_timeout_s))
         self.var_auto_blink = tk.BooleanVar(value=bool(settings.auto_blink))
-        self.var_piper_bin = tk.StringVar(value=settings.piper_bin)
-        self.var_piper_model = tk.StringVar(value=settings.piper_model)
+        speech = SpeechConfig.from_dict(settings.tts)
+        self.var_tts_provider = tk.StringVar(value=speech.provider)
+        self.var_tts_model = tk.StringVar(value=speech.model)
+        self.var_tts_device = tk.StringVar(value=speech.device)
+        self.var_piper_bin = tk.StringVar(value=speech.executable)
+        self.var_piper_model = tk.StringVar(value=speech.model_path)
+        self.var_tts_codec = tk.StringVar(value=speech.codec_path)
+        self.var_tts_voice = tk.StringVar(value=speech.voice)
 
         row = 0
         for label, var, show in [
@@ -764,9 +404,20 @@ class SettingsDialog(tk.Toplevel):
         )
         row += 1
 
+        for label, var, choices in [
+            ("Speech provider", self.var_tts_provider, ["crispasr", "piper"]),
+            ("Speech model/backend", self.var_tts_model, ["chatterbox-nano", "chatterbox-turbo", "kokoro"]),
+            ("Speech processing", self.var_tts_device, ["cpu", "vulkan", "auto"]),
+        ]:
+            ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            ttk.Combobox(frm, textvariable=var, values=choices, width=49).grid(row=row, column=1, sticky="w", pady=2)
+            row += 1
+
         for label, var in [
-            ("Piper bin", self.var_piper_bin),
-            ("Piper model", self.var_piper_model),
+            ("Speech executable (blank = automatic)", self.var_piper_bin),
+            ("Speech model file (blank = automatic)", self.var_piper_model),
+            ("Speech decoder file (optional)", self.var_tts_codec),
+            ("Speech voice pack/name (optional)", self.var_tts_voice),
         ]:
             ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
             ent = ttk.Entry(frm, textvariable=var, width=52)
@@ -802,6 +453,18 @@ class SettingsDialog(tk.Toplevel):
             except Exception:
                 return default
 
+        try:
+            speech = SpeechConfig.from_dict(dict(
+                provider=self.var_tts_provider.get().strip(),
+                model=self.var_tts_model.get().strip() or "chatterbox-nano",
+                device=self.var_tts_device.get().strip(),
+                executable=self.var_piper_bin.get().strip(),
+                model_path=self.var_piper_model.get().strip(),
+                codec_path=self.var_tts_codec.get().strip(),
+                voice=self.var_tts_voice.get().strip()))
+        except ValueError as error:
+            messagebox.showerror("Speech settings", str(error), parent=self)
+            return
         self._result = Settings(
             endpoint=self.var_endpoint.get().strip() or DEFAULT_ENDPOINT,
             api_key=self.var_api_key.get().strip(),
@@ -816,6 +479,7 @@ class SettingsDialog(tk.Toplevel):
             auto_blink=bool(self.var_auto_blink.get()),
             piper_bin=self.var_piper_bin.get().strip() or "piper",
             piper_model=self.var_piper_model.get().strip(),
+            tts=asdict(speech),
         )
         self.destroy()
 
@@ -839,12 +503,14 @@ class App:
 
         self._colors = apply_theme(self.root, self.settings.theme)
 
+        self._ui_queue = queue.Queue()
         self._ipc = IpcClient(self.settings.overlay_socket_path)
         self._tts_worker = TtsAudioWorker(
             self._ipc,
-            PiperTts(self.settings.piper_bin, self.settings.piper_model),
+            create_tts(SpeechConfig.from_dict(self.settings.tts)),
             on_error=lambda msg: self._ui(self._append_text, f"\n\n[error] {msg}\n"),
             log=self.log,
+            on_state=lambda state: self._ui(self._set_status, state),
         )
         self._tts_worker.start()
 
@@ -857,9 +523,22 @@ class App:
         self._messages: list[dict] = [{"role": "system", "content": self.settings.system_prompt}]
 
         self._build_ui()
+        self.root.after(25, self._drain_ui)
 
     def _ui(self, fn, *args) -> None:
-        self.root.after(0, fn, *args)
+        # Worker threads never call Tk, including root.after (which can block).
+        self._ui_queue.put((fn, args))
+
+    def _drain_ui(self) -> None:
+        try:
+            for _ in range(100):
+                try:
+                    fn, args = self._ui_queue.get_nowait()
+                except queue.Empty:
+                    break
+                fn(*args)
+        finally:
+            self.root.after(25, self._drain_ui)
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self.root, padding=8)
@@ -974,16 +653,18 @@ class App:
             selectbackground=self._colors["select_bg"],
         )
 
-        self._ipc.socket_path = self.settings.overlay_socket_path
+        self._stop_current(quiet=True)
         self._ipc.close()
+        self._ipc.socket_path = self.settings.overlay_socket_path
 
         self._tts_worker.cancel_current()
         self._tts_worker.stop()
         self._tts_worker = TtsAudioWorker(
             self._ipc,
-            PiperTts(self.settings.piper_bin, self.settings.piper_model),
+            create_tts(SpeechConfig.from_dict(self.settings.tts)),
             on_error=lambda msg: self._ui(self._append_text, f"\n\n[error] {msg}\n"),
             log=self.log,
+            on_state=lambda state: self._ui(self._set_status, state),
         )
         self._tts_worker.start()
 
@@ -1046,27 +727,32 @@ class App:
 
     def _run_chat(self, chat_id: int, user_text: str) -> None:
         with self._chat_lock:
+            if chat_id != self._chat_active_id:
+                return
             stop_evt = self._chat_stop or threading.Event()
+            speech_worker = self._tts_worker
+            settings = self.settings
+            self._messages.append({"role": "user", "content": user_text})
+            messages = list(self._messages)
+        speech_token = None
         try:
             self.log.info("Chat request start id=%d len=%d", chat_id, len(user_text))
             self._ui(self._set_status, "Requesting…")
-            self._messages.append({"role": "user", "content": user_text})
-
             seg = SentenceSegmenter()
             assistant_accum = ""
 
             try:
-                self._tts_worker.begin_stream()
-            except Exception:
-                pass
+                speech_token = speech_worker.begin_stream(stop_evt)
+            except Exception as error:
+                self._ui(self._append_text, f"\n[speech unavailable] {error}\n")
 
             for delta in iter_chat_completions_stream(
-                endpoint=self.settings.endpoint,
-                api_key=self.settings.api_key,
-                model=self.settings.model,
-                messages=self._messages,
-                connect_timeout_s=self.settings.connect_timeout_s,
-                read_timeout_s=self.settings.read_timeout_s,
+                endpoint=settings.endpoint,
+                api_key=settings.api_key,
+                model=settings.model,
+                messages=messages,
+                connect_timeout_s=settings.connect_timeout_s,
+                read_timeout_s=settings.read_timeout_s,
                 log=self.log,
                 stop_event=stop_evt,
                 on_response=lambda r: self._set_chat_response(chat_id, r),
@@ -1081,19 +767,28 @@ class App:
                         return
                     cleaned = clean_for_tts(sentence)
                     if cleaned:
-                        self._tts_worker.enqueue_sentence(cleaned)
+                        speech_worker.enqueue_sentence(cleaned, speech_token)
 
+            if stop_evt.is_set():
+                return
             tail = seg.flush()
             if tail:
                 cleaned = clean_for_tts(tail)
                 if cleaned:
-                    self._tts_worker.enqueue_sentence(cleaned)
-            self._tts_worker.enqueue_end_stream()
+                    speech_worker.enqueue_sentence(cleaned, speech_token)
+            speech_worker.enqueue_end_stream(speech_token)
 
-            self._messages.append({"role": "assistant", "content": assistant_accum})
+            with self._chat_lock:
+                if chat_id != self._chat_active_id or stop_evt.is_set():
+                    return
+                self._messages.append({"role": "assistant", "content": assistant_accum})
             self._ui(self._append_text, "\n")
-            self._ui(self._set_status, "Idle")
+            self._ui(self._set_status, "Response ready")
         except Exception as e:
+            if stop_evt.is_set():
+                return
+            if speech_token is not None:
+                speech_worker.cancel_current(speech_token)
             self.log.error("Chat request failed: %s\n%s", str(e), traceback.format_exc())
             self._ui(self._append_text, f"\n\n[error] {e}\n[debug] log: {str(_log_path())}\n")
             self._ui(messagebox.showerror, "Error", f"{e}\n\nLog: {str(_log_path())}")

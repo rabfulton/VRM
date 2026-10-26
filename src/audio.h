@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 // Audio format config
 #define AUDIO_SAMPLE_RATE 24000
@@ -17,13 +18,13 @@
 
 typedef struct {
   int16_t buffer[AUDIO_BUFFER_SIZE];
-  size_t write_pos; // Tail (written to by IPC)
-  size_t read_pos;  // Head (read by playback/analysis)
+  _Atomic size_t write_pos; // Tail, published by the main-thread producer
+  _Atomic size_t read_pos;  // Head, published by the playback consumer
   bool active;
 
   // Stats
-  size_t total_written;
-  size_t total_read;
+  _Atomic size_t total_written;
+  _Atomic size_t total_read;
 
   // Backend (miniaudio device)
   void *backend_data;
@@ -46,7 +47,7 @@ void audio_init(AudioSystem *sys);
 void audio_free(AudioSystem *sys);
 
 // Push samples into the ring buffer (Thread-safe for single producer)
-// Returns number of samples actually written
+// Accepts the entire chunk or returns 0; callers can retry rejected chunks.
 size_t audio_write(AudioSystem *sys, const int16_t *samples, size_t count);
 
 // Pull samples from the ring buffer (Thread-safe for single consumer)
@@ -59,7 +60,8 @@ size_t audio_available(AudioSystem *sys);
 // Get number of free slots to write
 size_t audio_free_space(AudioSystem *sys);
 
-// Clear the buffer
-void audio_clear(AudioSystem *sys);
+// Main-thread only: quiesces the playback callback before resetting the clock.
+// Returns false if the playback device cannot be stopped/restarted.
+bool audio_clear(AudioSystem *sys);
 
 #endif // AUDIO_H

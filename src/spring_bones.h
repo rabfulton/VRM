@@ -7,12 +7,22 @@
 
 #include "gltf_loader.h"
 
+extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness;
 extern float g_spring_cloth_drag;
 extern float g_spring_cloth_gravity;
 extern float g_spring_cloth_taper;
 extern int g_spring_debug_collisions;
+extern int g_spring_garment_collisions;
+
+typedef struct {
+    int garment_chains, arm_colliders, generated_arm_colliders;
+    int contacts, unresolved_contacts, steps;
+    float max_penetration, garment_arm_penetration;
+    double dropped_time;
+} SpringStats;
+SpringStats spring_bones_stats(const GltfModel *model);
 
 /* Initialize spring bone runtime state (call after model load) */
 void spring_bones_init(GltfModel *model);

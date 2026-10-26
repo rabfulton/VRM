@@ -9,13 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
 #include "ozz_bridge.h"
 static bool g_ozz_ready = false;
 static bool g_ozz_enabled = false;
 #endif
 
-float g_anim_blend_time_default = 3.0f;
+float g_anim_blend_time_default = 0.45f;
 float g_anim_seam_blend_time_default = 0.15f;
 float g_anim_blend_group_factors[BLEND_GROUP_COUNT] = {
     1.0f, /* root */
@@ -34,6 +34,7 @@ static bool animation_is_loopable(Animator *anim, int anim_idx);
 void animator_init(Animator *anim) {
   memset(anim, 0, sizeof(Animator));
   anim->speed = 1.0f;
+  foot_lock_init(&anim->foot_lock);
   anim->current_animation = -1;
   anim->loop_remaining = 0;
   anim->current_animation_loopable = false;
@@ -41,7 +42,7 @@ void animator_init(Animator *anim) {
 
 void animator_cleanup(Animator *anim) {
   (void)anim;
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   g_ozz_ready = false;
   ozz_bridge_clear_model();
 #endif
@@ -49,6 +50,11 @@ void animator_cleanup(Animator *anim) {
 
 void animator_set_model(Animator *anim, GltfModel *model) {
   animator_cleanup(anim);
+#ifdef VRM_USE_OZZ
+  if (!model || model != anim->model) ozz_bridge_snapshot_invalidate();
+#endif
+  foot_lock_set_model(&anim->foot_lock, model);
+  foot_lock_new_clip(&anim->foot_lock);
   anim->model = model;
   anim->time = 0;
   anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
@@ -58,7 +64,7 @@ void animator_set_model(Animator *anim, GltfModel *model) {
           : false;
   anim->loop_remaining = (anim->current_animation_loopable) ? -1 : 0;
 
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   g_ozz_ready = g_ozz_enabled ? ozz_bridge_set_model(model) : false;
 #endif
 }
@@ -414,6 +420,7 @@ void animator_update(Animator *anim, float dt) {
         while (anim->time > animation->duration) {
           anim->time -= animation->duration;
           did_wrap = true;
+          foot_lock_reset_reference(&anim->foot_lock);
           if (anim->loop_remaining > 0) {
             anim->loop_remaining--;
             if (anim->loop_remaining == 0) {
@@ -424,7 +431,7 @@ void animator_update(Animator *anim, float dt) {
           }
         }
 
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
         // Optional seam blending for forced loops on non-loopable clips.
         // If the clip doesn't match at the seam, cross-fade the end pose into
         // the beginning to avoid a hard pop.
@@ -432,16 +439,13 @@ void animator_update(Animator *anim, float dt) {
             !anim->current_animation_loopable &&
             g_anim_seam_blend_time_default > 0.001f &&
             !ozz_bridge_blend_active()) {
-          // Snapshot the end pose (t=duration) as the "from" pose.
-          if (!ozz_bridge_sample_into_model(model, anim->current_animation,
-                                            animation->duration)) {
-            sample_animation(model, animation, animation->duration);
-          }
+          // Use the last displayed animation-layer pose across the seam.
+          // The recorded source excludes the downstream contact correction.
           ozz_bridge_snapshot_pose(model, anim->current_animation,
                                    animation->duration);
           // Blend from the end pose to the wrapped time of the same clip.
           (void)ozz_bridge_blend_from_snapshot(
-              anim->current_animation, anim->time, g_anim_seam_blend_time_default);
+              anim->current_animation, anim->time, g_anim_seam_blend_time_default, anim->speed);
         }
 #endif
       }
@@ -455,36 +459,30 @@ void animator_update(Animator *anim, float dt) {
     }
   }
 
-  // Sample pose into model nodes
-#ifdef VRM_USE_OZZ_JOLT
-  if (g_ozz_ready && g_ozz_enabled) {
-    // Check if blend is active
-    if (ozz_bridge_blend_active()) {
-      bool still_blending = ozz_bridge_blend_tick(model, dt_scaled);
-      if (!still_blending) {
-        // Blend complete: switch current_animation to target
-        int target = ozz_bridge_blend_target();
-        if (target < 0) {
-          // blend_target returns -1 when not blending, so read from our saved
-          // target In this case, blend already finished and updated the pose
-        }
-        // Animation switch is handled by animator_blend_to setting
-        // pending_animation
-      }
-    } else {
-      // Normal single-animation sampling
-      if (!ozz_bridge_sample_into_model(model, anim->current_animation,
-                                        anim->time)) {
-        sample_animation(model, animation, anim->time);
-      }
-    }
-  } else {
+  /* Observe contacts on the raw target, so the fade itself is never mistaken
+   * for a walking step. IK then constrains the fully blended display pose. */
+#ifdef VRM_USE_OZZ
+  if (!(g_ozz_ready && g_ozz_enabled) ||
+      !ozz_bridge_sample_into_model(model, anim->current_animation, anim->time)) {
     sample_animation(model, animation, anim->time);
   }
 #else
   sample_animation(model, animation, anim->time);
 #endif
   gltf_update_transforms(model);
+  foot_lock_observe(&anim->foot_lock, model, dt);
+#ifdef VRM_USE_OZZ
+  if (g_ozz_ready && g_ozz_enabled && ozz_bridge_blend_active()) {
+    ozz_bridge_blend_apply(model, dt);
+    gltf_update_transforms(model);
+  }
+#endif
+#ifdef VRM_USE_OZZ
+  /* Transitions operate upstream of IK. Recording the corrected pose here
+   * would apply the existing pelvis/leg correction a second time on restart. */
+  if (g_ozz_ready && g_ozz_enabled) ozz_bridge_record_pose(model, dt);
+#endif
+  foot_lock_apply(&anim->foot_lock, model, dt);
 }
 
 void animator_play(Animator *anim, float speed) {
@@ -492,14 +490,24 @@ void animator_play(Animator *anim, float speed) {
   anim->speed = speed;
 }
 
-void animator_pause(Animator *anim) { anim->playing = false; }
+void animator_pause(Animator *anim) {
+  anim->playing = false;
+#ifdef VRM_USE_OZZ
+  ozz_bridge_reset_velocity();
+#endif
+}
 
 void animator_set_time(Animator *anim, float t) {
+  foot_lock_reset(&anim->foot_lock);
+#ifdef VRM_USE_OZZ
+  ozz_bridge_blend_cancel();
+  ozz_bridge_snapshot_invalidate();
+#endif
   anim->time = t;
   if (anim->model && anim->current_animation >= 0) {
     GltfAnimation *animation =
         &anim->model->animations[anim->current_animation];
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
     if (g_ozz_ready && g_ozz_enabled) {
       if (!ozz_bridge_sample_into_model(anim->model, anim->current_animation,
                                         anim->time)) {
@@ -512,6 +520,9 @@ void animator_set_time(Animator *anim, float t) {
     sample_animation(anim->model, animation, anim->time);
 #endif
     gltf_update_transforms(anim->model);
+#ifdef VRM_USE_OZZ
+    if (g_ozz_ready && g_ozz_enabled) ozz_bridge_record_pose(anim->model, 0);
+#endif
   }
 }
 
@@ -519,13 +530,19 @@ void animator_set_animation(Animator *anim, int index) {
   if (!anim->model)
     return;
   if (index >= 0 && index < anim->model->animation_count) {
+    foot_lock_reset(&anim->foot_lock);
+    foot_lock_new_clip(&anim->foot_lock);
+#ifdef VRM_USE_OZZ
+    ozz_bridge_blend_cancel();
+    ozz_bridge_snapshot_invalidate();
+#endif
     anim->current_animation = index;
     anim->time = 0;
     anim->current_animation_loopable = animation_is_loopable(anim, index);
     anim->loop_remaining = anim->current_animation_loopable ? -1 : 0;
     GltfAnimation *animation =
         &anim->model->animations[anim->current_animation];
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
     if (g_ozz_ready && g_ozz_enabled) {
       if (!ozz_bridge_sample_into_model(anim->model, anim->current_animation,
                                         anim->time)) {
@@ -538,6 +555,9 @@ void animator_set_animation(Animator *anim, int index) {
     sample_animation(anim->model, animation, anim->time);
 #endif
     gltf_update_transforms(anim->model);
+#ifdef VRM_USE_OZZ
+    if (g_ozz_ready && g_ozz_enabled) ozz_bridge_record_pose(anim->model, 0);
+#endif
   }
 }
 
@@ -626,11 +646,11 @@ float animator_compute_auto_blend_time(Animator *anim, int to_anim) {
   free(saved_s);
 
   /* Map distance to blend time */
-  float blend_time = max_dist * 9.0f;
-  if (blend_time < 0.45f)
-    blend_time = 0.45f;
-  if (blend_time > 6.0f)
-    blend_time = 6.0f;
+  float blend_time = max_dist * 0.45f;
+  if (blend_time < 0.2f)
+    blend_time = 0.2f;
+  if (blend_time > 0.8f)
+    blend_time = 0.8f;
 
   // printf("Auto blend time: max_dist=%.3f -> %.2fs\n", max_dist, blend_time);
 
@@ -644,16 +664,16 @@ void animator_blend_to(Animator *anim, int index, float duration,
   if (index < 0 || index >= anim->model->animation_count)
     return;
 
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   if (g_ozz_ready && g_ozz_enabled && duration > 0.001f) {
     const int from_index = anim->current_animation;
     const float from_time = anim->time;
-    const float to_time =
-        ozz_bridge_match_start_time(anim->model, index, duration, 24);
+    foot_lock_new_clip(&anim->foot_lock);
+    const float to_time = 0.0f; /* Preserve the beginning of authored actions. */
 
     // Prefer blending from a pre-captured snapshot (used across animation
     // loads, when the source clip may no longer exist).
-    if (ozz_bridge_blend_from_snapshot(index, to_time, duration)) {
+    if (ozz_bridge_blend_from_snapshot(index, to_time, duration, anim->speed)) {
       anim->current_animation = index;
       anim->time = to_time;
       anim->loop_remaining = loop_remaining;
@@ -662,9 +682,8 @@ void animator_blend_to(Animator *anim, int index, float duration,
     }
 
     // Otherwise blend directly from the currently playing clip/time.
-    if (from_index >= 0 && from_index < anim->model->animation_count &&
-        from_index != index) {
-      ozz_bridge_blend_start(from_index, from_time, index, to_time, duration);
+    if (from_index >= 0 && from_index < anim->model->animation_count) {
+      ozz_bridge_blend_start(from_index, from_time, index, to_time, duration, anim->speed);
       anim->current_animation = index;
       anim->time = to_time;
       anim->loop_remaining = loop_remaining;
@@ -686,7 +705,7 @@ int animator_compute_loop_remaining(Animator *anim, int index) {
 void animator_sample_frame(GltfModel *model, int anim_idx, float time) {
   if (!model || anim_idx < 0 || anim_idx >= model->animation_count)
     return;
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   if (!(g_ozz_ready && g_ozz_enabled) ||
       !ozz_bridge_sample_into_model(model, anim_idx, time)) {
     sample_animation(model, &model->animations[anim_idx], time);
@@ -697,7 +716,7 @@ void animator_sample_frame(GltfModel *model, int anim_idx, float time) {
 }
 
 void animator_set_use_ozz(Animator *anim, bool enabled) {
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   g_ozz_enabled = enabled;
   if (enabled) {
     g_ozz_ready = ozz_bridge_set_model(anim ? anim->model : NULL);
@@ -713,7 +732,7 @@ void animator_set_use_ozz(Animator *anim, bool enabled) {
 
 bool animator_get_use_ozz(const Animator *anim) {
   (void)anim;
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   return g_ozz_enabled;
 #else
   return false;
@@ -723,7 +742,7 @@ bool animator_get_use_ozz(const Animator *anim) {
 void animator_rebuild_ozz(Animator *anim, bool keep_snapshot) {
   (void)anim;
   (void)keep_snapshot;
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   if (!g_ozz_enabled) {
     g_ozz_ready = false;
     return;

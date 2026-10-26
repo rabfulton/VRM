@@ -1,0 +1,42 @@
+# Generated builds and native speech downloads.
+/build/
+/deps/_build/
+/vrm-overlay
+*.o
+*.d
+*.a
+*.so
+*.so.*
+
+# Python environments and caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local settings, credentials and workspace metadata.
+/.agents/
+/.codex/
+/.aws/
+/.env
+/.env.*
+/settings.cfg
+
+# User-owned avatars, animation libraries and speech models.
+*.vrm
+*.vrma
+*.glb
+*.gguf
+*.onnx
+*.onnx.json
+*.safetensors
+/animation/*
+!/animation/README.md
+/VRMA_MotionPack/
+/test.wav
+/color_error.png
+/examples/chat_tts/voice*
+
+# Preserve an existing local checkout of the removed, unused dependency.
+/deps/JoltPhysics/

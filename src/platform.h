@@ -20,7 +20,6 @@ typedef struct {
 
 /* Window management */
 PlatformWindow *platform_create_window(int width, int height, const char *title, bool transparent, bool decorated);
-PlatformWindow *platform_create_shared_window(int width, int height, const char *title, bool transparent, bool decorated, PlatformWindow *share);
 void platform_destroy_window(PlatformWindow *win);
 bool platform_should_close(PlatformWindow *win);
 void platform_poll_events(void);

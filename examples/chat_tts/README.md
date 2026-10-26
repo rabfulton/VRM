@@ -1,52 +1,54 @@
-# Chat + Piper TTS example (vrm-overlay)
+# Chat and local speech example
 
-This example shows how to control `vrm-overlay` via the IPC API (`API.md`) while:
+A separate Tkinter integration prototype: stream a Chat Completions reply from an
+OpenAI-compatible endpoint, split it into sentences, synthesize local speech and
+send bounded 24 kHz mono PCM to the renderer with automatic lip sync.
 
-- Streaming a Chat Completions response from an OpenAI-compatible endpoint
-- Splitting the response into sentences
-- Running Piper TTS per sentence
-- Streaming 24kHz 16-bit mono PCM to `vrm-overlay` (`audio_stream_*`), enabling lip sync
+## Setup
 
-## Prereqs
+Run these commands from the repository root:
 
-- Build/run the overlay: `make && ./vrm-overlay /path/to/model.vrm`
-- Python 3.10+
-- Piper CLI + a voice model (`piper --help`)
-
-Example env:
-```bash
-export OPENAI_API_KEY="..."
-export PIPER_BIN="piper"   # or piper-tts, depending on your install
-export PIPER_MODEL="/path/to/voice.onnx"
-```
-
-Piper voices typically require both files side-by-side:
-- `voice.onnx`
-- `voice.onnx.json`
-
-## Install
-
-```bash
-python -m venv .venv
+```sh
+make
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r examples/chat_tts/requirements.txt
+python3 -m pip install -r examples/chat_tts/requirements.txt
+python3 scripts/setup_speech.py --prepare
+./vrm-overlay /path/to/avatar.vrm
 ```
 
-## Run
+In another terminal with the same environment:
 
-```bash
-source .venv/bin/activate
-python examples/chat_tts/chat_tts_overlay.py
+```sh
+export OPENAI_API_KEY="your-key"
+python3 examples/chat_tts/chat_tts_overlay.py
 ```
 
-## Notes
+Set the endpoint/model, avatar and animation paths in Settings. The old local
+defaults `test.vrm` and `animation/Relax.vrma` are not bundled. Disconnect Studio
+before connecting this example: the runtime supports one active controller.
 
-- The overlay IPC socket defaults to `/tmp/vrm-overlay.sock`.
-- Audio is streamed as base64-encoded PCM chunks at 24kHz mono s16le (`audio_stream_chunk`).
-- Settings are saved to `~/.config/vrm-overlay/chat_tts_settings.json` by default (or `$XDG_CONFIG_HOME/vrm-overlay/chat_tts_settings.json` if set).
-- You can also set `OPENAI_API_KEY`, `PIPER_BIN` (default `piper`), and `PIPER_MODEL` (voice `.onnx`) via env vars.
-- Default model/animation are set to this repo’s `test.vrm` and `animation/Relax.vrma` (override in Settings).
-- The default animation is forced to loop via `blend_to(..., loop=true)`.
-- Theme defaults to `auto` (tries to follow your OS dark/light preference); you can override to `light`/`dark` in Settings.
-- Auto-blink is enabled by default (toggle in Settings).
-- Debug log is written to `~/.config/vrm-overlay/chat_tts.log` (or `$XDG_CONFIG_HOME/vrm-overlay/chat_tts.log`).
+## Speech and settings
+
+Nano through CrispASR on Vulkan is the default. Settings select the provider,
+CrispASR backend (Nano, Turbo, Kokoro or another supported ID), device and optional
+model/decoder/voice paths. Blank CrispASR paths request automatic resolution.
+See [local speech](../../docs/tts.md) for downloads, cache locations and limits.
+
+Piper is optional and requires its executable, a local `.onnx` voice and matching
+`.onnx.json`. Existing settings with an explicit Piper voice retain that provider;
+legacy `PIPER_BIN` and `PIPER_MODEL` environment variables are also supported.
+Studio's provider profiles are stored separately from this example's settings.
+
+Settings and logs live under `${XDG_CONFIG_HOME:-~/.config}/vrm-overlay/` as
+`chat_tts_settings.json` and `chat_tts.log`. Theme and auto-blink are configurable.
+
+Stop cancels queued playback and inference; late sentences are discarded.
+CrispASR stays resident between sentences and is terminated on cancellation.
+Queues are bounded and playback buffers roughly one second. `Idle` means the
+runtime playback queue drained; device latency can add a small delay.
+
+The shared client matches every acknowledgement by request ID. See the
+[IPC reference](../../docs/api.md) and [architecture](../../docs/architecture.md).
+Headless transport/audio/cancellation checks run with `make test`, without an AI
+service or voice download. Conversation controls are not yet part of Studio.

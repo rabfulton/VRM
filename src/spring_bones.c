@@ -1,10 +1,11 @@
 /*
- * VRM Spring Bone Physics - VRMC_springBone-1.0 Spec Compliant
+ * VRM spring chains - fixed-step simulation with garment collision extensions
  */
 
 #include "spring_bones.h"
 #include "gltf_loader.h"
 #include <math.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@ float g_spring_cloth_drag = 1.2f;
 float g_spring_cloth_gravity = 0.1f;
 float g_spring_cloth_taper = 0.6f;
 int g_spring_debug_collisions = 0;
-static int g_spring_settle_frames = 0;
+int g_spring_garment_collisions = 1;
 
 /* Vector math */
 static inline void v3_sub(const float *a, const float *b, float *out) {
@@ -289,76 +290,234 @@ static void quat_from_to(const float *from, const float *to, float *q) {
     v3_normalize(fn); v3_normalize(tn);
     float d = v3_dot(fn, tn);
     if (d > 0.9999f) { q[0]=q[1]=q[2]=0; q[3]=1; return; }
-    if (d < -0.9999f) { q[0]=1; q[1]=q[2]=0; q[3]=0; return; }
+    if (d < -0.9999f) {
+        /* A 180-degree rotation needs an axis perpendicular to this bone. */
+        float axis[3];
+        if (fabsf(fn[0]) < 0.8f) { axis[0]=0; axis[1]=fn[2]; axis[2]=-fn[1]; }
+        else { axis[0]=-fn[2]; axis[1]=0; axis[2]=fn[0]; }
+        v3_normalize(axis);
+        memcpy(q,axis,3*sizeof(float)); q[3]=0; return;
+    }
     float axis[3] = { fn[1]*tn[2]-fn[2]*tn[1], fn[2]*tn[0]-fn[0]*tn[2], fn[0]*tn[1]-fn[1]*tn[0] };
     q[0]=axis[0]; q[1]=axis[1]; q[2]=axis[2]; q[3]=1.0f+d;
     float len = sqrtf(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]);
     if (len > 1e-6f) { q[0]/=len; q[1]/=len; q[2]/=len; q[3]/=len; }
 }
 
-/* Sphere collider - returns distance (negative = collision) and direction */
-static void collide_sphere(const float *tail, float joint_radius,
-                           const float *center, float col_radius,
-                           float *distance, float *direction) {
-    float delta[3];
-    v3_sub(tail, center, delta);
-    float mag = v3_len(delta);
-    *distance = mag - col_radius - joint_radius;
-    if (mag > 1e-6f) {
-        direction[0] = delta[0]/mag;
-        direction[1] = delta[1]/mag;
-        direction[2] = delta[2]/mag;
-    } else {
-        direction[0] = 0; direction[1] = 1; direction[2] = 0;
+/* Runtime policy augments named garments; authored collider groups stay intact. */
+typedef struct {
+    SpringCollider collider;
+    int group;
+    int arm;
+    float previous_head[3], previous_tail[3], head[3], tail[3];
+    float previous_radius, radius;
+} RuntimeCollider;
+
+struct SpringRuntime {
+    RuntimeCollider *colliders;
+    int collider_count;
+    unsigned char *garments;
+    double accumulator;
+    SpringStats stats;
+};
+
+static float maximum_scale(const float *matrix) {
+    float maximum = 0;
+    for (int col=0;col<3;col++) {
+        float length = v3_len(matrix+col*4);
+        if (length > maximum) maximum = length;
     }
+    return maximum;
 }
 
-/* Capsule collider - per spec pseudocode */
-static void collide_capsule(const float *tail, float joint_radius,
-                            const float *offset, const float *cap_tail, float col_radius,
-                            float *distance, float *direction) {
-    float delta[3], offset_to_tail[3];
-    v3_sub(tail, offset, delta);
-    v3_sub(cap_tail, offset, offset_to_tail);
-    float dot = v3_dot(offset_to_tail, delta);
-
-    float sq_len = v3_len_sq(offset_to_tail);
-    if (sq_len > 1e-8f) {
-        if (dot < 0.0f) {
-            /* Joint at head side - use delta as is */
-        } else if (dot > sq_len) {
-            /* Joint at tail side */
-            v3_sub(delta, offset_to_tail, delta);
-        } else {
-            /* Joint between head and tail */
-            float t = dot / sq_len;
-            float proj[3];
-            v3_scale(offset_to_tail, t, proj);
-            v3_sub(delta, proj, delta);
-        }
-    }
-
-    float mag = v3_len(delta);
-    *distance = mag - col_radius - joint_radius;
-    if (mag > 1e-6f) {
-        direction[0] = delta[0]/mag;
-        direction[1] = delta[1]/mag;
-        direction[2] = delta[2]/mag;
-    } else {
-        direction[0] = 0; direction[1] = 1; direction[2] = 0;
-    }
-}
-
-static int find_neck_node(const GltfModel *model) {
-    if (!model || !model->humanoid_names || !model->humanoid_bones) return -1;
-    for (int i = 0; i < model->humanoid_bone_count; i++) {
-        if (strcmp(model->humanoid_names[i], "neck") == 0 ||
-            strcmp(model->humanoid_names[i], "Neck") == 0) {
-            int idx = model->humanoid_bones[i];
-            if (idx >= 0 && idx < model->node_count) return idx;
-        }
-    }
+static int humanoid_node(const GltfModel *model, const char *name) {
+    for (int i=0;i<model->humanoid_bone_count;i++)
+        if (!strcmp(model->humanoid_names[i], name)) return model->humanoid_bones[i];
     return -1;
+}
+
+static int arm_node(const GltfModel *model, int node) {
+    const char *names[] = {"leftUpperArm", "leftLowerArm", "leftHand", "rightUpperArm", "rightLowerArm", "rightHand"};
+    for (int i=0;i<6;i++) if (node >= 0 && node == humanoid_node(model, names[i])) return 1;
+    return 0;
+}
+
+static int garment_chain(const GltfModel *model, const SpringBoneGroup *group) {
+    if (!group->bones || group->bone_count == 0) return 0;
+    int node = group->bones[0];
+    if (node < 0 || node >= model->node_count) return 0;
+    char name[sizeof(model->nodes[node].name)];
+    size_t i=0;
+    for (;i+1<sizeof(name) && model->nodes[node].name[i];i++)
+        name[i] = (char)tolower((unsigned char)model->nodes[node].name[i]);
+    name[i] = 0;
+    return strstr(name, "skirt") || strstr(name, "dress") || strstr(name, "coat") || strstr(name, "cloth");
+}
+
+static void capture_colliders(GltfModel *model, int reset) {
+    struct SpringRuntime *runtime = model->spring_runtime;
+    for (int i=0;i<runtime->collider_count;i++) {
+        RuntimeCollider *col = &runtime->colliders[i];
+        const float *matrix = model->nodes[col->collider.node].world_matrix;
+        transform_point(matrix, col->collider.offset, col->head);
+        if (col->collider.is_capsule) transform_point(matrix, col->collider.tail, col->tail);
+        else memcpy(col->tail, col->head, sizeof(col->tail));
+        col->radius = col->collider.radius * maximum_scale(matrix);
+        if (reset) {
+            memcpy(col->previous_head, col->head, sizeof(col->head));
+            memcpy(col->previous_tail, col->tail, sizeof(col->tail));
+            col->previous_radius = col->radius;
+        }
+    }
+}
+
+static void create_spring_runtime(GltfModel *model) {
+    if (model->spring_runtime) return;
+    struct SpringRuntime *rt = calloc(1, sizeof(*rt));
+    if (!rt) return;
+    int authored_count = 0;
+    for (int g=0;g<model->spring_collider_count;g++) authored_count += model->spring_colliders[g].collider_count;
+    rt->colliders = calloc((size_t)authored_count + 6, sizeof(*rt->colliders));
+    rt->garments = calloc((size_t)model->spring_group_count, 1);
+    if (!rt->colliders || !rt->garments) { free(rt->colliders); free(rt->garments); free(rt); return; }
+    for (int g=0;g<model->spring_group_count;g++) {
+        rt->garments[g] = (unsigned char)garment_chain(model, &model->spring_groups[g]);
+        rt->stats.garment_chains += rt->garments[g] != 0;
+    }
+    for (int g=0;g<model->spring_collider_count;g++) {
+        SpringColliderGroup *group = &model->spring_colliders[g];
+        for (int c=0;c<group->collider_count;c++) {
+            SpringCollider col = group->colliders[c];
+            if (col.node < 0 || col.node >= model->node_count) continue;
+            RuntimeCollider *dst = &rt->colliders[rt->collider_count++];
+            dst->collider = col; dst->group = g; dst->arm = arm_node(model, col.node);
+            rt->stats.arm_colliders += dst->arm;
+        }
+    }
+    /* Missing arm volumes get conservative humanoid capsule proxies. */
+    const char *starts[] = {"leftUpperArm", "leftLowerArm", "leftHand", "rightUpperArm", "rightLowerArm", "rightHand"};
+    const char *ends[] = {"leftLowerArm", "leftHand", "leftMiddleProximal", "rightLowerArm", "rightHand", "rightMiddleProximal"};
+    for (int i=0;i<6;i++) {
+        int start = humanoid_node(model, starts[i]), end = humanoid_node(model, ends[i]);
+        if (start < 0 || start >= model->node_count || end < 0 || end >= model->node_count) continue;
+        int exists = 0;
+        for (int c=0;c<rt->collider_count;c++) if (rt->colliders[c].collider.node == start && rt->colliders[c].arm) exists = 1;
+        if (exists) continue;
+        float inverse[16], world_tail[3], local_tail[3];
+        if (!mat4_inverse(model->nodes[start].world_matrix, inverse)) continue;
+        get_world_pos(model->nodes[end].world_matrix, world_tail);
+        transform_point(inverse, world_tail, local_tail);
+        float length = v3_len(local_tail);
+        if (length < 1e-5f) continue;
+        RuntimeCollider *dst = &rt->colliders[rt->collider_count++];
+        dst->collider.node = start; dst->collider.is_capsule = 1;
+        dst->collider.radius = length * (i%3 == 2 ? 0.4f : 0.16f);
+        memcpy(dst->collider.tail, local_tail, sizeof(local_tail));
+        dst->group = -1; dst->arm = 1;
+        rt->stats.arm_colliders++;
+        rt->stats.generated_arm_colliders++;
+    }
+    model->spring_runtime = rt;
+    capture_colliders(model, 1);
+}
+
+/* Closest points of two segments, including point/sphere degeneracies. */
+static float segment_distance(const float *p1, const float *q1, const float *p2,
+                              const float *q2, float *fraction, float *on_body) {
+    float d1[3], d2[3], r[3];
+    v3_sub(q1,p1,d1); v3_sub(q2,p2,d2); v3_sub(p1,p2,r);
+    float a=v3_dot(d1,d1), e=v3_dot(d2,d2), f=v3_dot(d2,r), s=0, t=0;
+    if (a > 1e-12f) {
+        float c=v3_dot(d1,r);
+        if (e <= 1e-12f) s=fminf(1,fmaxf(0,-c/a));
+        else {
+            float b=v3_dot(d1,d2), denominator=a*e-b*b;
+            if (denominator > 1e-12f) s=fminf(1,fmaxf(0,(b*f-c*e)/denominator));
+            t=(b*s+f)/e;
+            if (t<0) { t=0; s=fminf(1,fmaxf(0,-c/a)); }
+            else if (t>1) { t=1; s=fminf(1,fmaxf(0,(b-c)/a)); }
+        }
+    } else if (e>1e-12f) t=fminf(1,fmaxf(0,f/e));
+    float delta[3];
+    for (int i=0;i<3;i++) { on_body[i]=p2[i]+d2[i]*t; delta[i]=p1[i]+d1[i]*s-on_body[i]; }
+    *fraction=s;
+    return v3_len(delta);
+}
+
+/* Project contact onto the bone-length sphere, rather than undoing separation
+ * with a subsequent length projection. Contacts at a fixed root can be infeasible. */
+static int separate_contact(const float *root, float *tail, float length,
+                            float fraction, const float *center, float radius) {
+    float distance_vector[3], direction[3], axis[3], tangent[3];
+    v3_sub(center,root,distance_vector);
+    float d=v3_len(distance_vector), contact_length=length*fraction;
+    if (d<1e-7f || contact_length<1e-6f) return 0;
+    float k=(contact_length*contact_length+d*d-radius*radius)/(2*contact_length*d);
+    if (k < -1 || k > 1) return 0;
+    v3_scale(distance_vector,1/d,axis);
+    v3_sub(tail,root,direction); v3_normalize(direction);
+    float dot=v3_dot(direction,axis);
+    for (int i=0;i<3;i++) tangent[i]=direction[i]-axis[i]*dot;
+    if (v3_len(tangent)<1e-6f) {
+        int coordinate=fabsf(axis[0])<0.8f ? 0 : 1;
+        for (int i=0;i<3;i++) tangent[i]=(i==coordinate ? 1.0f : 0)-axis[i]*axis[coordinate];
+    }
+    v3_normalize(tangent);
+    float lateral=sqrtf(fmaxf(0,1-k*k));
+    for (int i=0;i<3;i++) tail[i]=root[i]+length*(axis[i]*k+tangent[i]*lateral);
+    return 1;
+}
+
+static int collider_applies(const SpringBoneGroup *group, const RuntimeCollider *col, int garment) {
+    if (garment && g_spring_garment_collisions && col->arm) return 1;
+    if (col->group >= 0) for (int i=0;i<group->collider_group_count;i++) if (group->collider_groups[i] == col->group) return 1;
+    return 0;
+}
+
+static int solve_contacts(GltfModel *model, SpringBoneGroup *group, SpringJoint *joint,
+                          const float *root, float *tail, int garment, float alpha) {
+    struct SpringRuntime *rt=model->spring_runtime;
+    int contacts=0;
+    float hit=joint->hit_radius*maximum_scale(model->nodes[joint->node].world_matrix);
+    for (int iteration=0;iteration<12;iteration++) {
+        int corrected=0;
+        for (int c=0;c<rt->collider_count;c++) {
+            RuntimeCollider *col=&rt->colliders[c];
+            if (!collider_applies(group,col,garment)) continue;
+            float a[3], b[3], on_body[3], fraction;
+            for (int i=0;i<3;i++) {
+                a[i]=col->previous_head[i]+alpha*(col->head[i]-col->previous_head[i]);
+                b[i]=col->previous_tail[i]+alpha*(col->tail[i]-col->previous_tail[i]);
+            }
+            float radius=hit+col->previous_radius+alpha*(col->radius-col->previous_radius);
+            float distance=garment ? segment_distance(root,tail,a,b,&fraction,on_body) :
+                                    segment_distance(tail,tail,a,b,&fraction,on_body);
+            if (!garment) fraction=1;
+            if (distance+1e-5f >= radius) continue;
+            if (iteration == 0) contacts++;
+            corrected |= separate_contact(root,tail,joint->bone_length,fraction,on_body,radius+1e-5f);
+        }
+        if (!corrected) break;
+    }
+    for (int c=0;c<rt->collider_count;c++) {
+        RuntimeCollider *col=&rt->colliders[c];
+        int applies=collider_applies(group,col,garment);
+        if (!applies && !(garment && col->arm)) continue;
+        float a[3],b[3],body[3],fraction;
+        for (int i=0;i<3;i++) {
+            a[i]=col->previous_head[i]+alpha*(col->head[i]-col->previous_head[i]);
+            b[i]=col->previous_tail[i]+alpha*(col->tail[i]-col->previous_tail[i]);
+        }
+        float radius=hit+col->previous_radius+alpha*(col->radius-col->previous_radius);
+        float distance=garment ? segment_distance(root,tail,a,b,&fraction,body) : segment_distance(tail,tail,a,b,&fraction,body);
+        float penetration=fmaxf(0,radius-distance);
+        if (garment && col->arm && penetration>rt->stats.garment_arm_penetration) rt->stats.garment_arm_penetration=penetration;
+        if (!applies) continue;
+        if (penetration > rt->stats.max_penetration) rt->stats.max_penetration=penetration;
+        if (penetration>0.001f) rt->stats.unresolved_contacts++;
+    }
+    rt->stats.contacts += contacts;
+    return contacts;
 }
 
 /* Initialize spring bones per spec */
@@ -438,6 +597,7 @@ void spring_bones_init(GltfModel *model) {
 
         group->avg_bone_length = bone_len_count > 0 ? bone_len_sum / (float)bone_len_count : 0.0f;
     }
+    create_spring_runtime(model);
     printf("Spring bones initialized: %d groups, %d joint pairs\n",
            model->spring_group_count, total_joints);
 }
@@ -445,8 +605,19 @@ void spring_bones_init(GltfModel *model) {
 /* Reset to rest pose */
 void spring_bones_reset(GltfModel *model) {
     if (!model) return;
-    g_spring_settle_frames = 5;
+    if (model->spring_runtime) model->spring_runtime->accumulator = 0;
 
+    /* Restore all spring rotations before refreshing their world-space tails. */
+    for (int g=0;g<model->spring_group_count;g++) {
+        SpringBoneGroup *group=&model->spring_groups[g];
+        for (int j=0;j<group->joint_count;j++) {
+            int node=group->joints[j].node;
+            if (node>=0 && node<model->node_count) memcpy(model->nodes[node].rotation,model->nodes[node].base_rotation,4*sizeof(float));
+        }
+    }
+    const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    for (int n=0;n<model->node_count;n++) if (model->nodes[n].parent_index<0) update_node_transform(model,n,identity);
+    if (model->spring_runtime) capture_colliders(model,1);
     for (int g = 0; g < model->spring_group_count; g++) {
         SpringBoneGroup *group = &model->spring_groups[g];
         if (!group->joints) continue;
@@ -470,42 +641,13 @@ void spring_bones_reset(GltfModel *model) {
     }
 }
 
-/* Update per VRMC_springBone-1.0 spec algorithm */
-void spring_bones_update(GltfModel *model, float dt) {
-    if (!model || model->spring_group_count == 0 || dt <= 0) return;
-
-    /* Settle period - snap to rest */
-    if (g_spring_settle_frames > 0) {
-        g_spring_settle_frames--;
-        for (int g = 0; g < model->spring_group_count; g++) {
-            SpringBoneGroup *group = &model->spring_groups[g];
-            if (!group->joints) continue;
-            for (int i = 0; i < group->joint_count; i++) {
-                SpringJoint *joint = &group->joints[i];
-                int tail_idx = group->bones[i + 1];
-                if (tail_idx < 0 || tail_idx >= model->node_count) continue;
-                float tail_pos[3];
-                get_world_pos(model->nodes[tail_idx].world_matrix, tail_pos);
-                memcpy(joint->current_tail, tail_pos, 3*sizeof(float));
-                memcpy(joint->prev_tail, tail_pos, 3*sizeof(float));
-            }
-        }
-        return;
-    }
-
+/* Advance spring chains and resolve contacts at the fixed simulation step. */
+static void spring_step(GltfModel *model, float dt, float alpha) {
     for (int g = 0; g < model->spring_group_count; g++) {
         SpringBoneGroup *group = &model->spring_groups[g];
         if (!group->joints || group->joint_count == 0) continue;
 
-        int neck_idx = find_neck_node(model);
-        int root_idx = group->bones ? group->bones[0] : -1;
-        int cloth_chain = 0;
-        if (neck_idx >= 0 && root_idx >= 0 && root_idx < model->node_count) {
-            float neck_pos[3], root_pos[3];
-            get_world_pos(model->nodes[neck_idx].world_matrix, neck_pos);
-            get_world_pos(model->nodes[root_idx].world_matrix, root_pos);
-            cloth_chain = root_pos[1] < neck_pos[1];
-        }
+        int cloth_chain = model->spring_runtime->garments[g];
 
         /* Process joints root to tip (spec: calculation order) */
         for (int i = 0; i < group->joint_count; i++) {
@@ -519,8 +661,6 @@ void spring_bones_update(GltfModel *model, float dt) {
             float stiffness = joint->stiffness;
             float grav_power = joint->gravity_power;
             float *grav_dir = joint->gravity_dir;
-            float hit_radius = joint->hit_radius;
-            if (grav_power == 0.0f) grav_power = 0.1f; /* Fallback: zero gravity causes issues; revisit with better collision handling. */
 
             /* Apply global tuning */
             drag *= g_spring_drag;
@@ -568,25 +708,25 @@ void spring_bones_update(GltfModel *model, float dt) {
                     transform_point(center_inv, joint->current_tail, curr_center);
                     transform_point(center_inv, joint->prev_tail, prev_center);
                     v3_sub(curr_center, prev_center, inertia_center);
-                    v3_scale(inertia_center, 1.0f - drag, inertia_center);
+                    v3_scale(inertia_center, powf(fmaxf(0.0f, 1.0f-fminf(1.0f,drag)), dt*60.0f), inertia_center);
                     transform_vec(center_world, inertia_center, inertia);
                 } else {
                     v3_sub(joint->current_tail, joint->prev_tail, inertia);
-                    v3_scale(inertia, 1.0f - drag, inertia);
+                    v3_scale(inertia, powf(fmaxf(0.0f, 1.0f-fminf(1.0f,drag)), dt*60.0f), inertia);
                 }
             } else {
                 v3_sub(joint->current_tail, joint->prev_tail, inertia);
-                v3_scale(inertia, 1.0f - drag, inertia);
+                v3_scale(inertia, powf(fmaxf(0.0f, 1.0f-fminf(1.0f,drag)), dt*60.0f), inertia);
             }
 
-            /* Stiffness: dt * parentWorldRotation * initialLocalRotation * boneAxis * stiffness */
+            /* Scale reference 60 Hz forces for the 120 Hz Verlet step. */
             float stiff_force[3];
-            v3_scale(rest_dir, dt * stiffness, stiff_force);
+            v3_scale(rest_dir, dt * dt * 60.0f * stiffness, stiff_force);
 
-            /* External (gravity): dt * gravityDir * gravityPower */
+            /* Authored zero gravity is intentional and remains zero. */
             float external[3];
             float grav_dir_use[3] = {grav_dir[0], grav_dir[1], grav_dir[2]};
-            v3_scale(grav_dir_use, dt * grav_power, external);
+            v3_scale(grav_dir_use, dt * dt * 60.0f * grav_power, external);
 
             /* nextTail = currentTail + inertia + stiffness + external */
             float next_tail[3];
@@ -604,59 +744,17 @@ void spring_bones_update(GltfModel *model, float dt) {
             }
             v3_add(world_pos, to_tail, next_tail);
 
-            /* === STEP 2: Collision with colliders === */
-            for (int c = 0; c < group->collider_group_count; c++) {
-                int cg_idx = group->collider_groups[c];
-                if (cg_idx < 0 || cg_idx >= model->spring_collider_count) continue;
-                SpringColliderGroup *cg = &model->spring_colliders[cg_idx];
-
-                for (int j = 0; j < cg->collider_count; j++) {
-                    SpringCollider *col = &cg->colliders[j];
-                    if (col->node < 0 || col->node >= model->node_count) continue;
-
-                    GltfNode *col_node = &model->nodes[col->node];
-                    float col_world[3];
-                    transform_point(col_node->world_matrix, col->offset, col_world);
-                    float col_radius = col->radius;
-
-                    float distance, direction[3];
-
-                    if (col->is_capsule) {
-                        float tail_world[3];
-                        transform_point(col_node->world_matrix, col->tail, tail_world);
-                        collide_capsule(next_tail, hit_radius, col_world, tail_world,
-                                       col_radius, &distance, direction);
-                    } else {
-                        collide_sphere(next_tail, hit_radius, col_world, col_radius,
-                                      &distance, direction);
-                    }
-
-                    if (g_spring_debug_collisions) {
-                        printf("Spring col: group=%d joint=%d col_node=%d dist=%.4f hit=%.4f col=%.4f\n",
-                               g, i, col->node, distance, hit_radius, col_radius);
-                    }
-                    if (distance < 0.0f) {
-                        /* Push out: nextTail = nextTail - direction * distance */
-                        float push[3];
-                        v3_scale(direction, -distance, push);
-                        v3_add(next_tail, push, next_tail);
-
-                        /* Re-constrain length */
-                        v3_sub(next_tail, world_pos, to_tail);
-                        len = v3_len(to_tail);
-                        if (len > 1e-6f) {
-                            v3_scale(to_tail, joint->bone_length / len, to_tail);
-                        }
-                        v3_add(world_pos, to_tail, next_tail);
-                    }
-                }
-            }
-
-            /* === STEP 3: Apply rotation === */
-
-            /* Update state */
-            memcpy(joint->prev_tail, joint->current_tail, 3*sizeof(float));
-            memcpy(joint->current_tail, next_tail, 3*sizeof(float));
+            float free_tail[3];
+            memcpy(free_tail,next_tail,sizeof(free_tail));
+            int contacts=solve_contacts(model,group,joint,world_pos,next_tail,cloth_chain,alpha);
+            float velocity[3],normal[3];
+            v3_sub(free_tail,joint->current_tail,velocity);
+            v3_sub(next_tail,free_tail,normal);
+            v3_normalize(normal);
+            float inward=v3_dot(velocity,normal);
+            if (contacts && inward<0) for (int k=0;k<3;k++) velocity[k]-=inward*normal[k];
+            for (int k=0;k<3;k++) joint->prev_tail[k]=next_tail[k]-velocity[k];
+            memcpy(joint->current_tail,next_tail,sizeof(joint->current_tail));
 
             float parent_world[16];
             if (node->parent_index >= 0 && node->parent_index < model->node_count) {
@@ -697,9 +795,44 @@ void spring_bones_update(GltfModel *model, float dt) {
     }
 }
 
+/* Fixed physics clock, independent of rendering rate. Collider motion is
+ * interpolated across catch-up steps; long stalls reset velocity instead. */
+void spring_bones_update(GltfModel *model, float dt) {
+    if (!model || !model->spring_runtime || !isfinite(dt) || dt<=0) return;
+    struct SpringRuntime *rt=model->spring_runtime;
+    if (dt>0.25f) {
+        rt->stats.dropped_time += dt;
+        spring_bones_reset(model);
+        return;
+    }
+    capture_colliders(model,0);
+    rt->accumulator += dt;
+    const double step=1.0/120.0;
+    int steps=(int)((rt->accumulator+1e-9)/step);
+    if (steps>30) steps=30;
+    if (!steps) return;
+    rt->stats.contacts=rt->stats.unresolved_contacts=0;
+    rt->stats.max_penetration=rt->stats.garment_arm_penetration=0;
+    rt->stats.steps=steps;
+    for (int i=0;i<steps;i++) spring_step(model,(float)step,(float)(i+1)/steps);
+    rt->accumulator -= steps*step;
+    capture_colliders(model,1);
+}
+
+SpringStats spring_bones_stats(const GltfModel *model) {
+    SpringStats zero={0};
+    return model && model->spring_runtime ? model->spring_runtime->stats : zero;
+}
+
 /* Cleanup */
 void spring_bones_cleanup(GltfModel *model) {
     if (!model) return;
+    if (model->spring_runtime) {
+        free(model->spring_runtime->colliders);
+        free(model->spring_runtime->garments);
+        free(model->spring_runtime);
+        model->spring_runtime=NULL;
+    }
 
     for (int g = 0; g < model->spring_group_count; g++) {
         SpringBoneGroup *group = &model->spring_groups[g];

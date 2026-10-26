@@ -7,6 +7,7 @@
 // Miniaudio data callback
 static void data_callback(ma_device *pDevice, void *pOutput, const void *pInput,
                           ma_uint32 frameCount) {
+  (void)pInput;
   AudioSystem *sys = (AudioSystem *)pDevice->pUserData;
   if (!sys)
     return;
@@ -27,11 +28,11 @@ void audio_init(AudioSystem *sys) {
   if (!sys)
     return;
   memset(sys->buffer, 0, sizeof(sys->buffer));
-  sys->write_pos = 0;
-  sys->read_pos = 0;
-  sys->total_written = 0;
-  sys->total_read = 0;
-  sys->active = true;
+  atomic_init(&sys->write_pos, 0);
+  atomic_init(&sys->read_pos, 0);
+  atomic_init(&sys->total_written, 0);
+  atomic_init(&sys->total_read, 0);
+  sys->active = false;
   sys->backend_data = NULL;
   printf("Audio: Initialized ring buffer size=%d samples\n", AUDIO_BUFFER_SIZE);
 }
@@ -66,6 +67,7 @@ bool audio_start(AudioSystem *sys) {
   }
 
   sys->backend_data = device;
+  sys->active = true;
   printf("Audio: Playback started at %d Hz\n", AUDIO_SAMPLE_RATE);
   return true;
 }
@@ -78,6 +80,7 @@ void audio_stop(AudioSystem *sys) {
   ma_device_uninit(device);
   free(device);
   sys->backend_data = NULL;
+  sys->active = false;
   printf("Audio: Playback stopped\n");
 }
 
@@ -91,9 +94,8 @@ void audio_free(AudioSystem *sys) {
 size_t audio_available(AudioSystem *sys) {
   if (!sys)
     return 0;
-  // Load local copies to avoid tearing if checked from other thread
-  size_t w = sys->write_pos;
-  size_t r = sys->read_pos;
+  size_t w = atomic_load_explicit(&sys->write_pos, memory_order_acquire);
+  size_t r = atomic_load_explicit(&sys->read_pos, memory_order_acquire);
 
   if (w >= r) {
     return w - r;
@@ -114,25 +116,24 @@ size_t audio_write(AudioSystem *sys, const int16_t *samples, size_t count) {
 
   size_t free_space = audio_free_space(sys);
   if (count > free_space) {
-    count = free_space; // Drop excess or handle partial write
+    return 0; // Never partially accept an IPC chunk.
   }
 
-  size_t w = sys->write_pos;
+  size_t w = atomic_load_explicit(&sys->write_pos, memory_order_relaxed);
   size_t first_chunk = AUDIO_BUFFER_SIZE - w;
 
   if (count <= first_chunk) {
     // Contiguous write
     memcpy(&sys->buffer[w], samples, count * sizeof(int16_t));
-    sys->write_pos = (w + count) & AUDIO_BUFFER_MASK;
   } else {
     // Wrap around
     memcpy(&sys->buffer[w], samples, first_chunk * sizeof(int16_t));
     memcpy(&sys->buffer[0], &samples[first_chunk],
            (count - first_chunk) * sizeof(int16_t));
-    sys->write_pos = (count - first_chunk) & AUDIO_BUFFER_MASK;
   }
 
-  sys->total_written += count;
+  atomic_fetch_add_explicit(&sys->total_written, count, memory_order_relaxed);
+  atomic_store_explicit(&sys->write_pos, (w + count) & AUDIO_BUFFER_MASK, memory_order_release);
   return count;
 }
 
@@ -145,31 +146,38 @@ size_t audio_read(AudioSystem *sys, int16_t *output, size_t count) {
     count = available;
   }
 
-  size_t r = sys->read_pos;
+  size_t r = atomic_load_explicit(&sys->read_pos, memory_order_relaxed);
   size_t first_chunk = AUDIO_BUFFER_SIZE - r;
 
   if (count <= first_chunk) {
     // Contiguous read
     memcpy(output, &sys->buffer[r], count * sizeof(int16_t));
-    sys->read_pos = (r + count) & AUDIO_BUFFER_MASK;
   } else {
     // Wrap around
     memcpy(output, &sys->buffer[r], first_chunk * sizeof(int16_t));
     memcpy(&output[first_chunk], &sys->buffer[0],
            (count - first_chunk) * sizeof(int16_t));
-    sys->read_pos = (count - first_chunk) & AUDIO_BUFFER_MASK;
   }
 
-  sys->total_read += count;
+  atomic_fetch_add_explicit(&sys->total_read, count, memory_order_relaxed);
+  atomic_store_explicit(&sys->read_pos, (r + count) & AUDIO_BUFFER_MASK, memory_order_release);
   return count;
 }
 
-void audio_clear(AudioSystem *sys) {
-  if (!sys)
-    return;
-  sys->read_pos = sys->write_pos; // Reset head to tail
-  sys->total_written = 0;
-  sys->total_read = 0;
+bool audio_clear(AudioSystem *sys) {
+  if (!sys) return false;
+  ma_device *device = (ma_device *)sys->backend_data;
+  // ma_device_stop waits for the callback to finish. Never reset a live consumer.
+  if (device && ma_device_stop(device) != MA_SUCCESS) return false;
+  atomic_store(&sys->read_pos, 0);
+  atomic_store(&sys->write_pos, 0);
+  atomic_store(&sys->total_written, 0);
+  atomic_store(&sys->total_read, 0);
+  if (device) {
+    sys->active = ma_device_start(device) == MA_SUCCESS;
+    return sys->active;
+  }
+  return true;
 }
 
 bool audio_play_wav(AudioSystem *sys, const char *path) {

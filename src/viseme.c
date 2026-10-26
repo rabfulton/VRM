@@ -25,7 +25,7 @@ void viseme_init(VisemeAnalyzer *v) {
   v->gain = 1.0f;
   v->threshold = 0.02f; // ~2% of max amplitude
   v->smoothing = 0.3f;  // Moderate smoothing
-  v->enabled = false;
+  v->enabled = true;
 
   // Zero initial state
   memset(&v->smoothed, 0, sizeof(VisemeFrame));

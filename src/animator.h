@@ -6,6 +6,7 @@
 #define ANIMATOR_H
 
 #include "gltf_loader.h"
+#include "foot_lock.h"
 #include <stdbool.h>
 
 typedef struct {
@@ -18,6 +19,7 @@ typedef struct {
     /* Looping control */
     int loop_remaining;       /* -1 = infinite, 0 = no loop, >0 = repeats left */
     bool current_animation_loopable;
+    FootLock foot_lock;
 } Animator;
 
 typedef enum {

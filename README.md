@@ -1,127 +1,99 @@
 # vrm-overlay
 
-`vrm-overlay` is a small OpenGL renderer + IPC-controlled runtime for loading VRM/glTF avatars, playing VRMA/GLB animations, streaming/playing audio, and driving expressions/morph targets (including lip sync). It’s designed as a lightweight “overlay-style” avatar runtime that you control from another process.
+A lightweight Linux/X11 avatar overlay with a standalone Qt Quick controller.
+The C/C++ runtime renders VRM/glTF models, plays VRMA/GLB animations, simulates
+spring bones, and drives expressions and lip sync through JSON IPC.
 
-## Features
+## Build and launch
 
-- Load VRM models (VRM 0.x prioritized; VRM 1.0 best-effort).
-- Play VRMA/GLB animations with crossfades and loop control.
-- Spring bone simulation (including a “cloth” spring mode toggle).
-- Expression/morph control via a named expression map (VRM presets + aliases).
-- Audio playback + streaming (24kHz, 16-bit mono PCM) with lip-sync analysis.
-- JSON IPC server over a UNIX domain socket (`/tmp/vrm-overlay.sock`, NDJSON).
-- Built-in debug UI window and a small interactive controller script (`test.py`).
-
-## Quick Start
-
-Build:
+Requires a C11/C++20 toolchain, GNU Make 4.3+, CMake, pkg-config, and development
+packages for GLFW, libepoxy, X11 and Xext. Python 3.10+ and PySide6 are needed
+for Studio. The renderer itself has no Qt dependency.
 
 ```sh
-make
+git clone --recurse-submodules https://github.com/rabfulton/VRM.git
+cd VRM
+make -j4
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements-gui.txt
+python3 control.py --model /path/to/avatar.vrm --animation-dir /path/to/animations
 ```
 
-Run the overlay:
+For an existing clone, initialize dependencies with
+`git submodule update --init --recursive` before building. The retained submodule
+is ozz-animation; other runtime libraries are vendored under `deps/`.
+
+Supply your own avatars and animations. These assets, speech downloads and local
+settings are ignored by Git. See [asset setup](animation/README.md).
+Studio remembers the selected model and animation folder. On a new session it
+enables blinking and plays `Relax.vrma` if present.
+
+Studio starts a renderer when needed and closes only the renderer it started.
+To manage the renderer separately:
 
 ```sh
-./vrm-overlay
+./vrm-overlay --socket /tmp/my-avatar.sock /path/to/avatar.vrm
+python3 control.py --attach --socket /tmp/my-avatar.sock
 ```
 
-Then in another terminal, use the interactive test harness (spawns the overlay automatically if you run it directly):
+The runtime supports one active controller connection. Disconnect Studio before
+connecting another client. Use a separate socket for each independent instance.
 
-```sh
-./test.py
-```
+## Capabilities
 
-## Platform
+- Transparent avatar window, camera controls and toon/anime/PBR rendering.
+- Animation library, playback/seek/loop controls and velocity-preserving ozz transitions.
+- Fixed-step spring simulation with garment/arm collision proxies and diagnostics.
+- Flat-floor foot planting with leg IK and smooth contact release.
+- VRM expressions, automatic blinking and lip sync enabled by default.
+- Local speech with Nano/CrispASR on Vulkan by default; selectable Turbo, Kokoro,
+  Piper and custom CrispASR backends, with saved profiles and optional CPU processing.
 
-Currently targets Linux/X11 via GLFW + OpenGL (see link flags in `Makefile`).
+In Studio's **Speech** tab, select **Prepare voice**, then try a preview. Native
+engines and models download separately; no Python ML stack is required.
+See [speech setup and limits](docs/tts.md). Studio synthesizes a complete WAV
+before playback; the separate [chat example](examples/chat_tts/README.md)
+synthesizes streamed replies sentence by sentence.
 
-## IPC API
+Physics uses skeleton proxies rather than full cloth mesh contact. Foot planting
+currently assumes a flat floor. Desktop window interaction, microphone input and
+system-audio reactions remain planned work; see the [roadmap](docs/roadmap.md).
 
-The overlay listens on `/tmp/vrm-overlay.sock` and accepts newline-delimited JSON (NDJSON).
+## Control from code
 
-- Full reference: `API.md`
-- Design/protocol notes: `VRM.md` and `EVENT_REDESIGN.md`
-
-Minimal Python example (send one command, wait for one response):
+Commands are newline-delimited JSON over a Unix socket, defaulting to
+`/tmp/vrm-overlay.sock`. From this checkout:
 
 ```python
-import socket, json
+from vrm_overlay import IpcClient
 
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.connect("/tmp/vrm-overlay.sock")
-
-sock.send((json.dumps({"id": 1, "action": "load", "path": "test1.vrm"}) + "\n").encode())
-print(sock.recv(4096).decode())
+with IpcClient() as avatar:
+    avatar.load_model("/path/to/avatar.vrm")
+    avatar.auto_blink_enable(True)
+    print(avatar.request({"action": "list_expressions"}))
 ```
 
-Typical command sequence:
+See the [IPC reference](docs/api.md) for animation, expressions, streamed PCM,
+state queries and tuning commands. The shared Python client consumes replies,
+matches request IDs and raises `IpcError` on rejected commands.
 
-```json
-{"action":"load","path":"test1.vrm"}
-{"action":"set_visible","visible":true}
-{"action":"load_animation","path":"animation/<clip>.vrma"}
-{"action":"blend_to","index":0,"duration":0.5,"loop":true}
-{"action":"play"}
-```
+## Documentation and checks
 
-Common commands:
-
-```json
-{"action":"set_expression","name":"A","weight":1.0}
-{"action":"play_audio_file","path":"test.wav"}
-{"action":"auto_blink_enable","enabled":true}
-```
-
-## Controls
-
-### Overlay window (built-in)
-
-- `q` / `Esc`: quit
-- `t`: toggle always-on-top
-- `c`: toggle shader mode (e.g. cel shading)
-- `b`: toggle spring “cloth mode”
-- `1`–`5`: animation axis correction presets
-
-### `test.py` (interactive IPC driver)
-
-`test.py` provides hotkeys for animation switching/blending, spring tuning, expressions, and audio + lip sync. See the header comment in `test.py` for the complete key list.
-
-## Build Notes
-
-### Dependencies
-
-Builds are driven by `make` and use `pkg-config` for system libraries:
-
-- C/C++ toolchain (`gcc`/`g++`)
-- `glfw3`, `epoxy`
-- `pkg-config`
-- `cmake` (only needed for the optional ozz/Jolt integration; enabled by default)
-
-### Optional ozz/Jolt integration
-
-By default, `make` builds and links a local copy of:
-
-- `deps/ozz-animation` (animation runtime)
-- `deps/JoltPhysics` (physics)
-
-To build without them:
+- [Studio guide](docs/studio.md)
+- [Local speech](docs/tts.md)
+- [Motion and clothing contacts](docs/motion.md)
+- [Foot planting](docs/foot-planting.md)
+- [Architecture and timing](docs/architecture.md)
+- [Development and testing](docs/development.md)
 
 ```sh
-make USE_OZZ_JOLT=0
+make test            # Headless native/Python regressions; no model or AI service
+make test-sanitize   # Native checks with ASan/UBSan
+make test-ui         # Real renderer and local reference assets; X11/audio required
+make test-speech     # Also synthesize real Nano on Vulkan; downloads may be needed
 ```
 
-## Project Layout
-
-- `src/`: runtime (renderer, loader, animation, IPC, audio, events, UI)
-- `deps/`: vendored third-party libraries
-- `animation/`: sample `.vrma`/`.glb` animations
-- `test.py`: interactive controller (IPC client)
-- `API.md`: up-to-date IPC/API reference and examples
-- `VRM.md`, `VRMA.md`, `SPEECH.md`, `EVENT_REDESIGN.md`, `UI.md`: design notes
-
-## Troubleshooting
-
-- **IPC socket issues**: if the process crashes, you may need to remove a stale socket: `rm -f /tmp/vrm-overlay.sock`.
-- **Build fails on missing libs**: ensure `pkg-config --cflags glfw3 epoxy` works (install your distro’s `glfw` + `libepoxy` development packages).
-- **Lip sync timing**: for best alignment, stream audio and drive mouth shapes from audio sample time (see notes in `SPEECH.md` and the event system design in `EVENT_REDESIGN.md`).
+When PySide6 is installed, the headless suite also tests actual QML controls
+with offscreen rendering. Integration asset requirements and path overrides are
+in the [development guide](docs/development.md).

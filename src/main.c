@@ -14,7 +14,6 @@
 #include "animator.h"
 #include "audio.h"
 #include "camera.h"
-#include "debug_ui.h"
 #include "event.h"
 #include "gltf_loader.h"
 #include "ipc.h"
@@ -22,16 +21,14 @@
 #include "renderer.h"
 #include "settings.h"
 #include "spring_bones.h"
-#include "ui_library/ui.h"
 #include "viseme.h"
 
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
 #include "ozz_bridge.h"
 #endif
 
 typedef struct {
   PlatformWindow *window;
-  PlatformWindow *ui_window;
   Renderer renderer;
   OrbitCamera camera;
   GltfModel model;
@@ -41,20 +38,17 @@ typedef struct {
   VisemeAnalyzer viseme;
   GLuint msaa_fbo, msaa_color, msaa_depth;
   int msaa_samples, fb_width, fb_height;
-  int ui_fb_width, ui_fb_height;
-  ui_interface_t *ui;
-  int32_t pie_menu_id;
-  bool ui_visible;
-  bool ui_force_pie_open;
-  bool ui_force_pie_open_pending;
-  bool ui_pending_close;
   bool visible, always_on_top, model_loaded, auto_resize, running;
   float cached_world_w, cached_world_h;
   double last_time;
   float model_position[3], model_rotation[3];
   float model_scale;
-  char current_anim_path[512];
+  char current_model_path[4096];
+  float frame_rate;
+  char current_anim_path[4096];
   bool has_current_anim;
+  bool audio_stream_open;
+  bool speech_pose_active;
   // Auto-blink state
   bool auto_blink_enabled;
   float auto_blink_rate;     // Blinks per minute
@@ -65,50 +59,20 @@ typedef struct {
 static VrmApp app = {0};
 static const char *SETTINGS_PATH = "settings.cfg";
 
-display_t display = {0};
-mouse_t mouse = {0};                             /* For UI library */
 static int model_mouse_x = 0, model_mouse_y = 0; /* For model window */
-static int model_mouse_buttons[3] = {0};         /* L, R, M */
-gl_buffer_t gl_buffer_default = {0};
 extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
 extern int g_spring_cloth_mode;
 extern float g_spring_cloth_stiffness, g_spring_cloth_drag,
     g_spring_cloth_gravity, g_spring_cloth_taper;
 extern float g_anim_seam_blend_time_default;
 
-static void update_ui_window_layout(void);
 static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
-static void show_ui_window(void);
-static void hide_ui_window(void);
-static void reset_springs_from_ui(void);
-static void save_springs_to_config(void);
-static void save_anim_params_to_config(void);
+static bool save_springs_to_config(void);
 
-static void update_display_metrics_for_window(PlatformWindow *win) {
-  int win_w = 0, win_h = 0;
-  float sx = 1.0f, sy = 1.0f;
-  platform_get_window_size(win, &win_w, &win_h);
-  platform_get_content_scale(win, &sx, &sy);
-  if (sx <= 0.0f)
-    sx = 1.0f;
-  if (sy <= 0.0f)
-    sy = 1.0f;
-  display.width = win_w;
-  display.height = win_h;
-  display.h_dpi = 96.0f * sx;
-  display.v_dpi = 96.0f * sy;
-  display.d_dpi = 96.0f * (sx > sy ? sx : sy);
-}
-
-static void reset_springs_from_ui(void) {
-  if (app.model_loaded)
-    spring_bones_reset(&app.model);
-}
-
-static void save_springs_to_config(void) {
+static bool save_springs_to_config(void) {
   if (!app.has_current_anim)
-    return;
+    return false;
   AnimConfig cfg = {0};
   cfg.spring_stiffness = g_spring_stiffness;
   cfg.spring_drag = g_spring_drag;
@@ -126,20 +90,9 @@ static void save_springs_to_config(void) {
   cfg.has_spring_cloth_drag = true;
   cfg.has_spring_cloth_gravity = true;
   cfg.has_spring_cloth_taper = true;
-  if (!anim_config_save(app.current_anim_path, &cfg)) {
-    printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
-  }
-}
-
-static void save_anim_params_to_config(void) {
-  if (!app.has_current_anim)
-    return;
-  AnimConfig cfg = {0};
   cfg.anim_seam_blend_time = g_anim_seam_blend_time_default;
   cfg.has_anim_seam_blend_time = true;
-  if (!anim_config_save(app.current_anim_path, &cfg)) {
-    printf("WARN: Failed to save anim config for %s\n", app.current_anim_path);
-  }
+  return anim_config_save(app.current_anim_path, &cfg);
 }
 
 static void msaa_cleanup(VrmApp *s) {
@@ -211,7 +164,6 @@ static void update_window_for_zoom(void) {
 
   platform_resize_window(app.window, w, h);
   platform_move_window(app.window, new_x, new_y);
-  update_ui_window_layout();
 }
 
 static void compute_and_cache_bounds(const char *anim_path) {
@@ -262,7 +214,7 @@ static void update_anim_correction_mode(int mode) {
 
 static void rebuild_ozz_after_correction_change(bool keep_snapshot) {
   (void)keep_snapshot;
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
   if (animator_get_use_ozz(&app.animator)) {
     animator_rebuild_ozz(&app.animator, keep_snapshot);
   }
@@ -308,25 +260,27 @@ static int b64_char_value(char c) {
     return 62;
   if (c == '/')
     return 63;
-  return 0;
+  return -1;
 }
 
+/* Strict base64 decoding: reject malformed padding and incomplete PCM upstream. */
 static size_t base64_decode(const char *src, size_t len, uint8_t *out) {
-  size_t i = 0, j = 0;
-  while (i < len) {
-    uint32_t v = b64_char_value(src[i]) << 18;
-    v |= (i + 1 < len ? b64_char_value(src[i + 1]) : 0) << 12;
-    v |= (i + 2 < len ? b64_char_value(src[i + 2]) : 0) << 6;
-    v |= (i + 3 < len ? b64_char_value(src[i + 3]) : 0);
-
-    out[j++] = (v >> 16) & 0xFF;
-    if (j < len * 3 / 4 && i + 2 < len && src[i + 2] != '=')
-      out[j++] = (v >> 8) & 0xFF;
-    if (j < len * 3 / 4 && i + 3 < len && src[i + 3] != '=')
-      out[j++] = v & 0xFF;
-    i += 4;
+  if (len % 4 != 0) return SIZE_MAX;
+  size_t written = 0;
+  for (size_t i = 0; i < len; i += 4) {
+    int a = b64_char_value(src[i]), b = b64_char_value(src[i + 1]);
+    bool pad_c = src[i + 2] == '=', pad_d = src[i + 3] == '=';
+    int c = pad_c ? 0 : b64_char_value(src[i + 2]);
+    int d = pad_d ? 0 : b64_char_value(src[i + 3]);
+    if (a < 0 || b < 0 || c < 0 || d < 0 || (pad_c && !pad_d) ||
+        ((pad_c || pad_d) && i + 4 != len) ||
+        (pad_c && (b & 15)) || (pad_d && !pad_c && (c & 3))) return SIZE_MAX;
+    uint32_t v = (uint32_t)a << 18 | (uint32_t)b << 12 | (uint32_t)c << 6 | (uint32_t)d;
+    out[written++] = (uint8_t)(v >> 16);
+    if (!pad_c) out[written++] = (uint8_t)(v >> 8);
+    if (!pad_d) out[written++] = (uint8_t)v;
   }
-  return j;
+  return written;
 }
 
 /* ============================================================================
@@ -448,6 +402,125 @@ static void auto_blink_stop(void) {
   printf("Auto-blink stopped\n");
 }
 
+/* A read-only snapshot used by external controllers; the render thread owns it. */
+static void respond_state(int id) {
+  cJSON *state = cJSON_CreateObject();
+  cJSON_AddNumberToObject(state, "api_version", 1);
+  cJSON_AddBoolToObject(state, "model_loaded", app.model_loaded);
+  cJSON_AddStringToObject(state, "model_path", app.current_model_path);
+  cJSON_AddStringToObject(state, "animation_path", app.current_anim_path);
+  cJSON_AddBoolToObject(state, "playing", app.animator.playing);
+  cJSON_AddNumberToObject(state, "animation_index", app.animator.current_animation);
+  cJSON_AddNumberToObject(state, "time", app.animator.time);
+  cJSON_AddNumberToObject(state, "speed", app.animator.speed);
+  cJSON_AddBoolToObject(state, "loop", app.animator.loop_remaining < 0);
+  cJSON_AddStringToObject(state, "backend", animator_get_use_ozz(&app.animator) ? "ozz" : "legacy");
+#ifdef VRM_USE_OZZ
+  cJSON_AddBoolToObject(state, "ozz_available", true);
+#else
+  cJSON_AddBoolToObject(state, "ozz_available", false);
+#endif
+  cJSON_AddNumberToObject(state, "frame_rate", app.frame_rate);
+  cJSON_AddBoolToObject(state, "visible", app.visible);
+  cJSON_AddBoolToObject(state, "always_on_top", app.always_on_top);
+  cJSON_AddBoolToObject(state, "auto_resize", app.auto_resize);
+  cJSON_AddNumberToObject(state, "scale", app.model_scale);
+  cJSON_AddStringToObject(state, "shader", app.renderer.shader_mode == RENDERER_SHADER_ANIME ? "anime" :
+                          app.renderer.shader_mode == RENDERER_SHADER_TOON ? "toon" : "pbr");
+  cJSON_AddBoolToObject(state, "lip_sync", app.viseme.enabled);
+  cJSON_AddNumberToObject(state, "correction", app.model_loaded ? app.model.anim_correction_mode : 0);
+  cJSON *clips = cJSON_AddArrayToObject(state, "clips");
+  float duration = 0.0f;
+  if (app.model_loaded) {
+    for (int i = 0; i < app.model.animation_count; i++) {
+      cJSON *clip = cJSON_CreateObject();
+      cJSON_AddNumberToObject(clip, "index", i);
+      cJSON_AddStringToObject(clip, "name", app.model.animations[i].name);
+      cJSON_AddNumberToObject(clip, "duration", app.model.animations[i].duration);
+      cJSON_AddItemToArray(clips, clip);
+      if (i == app.animator.current_animation) duration = app.model.animations[i].duration;
+    }
+  }
+  cJSON_AddNumberToObject(state, "duration", duration);
+  cJSON *expressions = cJSON_AddArrayToObject(state, "expressions");
+  if (app.model_loaded) {
+    char names[MAX_VRM_EXPRESSIONS][VRM_EXPRESSION_NAME_LEN];
+    int count = gltf_get_expression_names(&app.model, names, MAX_VRM_EXPRESSIONS);
+    for (int i = 0; i < count; i++) cJSON_AddItemToArray(expressions, cJSON_CreateString(names[i]));
+  }
+  cJSON *spring = cJSON_AddObjectToObject(state, "spring");
+  cJSON_AddNumberToObject(spring, "stiffness", g_spring_stiffness);
+  cJSON_AddNumberToObject(spring, "drag", g_spring_drag);
+  cJSON_AddNumberToObject(spring, "gravity", g_spring_gravity);
+  cJSON_AddBoolToObject(spring, "cloth_mode", g_spring_cloth_mode);
+  cJSON_AddNumberToObject(spring, "cloth_stiffness", g_spring_cloth_stiffness);
+  cJSON_AddNumberToObject(spring, "cloth_drag", g_spring_cloth_drag);
+  cJSON_AddNumberToObject(spring, "cloth_gravity", g_spring_cloth_gravity);
+  cJSON_AddNumberToObject(spring, "cloth_taper", g_spring_cloth_taper);
+  SpringStats stats = spring_bones_stats(&app.model);
+  cJSON *physics = cJSON_AddObjectToObject(state, "physics");
+  cJSON_AddBoolToObject(physics, "garment_collisions", g_spring_garment_collisions);
+  cJSON_AddNumberToObject(physics, "garment_chains", stats.garment_chains);
+  cJSON_AddNumberToObject(physics, "arm_colliders", stats.arm_colliders);
+  cJSON_AddNumberToObject(physics, "generated_arm_colliders", stats.generated_arm_colliders);
+  cJSON_AddNumberToObject(physics, "contacts", stats.contacts);
+  cJSON_AddNumberToObject(physics, "unresolved_contacts", stats.unresolved_contacts);
+  cJSON_AddNumberToObject(physics, "max_penetration", stats.max_penetration);
+  cJSON_AddNumberToObject(physics, "garment_arm_penetration", stats.garment_arm_penetration);
+  cJSON_AddNumberToObject(physics, "steps", stats.steps);
+  cJSON_AddNumberToObject(physics, "dropped_time", stats.dropped_time);
+  cJSON *planting = cJSON_AddObjectToObject(state, "foot_lock");
+  cJSON_AddBoolToObject(planting, "enabled", app.animator.foot_lock.enabled);
+  cJSON_AddNumberToObject(planting, "pelvis_offset", app.animator.foot_lock.pelvis_offset);
+  cJSON_AddNumberToObject(planting, "floor_offset", app.animator.foot_lock.floor_offset);
+  int supported = 0;
+  for (int i = 0; i < 2; i++) {
+    const FootPlant *foot = &app.animator.foot_lock.feet[i];
+    cJSON *entry = cJSON_AddObjectToObject(planting, i == 0 ? "left" : "right");
+    cJSON_AddBoolToObject(entry, "supported", foot->supported);
+    cJSON_AddBoolToObject(entry, "planted", foot->planted);
+    cJSON_AddNumberToObject(entry, "weight", foot->weight);
+    cJSON_AddNumberToObject(entry, "error", foot->error);
+    cJSON_AddNumberToObject(entry, "speed", foot->speed);
+    cJSON_AddNumberToObject(entry, "height", foot->has_reference ? foot->reference[1] - (foot->ground_height + app.animator.foot_lock.floor_offset) : 0);
+    cJSON_AddNumberToObject(entry, "ground_height", foot->ground_height);
+    cJSON_AddItemToObject(entry, "anchor", cJSON_CreateFloatArray(foot->anchor, 3));
+    if (app.model_loaded && foot->supported) {
+      cJSON_AddItemToObject(entry, "position", cJSON_CreateFloatArray(app.model.nodes[foot->ankle].world_matrix + 12, 3));
+    }
+    supported += foot->supported;
+  }
+  cJSON_AddNumberToObject(planting, "supported", supported);
+  cJSON *blend = cJSON_AddObjectToObject(state, "blend");
+#ifdef VRM_USE_OZZ
+  cJSON_AddBoolToObject(blend, "active", ozz_bridge_blend_active());
+  cJSON_AddNumberToObject(blend, "progress", ozz_bridge_blend_ratio());
+#else
+  cJSON_AddBoolToObject(blend, "active", false);
+  cJSON_AddNumberToObject(blend, "progress", 0);
+#endif
+  cJSON_AddNumberToObject(blend, "duration", g_anim_blend_time_default);
+  cJSON_AddNumberToObject(blend, "seam", g_anim_seam_blend_time_default);
+  cJSON_AddItemToObject(blend, "groups", cJSON_CreateFloatArray(g_anim_blend_group_factors, BLEND_GROUP_COUNT));
+  cJSON *blink = cJSON_AddObjectToObject(state, "blink");
+  cJSON_AddBoolToObject(blink, "enabled", app.auto_blink_enabled);
+  cJSON_AddNumberToObject(blink, "rate", app.auto_blink_rate);
+  cJSON_AddNumberToObject(blink, "duration", app.auto_blink_duration);
+  cJSON *camera = cJSON_AddObjectToObject(state, "camera");
+  cJSON_AddNumberToObject(camera, "azimuth", app.camera.azimuth);
+  cJSON_AddNumberToObject(camera, "polar", app.camera.polar);
+  cJSON_AddNumberToObject(camera, "dist", app.camera.distance);
+  char *text = cJSON_PrintUnformatted(state);
+  ipc_respond_data(&app.ipc, id, text);
+  free(text);
+  cJSON_Delete(state);
+}
+
+static bool valid_number(const cJSON *value, float minimum, float maximum) {
+  return cJSON_IsNumber(value) && isfinite(value->valuedouble) &&
+         value->valuedouble >= minimum && value->valuedouble <= maximum;
+}
+
 /* IPC command handler */
 static void on_ipc_command(const char *action, void *params, int id,
                            void *user_data) {
@@ -456,6 +529,86 @@ static void on_ipc_command(const char *action, void *params, int id,
   platform_make_context_current(app.window);
 
   if (strcmp(action, "ping") == 0) {
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "get_state") == 0) {
+    respond_state(id);
+  } else if (strcmp(action, "set_foot_lock") == 0) {
+    cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
+    if (!cJSON_IsBool(enabled)) {
+      ipc_respond(&app.ipc, id, false, "enabled must be boolean");
+      return;
+    }
+    app.animator.foot_lock.enabled = cJSON_IsTrue(enabled);
+    foot_lock_reset(&app.animator.foot_lock);
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "save_tuning") == 0) {
+    bool saved = save_springs_to_config();
+    ipc_respond(&app.ipc, id, saved, "No animation loaded or tuning file could not be saved");
+  } else if (strcmp(action, "set_playback") == 0) {
+    cJSON *speed = cJSON_GetObjectItem(json, "speed");
+    cJSON *loop = cJSON_GetObjectItem(json, "loop");
+    if ((speed && !valid_number(speed, 0.1f, 3.0f)) || (loop && !cJSON_IsBool(loop))) {
+      ipc_respond(&app.ipc, id, false, "Expected speed in [0.1, 3] and boolean loop");
+      return;
+    }
+    if (speed) app.animator.speed = (float)speed->valuedouble;
+    if (loop) app.animator.loop_remaining = cJSON_IsTrue(loop) ? -1 : 0;
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_blend") == 0) {
+    cJSON *duration = cJSON_GetObjectItem(json, "duration");
+    cJSON *seam = cJSON_GetObjectItem(json, "seam");
+    cJSON *group = cJSON_GetObjectItem(json, "group");
+    cJSON *factor = cJSON_GetObjectItem(json, "factor");
+    if ((duration && !valid_number(duration, 0.0f, 10.0f)) ||
+        (seam && !valid_number(seam, 0.0f, 1.0f)) ||
+        ((group || factor) && (!valid_number(group, 0, BLEND_GROUP_COUNT - 1) ||
+          group->valuedouble != group->valueint || !valid_number(factor, 0, 2)))) {
+      ipc_respond(&app.ipc, id, false, "Invalid blend duration, seam or joint-group factor");
+      return;
+    }
+    if (duration) g_anim_blend_time_default = (float)duration->valuedouble;
+    if (seam) g_anim_seam_blend_time_default = (float)seam->valuedouble;
+    if (group) g_anim_blend_group_factors[group->valueint] = (float)factor->valuedouble;
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "set_render") == 0) {
+    cJSON *shader = cJSON_GetObjectItem(json, "shader");
+    cJSON *top = cJSON_GetObjectItem(json, "always_on_top");
+    cJSON *scale = cJSON_GetObjectItem(json, "scale");
+    ShaderProgram *program = app.renderer.active;
+    RendererShaderMode mode = app.renderer.shader_mode;
+    if (shader) {
+      if (cJSON_IsString(shader) && strcmp(shader->valuestring, "anime") == 0) {
+        program = &app.renderer.anime; mode = RENDERER_SHADER_ANIME;
+      } else if (cJSON_IsString(shader) && strcmp(shader->valuestring, "toon") == 0) {
+        program = &app.renderer.toon; mode = RENDERER_SHADER_TOON;
+      } else if (cJSON_IsString(shader) && strcmp(shader->valuestring, "pbr") == 0) {
+        program = &app.renderer.pbr; mode = RENDERER_SHADER_PBR;
+      } else { ipc_respond(&app.ipc, id, false, "Unknown shader"); return; }
+    }
+    if (!program || !program->program || (top && !cJSON_IsBool(top)) ||
+        (scale && !valid_number(scale, 0.1f, 10.0f))) {
+      ipc_respond(&app.ipc, id, false, "Invalid render options or unavailable shader");
+      return;
+    }
+    app.renderer.active = program;
+    app.renderer.shader_mode = mode;
+    if (top) {
+      app.always_on_top = cJSON_IsTrue(top);
+      platform_set_always_on_top(app.window, app.always_on_top);
+    }
+    if (scale) {
+      app.model_scale = (float)scale->valuedouble;
+      app.camera.distance = 3.0f * app.model_scale;
+      app.camera.target[1] = 0.8f * app.model_scale;
+      renderer_set_model_transform(&app.renderer, app.model_position, app.model_rotation, app.model_scale);
+      update_window_for_zoom();
+    }
+    ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action, "clear_expressions") == 0) {
+    if (!app.model_loaded) { ipc_respond(&app.ipc, id, false, "No model loaded"); return; }
+    char names[MAX_VRM_EXPRESSIONS][VRM_EXPRESSION_NAME_LEN];
+    int count = gltf_get_expression_names(&app.model, names, MAX_VRM_EXPRESSIONS);
+    for (int i = 0; i < count; i++) gltf_set_expression(&app.model, names[i], 0.0f);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "load") == 0) {
     cJSON *path = cJSON_GetObjectItem(json, "path");
@@ -466,17 +619,22 @@ static void on_ipc_command(const char *action, void *params, int id,
     if (app.model_loaded) {
       gltf_unload(&app.model);
       app.model_loaded = false;
+      app.current_model_path[0] = '\0';
+      app.has_current_anim = false;
+      app.current_anim_path[0] = '\0';
       renderer_set_model(&app.renderer, NULL);
       animator_set_model(&app.animator, NULL);
     }
     if (gltf_load(&app.model, path->valuestring)) {
       app.model_loaded = true;
+      snprintf(app.current_model_path, sizeof(app.current_model_path), "%s", path->valuestring);
+      app.has_current_anim = false;
+      app.current_anim_path[0] = '\0';
       gltf_update_transforms(&app.model);
       spring_bones_init(&app.model);
       renderer_set_model(&app.renderer, &app.model);
       update_anim_correction_mode(app.model.anim_correction_mode);
       animator_set_model(&app.animator, &app.model);
-      update_ui_window_layout();
       app.last_time = platform_get_time();
       printf("Loaded: %s (%d animations)\n", path->valuestring,
              app.model.animation_count);
@@ -488,6 +646,9 @@ static void on_ipc_command(const char *action, void *params, int id,
     if (app.model_loaded) {
       gltf_unload(&app.model);
       app.model_loaded = false;
+      app.current_model_path[0] = '\0';
+      app.has_current_anim = false;
+      app.current_anim_path[0] = '\0';
       renderer_set_model(&app.renderer, NULL);
       animator_set_model(&app.animator, NULL);
     }
@@ -500,8 +661,6 @@ static void on_ipc_command(const char *action, void *params, int id,
         platform_show_window(app.window);
       else
         platform_hide_window(app.window);
-      if (!app.visible)
-        hide_ui_window();
     }
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_window") == 0) {
@@ -513,7 +672,6 @@ static void on_ipc_command(const char *action, void *params, int id,
       platform_move_window(app.window, x->valueint, y->valueint);
     if (w && h)
       platform_resize_window(app.window, w->valueint, h->valueint);
-    update_ui_window_layout();
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_camera") == 0) {
     cJSON *az = cJSON_GetObjectItem(json, "azimuth"),
@@ -552,14 +710,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       ipc_respond(&app.ipc, id, false, "No model loaded");
       return;
     }
-    if (app.ui) {
-      debug_ui_reset_menus();
-    }
-    if (app.ui_visible) {
-      hide_ui_window();
-      printf("UI debug: closed UI during animation load\n");
-    }
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
     // Snapshot current pose before loading new animation (for cross-fade
     // blending)
     bool snapshot_taken = false;
@@ -608,11 +759,9 @@ static void on_ipc_command(const char *action, void *params, int id,
         if (cfg.has_anim_seam_blend_time)
           g_anim_seam_blend_time_default = cfg.anim_seam_blend_time;
       }
-      debug_ui_sync_spring_params();
-      debug_ui_sync_anim_params();
       if (app.auto_resize)
         compute_and_cache_bounds(path->valuestring);
-#ifdef VRM_USE_OZZ_JOLT
+#ifdef VRM_USE_OZZ
       // Prevent one-frame "snap" to the new clip before the client sends
       // blend_to: keep the current node TRS until play/blend commands arrive.
       if (animator_get_use_ozz(&app.animator) && snapshot_taken) {
@@ -738,17 +887,30 @@ static void on_ipc_command(const char *action, void *params, int id,
                                  app.model_rotation, app.model_scale);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_spring") == 0) {
-    extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
-    cJSON *stiff = cJSON_GetObjectItem(json, "stiffness"),
-          *drag = cJSON_GetObjectItem(json, "drag"),
-          *grav = cJSON_GetObjectItem(json, "gravity");
-    if (stiff)
-      g_spring_stiffness = (float)stiff->valuedouble;
-    if (drag)
-      g_spring_drag = (float)drag->valuedouble;
-    if (grav)
-      g_spring_gravity = (float)grav->valuedouble;
-    debug_ui_sync_spring_params();
+    struct { const char *key; float *value; float maximum; } fields[] = {
+      {"stiffness", &g_spring_stiffness, 5}, {"drag", &g_spring_drag, 3},
+      {"gravity", &g_spring_gravity, 5}, {"cloth_stiffness", &g_spring_cloth_stiffness, 3},
+      {"cloth_drag", &g_spring_cloth_drag, 3}, {"cloth_gravity", &g_spring_cloth_gravity, 3},
+      {"cloth_taper", &g_spring_cloth_taper, 1}
+    };
+    cJSON *cloth = cJSON_GetObjectItem(json, "cloth_mode");
+    cJSON *garment = cJSON_GetObjectItem(json, "garment_collisions");
+    if ((cloth && !cJSON_IsBool(cloth)) || (garment && !cJSON_IsBool(garment))) {
+      ipc_respond(&app.ipc, id, false, "cloth_mode and garment_collisions must be boolean"); return;
+    }
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+      cJSON *value = cJSON_GetObjectItem(json, fields[i].key);
+      if (value && !valid_number(value, 0, fields[i].maximum)) {
+        ipc_respond(&app.ipc, id, false, "Spring parameter is outside its supported range"); return;
+      }
+    }
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+      cJSON *value = cJSON_GetObjectItem(json, fields[i].key);
+      if (value) *fields[i].value = (float)value->valuedouble;
+    }
+    if (cloth) g_spring_cloth_mode = cJSON_IsTrue(cloth);
+    if (garment) g_spring_garment_collisions = cJSON_IsTrue(garment);
+    if ((cloth || garment) && app.model_loaded) spring_bones_reset(&app.model);
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_seam_blend") == 0) {
     cJSON *dur = cJSON_GetObjectItem(json, "duration");
@@ -759,7 +921,6 @@ static void on_ipc_command(const char *action, void *params, int id,
       if (v > 1.0f)
         v = 1.0f;
       g_anim_seam_blend_time_default = v;
-      debug_ui_sync_anim_params();
     }
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "seam_blend_time",
@@ -812,42 +973,43 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "shutdown") == 0) {
     ipc_respond(&app.ipc, id, true, NULL);
     app.running = false;
-  } else if (strcmp(action, "audio_stream_begin") == 0) {
-    audio_clear(&app.audio);
+  } else if (strcmp(action, "audio_stream_begin") == 0 || strcmp(action, "audio_cancel") == 0) {
+    if (!audio_clear(&app.audio)) {
+      ipc_respond(&app.ipc, id, false, "Failed to reset audio device");
+      return;
+    }
+    app.audio_stream_open = strcmp(action, "audio_stream_begin") == 0;
+    app.speech_pose_active = false;
     viseme_reset(&app.viseme);
     viseme_set_enabled(&app.viseme, true);
+    if (app.model_loaded) {
+      const char *vowels[] = {"A", "I", "U", "E", "O"};
+      for (int i = 0; i < 5; i++) gltf_set_expression(&app.model, vowels[i], 0.0f);
+    }
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "audio_stream_chunk") == 0) {
     cJSON *data = cJSON_GetObjectItem(json, "data");
-    if (data && data->valuestring) {
-      size_t len = strlen(data->valuestring);
-      // Allocate temp buffer for decoded data (max size)
-      size_t max_out = len * 3 / 4;
-      // We process int16 samples. Ensure we align.
-      uint8_t *buf = malloc(max_out);
-      if (buf) {
-        // Capture sample position BEFORE writing
-        int64_t chunk_start = (int64_t)app.audio.total_written;
-        size_t decoded_bytes = base64_decode(data->valuestring, len, buf);
-        // Write to ring buffer
-        size_t samples = decoded_bytes / sizeof(int16_t);
-        size_t written = audio_write(&app.audio, (int16_t *)buf, samples);
-        // Analyze for lip sync
-        viseme_analyze(&app.viseme, (int16_t *)buf, written, chunk_start);
-        free(buf);
-        if (written == samples) {
-          ipc_respond(&app.ipc, id, true, NULL);
-        } else {
-          ipc_respond(&app.ipc, id, false, "Buffer full");
-        }
-      } else {
-        ipc_respond(&app.ipc, id, false, "OOM");
-      }
-    } else {
-      ipc_respond(&app.ipc, id, false, "No data");
+    if (!cJSON_IsString(data) || !data->valuestring[0]) {
+      ipc_respond(&app.ipc, id, false, "Missing base64 PCM data");
+      return;
     }
+    size_t len = strlen(data->valuestring);
+    uint8_t *buf = malloc(len * 3 / 4 + 1);
+    if (!buf) { ipc_respond(&app.ipc, id, false, "OOM"); return; }
+    size_t decoded_bytes = base64_decode(data->valuestring, len, buf);
+    if (decoded_bytes == SIZE_MAX || decoded_bytes % sizeof(int16_t) != 0) {
+      free(buf);
+      ipc_respond(&app.ipc, id, false, "Expected base64 encoded 16-bit mono PCM");
+      return;
+    }
+    size_t samples = decoded_bytes / sizeof(int16_t);
+    int64_t chunk_start = (int64_t)atomic_load(&app.audio.total_written);
+    size_t written = audio_write(&app.audio, (int16_t *)buf, samples);
+    if (written == samples) viseme_analyze(&app.viseme, (int16_t *)buf, written, chunk_start);
+    free(buf);
+    ipc_respond(&app.ipc, id, written == samples, "Buffer full; no samples accepted");
   } else if (strcmp(action, "audio_stream_end") == 0) {
-    // Optional: flush or just ack
+    app.audio_stream_open = false;
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "audio_status") == 0) {
     cJSON *result = cJSON_CreateObject();
@@ -856,6 +1018,8 @@ static void on_ipc_command(const char *action, void *params, int id,
     cJSON_AddNumberToObject(result, "sample_rate", AUDIO_SAMPLE_RATE);
     cJSON_AddNumberToObject(result, "channels", AUDIO_CHANNELS);
     cJSON_AddBoolToObject(result, "active", app.audio.active);
+    cJSON_AddBoolToObject(result, "stream_open", app.audio_stream_open);
+    cJSON_AddBoolToObject(result, "drained", !app.audio_stream_open && available == 0);
     cJSON_AddNumberToObject(result, "available_samples", (double)available);
     cJSON_AddNumberToObject(result, "free_samples", (double)free_space);
     cJSON_AddNumberToObject(result, "total_written", (double)app.audio.total_written);
@@ -871,7 +1035,11 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "play_audio_file") == 0) {
     cJSON *path = cJSON_GetObjectItem(json, "path");
     if (path && path->valuestring) {
-      audio_clear(&app.audio);
+      if (!audio_clear(&app.audio)) {
+        ipc_respond(&app.ipc, id, false, "Failed to reset audio device");
+        return;
+      }
+      app.audio_stream_open = false;
       viseme_reset(&app.viseme);
 
       // Load and analyze the WAV file
@@ -992,14 +1160,7 @@ static void on_resize(int w, int h, void *user) {
   msaa_resize(&app, w, h);
   app.fb_width = w;
   app.fb_height = h;
-  update_display_metrics_for_window(app.window);
-  update_ui_window_layout();
-  if (app.ui_window) {
-    int fbw = 0, fbh = 0;
-    platform_get_framebuffer_size(app.ui_window, &fbw, &fbh);
-    app.ui_fb_width = fbw;
-    app.ui_fb_height = fbh;
-  }
+
 }
 
 static void on_mouse_move(double x, double y, void *user) {
@@ -1034,7 +1195,6 @@ static void on_mouse_button(int button, int action, void *user) {
   model_mouse_x = (int)cx;
   model_mouse_y = (int)cy;
   if (button == PLATFORM_MOUSE_LEFT) {
-    model_mouse_buttons[0] = action;
     if (action && model_hit_test(model_mouse_x, model_mouse_y)) {
       int wx = 0, wy = 0;
       platform_get_window_pos(win, &wx, &wy);
@@ -1047,67 +1207,13 @@ static void on_mouse_button(int button, int action, void *user) {
     if (!action) {
       is_window_dragging = false;
     }
-  } else if (button == PLATFORM_MOUSE_RIGHT) {
-    model_mouse_buttons[1] = action;
-    if (action && model_hit_test(model_mouse_x, model_mouse_y)) {
-      show_ui_window();
-    }
   } else if (button == PLATFORM_MOUSE_MIDDLE) {
-    model_mouse_buttons[2] = action;
     is_dragging = action;
     if (action) {
       drag_start_x = model_mouse_x;
       drag_start_y = model_mouse_y;
     }
   }
-}
-
-static void on_ui_resize(int w, int h, void *user) {
-  (void)user;
-  app.ui_fb_width = w;
-  app.ui_fb_height = h;
-  update_display_metrics_for_window(app.ui_window);
-}
-
-static void on_ui_mouse_move(double x, double y, void *user) {
-  (void)user;
-  mouse.x = (int32_t)x;
-  mouse.y = (int32_t)y;
-}
-
-static void on_ui_mouse_button(int button, int action, void *user) {
-  PlatformWindow *win = (PlatformWindow *)user;
-  double cx = 0.0, cy = 0.0;
-  platform_get_cursor_pos(win, &cx, &cy);
-  mouse.x = (int32_t)cx;
-  mouse.y = (int32_t)cy;
-  if (button == PLATFORM_MOUSE_LEFT) {
-    mouse.button_l = action;
-  } else if (button == PLATFORM_MOUSE_RIGHT) {
-    mouse.button_r = action;
-  } else if (button == PLATFORM_MOUSE_MIDDLE) {
-    mouse.button_m = action;
-  }
-  if (app.ui && app.ui_visible) {
-    int hit = ui_get_element_id(app.ui, mouse.x, mouse.y);
-    printf("UI debug: ui_mouse_button btn=%d action=%d hit=%d\n", button,
-           action, hit);
-  }
-  if (!action && app.ui_visible && button == PLATFORM_MOUSE_LEFT) {
-    app.ui_pending_close = true;
-  }
-}
-
-static void on_ui_scroll(double dx, double dy, void *user) {
-  (void)user;
-  (void)dx;
-  (void)dy;
-}
-
-static void on_ui_key(int key, int action, void *user) {
-  (void)key;
-  (void)action;
-  (void)user;
 }
 
 static void on_scroll(double dx, double dy, void *user) {
@@ -1143,8 +1249,6 @@ static void on_key(int key, int action, void *user) {
   case PLATFORM_KEY_T:
     app.always_on_top = !app.always_on_top;
     platform_set_always_on_top(app.window, app.always_on_top);
-    if (app.ui_window)
-      platform_set_always_on_top(app.ui_window, app.always_on_top);
     break;
   case PLATFORM_KEY_C:
     renderer_toggle_shader(&app.renderer);
@@ -1155,7 +1259,6 @@ static void on_key(int key, int action, void *user) {
            g_spring_cloth_mode ? "enabled" : "disabled");
     if (app.model_loaded)
       spring_bones_reset(&app.model);
-    debug_ui_sync_spring_params();
     break;
   case PLATFORM_KEY_1:
     update_anim_correction_mode(0);
@@ -1177,103 +1280,6 @@ static void on_key(int key, int action, void *user) {
     update_anim_correction_mode(4);
     rebuild_ozz_after_correction_change(false);
     break;
-  }
-}
-
-static float compute_model_radius_px(void) {
-  float dpi = display.d_dpi > 0.0f ? display.d_dpi : 96.0f;
-  float fallback = 120.0f * (dpi / 96.0f);
-  if (!app.model_loaded || app.fb_width <= 0 || app.fb_height <= 0)
-    return fallback;
-
-  float min_x, min_y, max_x, max_y;
-  camera_update(&app.camera);
-  float view_model[16];
-  build_view_with_model_transform(view_model);
-  gltf_get_screen_bounds_px(&app.model, view_model, (float *)app.camera.proj,
-                            app.fb_width, app.fb_height, &min_x, &min_y, &max_x,
-                            &max_y);
-  int win_w = 0, win_h = 0;
-  platform_get_window_size(app.window, &win_w, &win_h);
-  float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
-  float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
-  float w = (max_x - min_x) * sx;
-  float h = (max_y - min_y) * sy;
-  float radius = 0.5f * (w > h ? w : h);
-  if (radius < fallback)
-    radius = fallback;
-  return radius * 0.75f;
-}
-
-static void update_ui_window_layout(void) {
-  if (!app.ui_window || !app.ui_visible)
-    return;
-
-  int wx = 0, wy = 0, ww = 0, wh = 0;
-  platform_get_window_workarea(app.window, &wx, &wy, &ww, &wh);
-  int ui_w = 0, ui_h = 0, uix = 0, uiy = 0;
-  if (ww > 0 && wh > 0) {
-    ui_w = ww;
-    ui_h = wh;
-    uix = wx;
-    uiy = wy;
-  } else {
-    int mw = 0, mh = 0, mx = 0, my = 0;
-    platform_get_window_size(app.window, &mw, &mh);
-    platform_get_window_pos(app.window, &mx, &my);
-    ui_w = mw * 2;
-    ui_h = mh * 2;
-    uix = mx - mw / 2;
-    uiy = my - mh / 2;
-  }
-
-  platform_resize_window(app.ui_window, ui_w, ui_h);
-  platform_move_window(app.ui_window, uix, uiy);
-
-  platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width,
-                                &app.ui_fb_height);
-  update_display_metrics_for_window(app.ui_window);
-}
-
-static void update_ui_input_region(void) {
-  if (!app.ui_window || !app.ui || !app.ui_visible)
-    return;
-
-  PlatformRect rects[8];
-  int rect_count = 0;
-
-  int32_t panel_ids[4];
-  int panel_count = debug_ui_get_panel_ids(panel_ids, 4);
-  for (int i = 0;
-       i < panel_count && rect_count < (int)(sizeof(rects) / sizeof(rects[0]));
-       i++) {
-    int x = 0, y = 0;
-    if (ui_get_element_position(app.ui, (uint32_t)panel_ids[i], &x, &y) == 0) {
-      int w = ui_get_element_width(app.ui, (uint32_t)panel_ids[i]);
-      int h = ui_get_element_height(app.ui, (uint32_t)panel_ids[i]);
-      if (w > 0 && h > 0) {
-        rects[rect_count++] = (PlatformRect){x, y, w, h};
-      }
-    }
-  }
-
-  if (app.pie_menu_id >= 0 &&
-      rect_count < (int)(sizeof(rects) / sizeof(rects[0]))) {
-    int x = 0, y = 0;
-    if (ui_get_element_position(app.ui, (uint32_t)app.pie_menu_id, &x, &y) ==
-        0) {
-      int w = ui_get_element_width(app.ui, (uint32_t)app.pie_menu_id);
-      int h = ui_get_element_height(app.ui, (uint32_t)app.pie_menu_id);
-      if (w > 0 && h > 0) {
-        rects[rect_count++] = (PlatformRect){x, y, w, h};
-      }
-    }
-  }
-
-  if (rect_count > 0) {
-    platform_set_input_regions(app.ui_window, rects, rect_count);
-  } else {
-    platform_clear_input_region(app.ui_window);
   }
 }
 
@@ -1312,96 +1318,41 @@ static bool model_hit_test(int x, int y) {
   return x >= bx0 && x <= bx1 && y >= by0 && y <= by1;
 }
 
-static void show_ui_window(void) {
-  if (!app.ui_window)
-    return;
-  app.ui_visible = true;
-  app.ui_force_pie_open = false;
-  app.ui_force_pie_open_pending = true;
-
-  /* Translate mouse coordinates from model window to UI window */
-  int mx = 0, my = 0, ux = 0, uy = 0;
-  platform_get_window_pos(app.window, &mx, &my);
-  platform_get_window_pos(app.ui_window, &ux, &uy);
-  int translated_x = model_mouse_x + (mx - ux);
-  int translated_y = model_mouse_y + (my - uy);
-
-  /* Set UI mouse to translated coords */
-  mouse.x = translated_x;
-  mouse.y = translated_y;
-
-  app.pie_menu_id = debug_ui_build_pie_menu(app.ui, app.pie_menu_id,
-                                            compute_model_radius_px());
-
-  /* Explicitly position pie menu at translated coordinates */
-  ui_position_element(app.ui, app.pie_menu_id, translated_x, translated_y);
-
-  update_ui_window_layout();
-  platform_show_window(app.ui_window);
-  mouse.button_l = 0;
-  mouse.button_r = 0;
-  mouse.button_m = 0;
-}
-
-static void hide_ui_window(void) {
-  if (!app.ui_window)
-    return;
-  printf("UI debug: hide_ui_window\n");
-  app.ui_visible = false;
-  app.ui_force_pie_open = false;
-  app.ui_force_pie_open_pending = false;
-  app.ui_pending_close = false;
-  mouse.button_l = 0;
-  mouse.button_r = 0;
-  if (app.ui) {
-    ui_reset_interaction(app.ui);
-  }
-  platform_clear_input_region(app.ui_window);
-  platform_hide_window(app.ui_window);
-}
-
-static void ui_init_overlay(VrmApp *s) {
-  if (s->ui)
-    return;
-  s->ui = ui_init(NULL);
-  if (!s->ui)
-    return;
-  ui_load_font(s->ui, "src/ui_library/fonts/BeVietnamPro-Regular.ttf", 18);
-  debug_ui_set_interface(s->ui);
-  debug_ui_set_spring_reset(reset_springs_from_ui);
-  debug_ui_set_spring_save(save_springs_to_config);
-  debug_ui_set_anim_save(save_anim_params_to_config);
-
-  s->pie_menu_id = -1;
-}
-
 int main(int argc, char *argv[]) {
-  (void)argc;
-  (void)argv;
+  const char *socket_path = "/tmp/vrm-overlay.sock";
+  const char *model_path = NULL;
+  int exit_status = 0;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      printf("Usage: %s [--socket PATH] [MODEL.vrm]\n", argv[0]);
+      return 0;
+    } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
+      socket_path = argv[++i];
+    } else if (argv[i][0] != '-' && !model_path) {
+      model_path = argv[i];
+    } else {
+      fprintf(stderr, "Usage: %s [--socket PATH] [MODEL.vrm]\n", argv[0]);
+      return 1;
+    }
+  }
+  if (!ipc_init(&app.ipc, socket_path, on_ipc_command, &app)) return 1;
 
   app.auto_resize = true;
 
   app.window = platform_create_window(400, 600, "VRM Overlay", true, false);
   if (!app.window) {
     fprintf(stderr, "Failed to create window\n");
+    ipc_cleanup(&app.ipc);
     return 1;
   }
-
-  app.ui_window = platform_create_shared_window(800, 1200, "VRM Overlay UI",
-                                                true, false, app.window);
-  if (!app.ui_window) {
-    fprintf(stderr, "Failed to create UI window\n");
-    return 1;
-  }
-  app.ui_visible = false;
-  app.ui_pending_close = false;
-  platform_hide_window(app.ui_window);
 
   platform_make_context_current(app.window);
 
   printf("OpenGL: %s\n", glGetString(GL_VERSION));
   if (!renderer_init(&app.renderer)) {
     fprintf(stderr, "Failed to init renderer\n");
+    platform_destroy_window(app.window);
+    ipc_cleanup(&app.ipc);
     return 1;
   }
 
@@ -1415,8 +1366,6 @@ int main(int argc, char *argv[]) {
   msaa_resize(&app, w, h);
   app.fb_width = w;
   app.fb_height = h;
-  update_display_metrics_for_window(app.window);
-  update_ui_window_layout();
 
   camera_init(&app.camera);
   app.camera.distance = 3.0f;
@@ -1468,6 +1417,7 @@ int main(int argc, char *argv[]) {
   app.camera.aspect = (float)w / (float)h;
 
   /* App init */
+  animator_init(&app.animator);
   audio_init(&app.audio);
   audio_start(&app.audio);
   viseme_init(&app.viseme);
@@ -1481,18 +1431,9 @@ int main(int argc, char *argv[]) {
   // Seed random number generator with current time
   g_rand_state = (uint32_t)(platform_get_time() * 1000000.0);
 
-  ipc_init(&app.ipc, "/tmp/vrm-overlay.sock", on_ipc_command, &app);
-  platform_make_context_current(app.ui_window);
-  update_display_metrics_for_window(app.ui_window);
-  ui_init_overlay(&app);
-  platform_make_context_current(app.window);
-
   PlatformCallbacks cb = {on_resize, on_mouse_move, on_mouse_button,
                           on_scroll, on_key,        app.window};
-  PlatformCallbacks ui_cb = {on_ui_resize, on_ui_mouse_move, on_ui_mouse_button,
-                             on_ui_scroll, on_ui_key,        app.ui_window};
   platform_set_callbacks(app.window, &cb);
-  platform_set_callbacks(app.ui_window, &ui_cb);
 
   app.visible = true;
   app.running = true;
@@ -1501,7 +1442,18 @@ int main(int argc, char *argv[]) {
   printf("VRM Overlay started. Press 'q' to quit, 't' for always-on-top\n");
   printf("Press 'c' to toggle cel shading\n");
   printf("Press 'b' to toggle cloth spring mode\n");
-  printf("IPC socket: /tmp/vrm-overlay.sock\n");
+  if (model_path) {
+    cJSON *request = cJSON_CreateObject();
+    cJSON_AddStringToObject(request, "path", model_path);
+    on_ipc_command("load", request, 0, &app);
+    cJSON_Delete(request);
+    if (!app.model_loaded) {
+      fprintf(stderr, "Failed to load startup model: %s\n", model_path);
+      app.running = false;
+      exit_status = 1;
+    }
+  }
+  printf("IPC socket: %s\n", socket_path);
   fflush(stdout);
 
   while (app.running && !platform_should_close(app.window)) {
@@ -1523,7 +1475,7 @@ int main(int argc, char *argv[]) {
     float dt = (float)(now - app.last_time);
     app.last_time = now;
     if (dt > 0.0f)
-      display.frame_rate = 1.0f / dt;
+      app.frame_rate = 1.0f / dt;
 
     animator_update(&app.animator, dt);
     if (app.model_loaded) {
@@ -1533,7 +1485,17 @@ int main(int argc, char *argv[]) {
 
       /* Apply lip sync viseme weights to expressions */
       VisemeFrame vf;
-      if (viseme_sample(&app.viseme, (int64_t)app.audio.total_read, &vf)) {
+      bool has_viseme = false;
+      if (app.viseme.enabled && audio_available(&app.audio) > 0) {
+        has_viseme = viseme_sample(&app.viseme, (int64_t)app.audio.total_read, &vf);
+        if (has_viseme) app.speech_pose_active = true;
+      } else if (app.speech_pose_active) {
+        /* Release speech's pose once, so idle manual expressions remain usable. */
+        memset(&vf, 0, sizeof(vf));
+        has_viseme = true;
+        app.speech_pose_active = false;
+      }
+      if (has_viseme) {
         gltf_set_expression(&app.model, "A", vf.weights[VISEME_A]);
         gltf_set_expression(&app.model, "I", vf.weights[VISEME_I]);
         gltf_set_expression(&app.model, "U", vf.weights[VISEME_U]);
@@ -1573,51 +1535,6 @@ int main(int argc, char *argv[]) {
 
     platform_swap_buffers(app.window);
 
-    if (app.ui_window && app.ui && app.ui_visible) {
-      platform_make_context_current(app.ui_window);
-      platform_get_framebuffer_size(app.ui_window, &app.ui_fb_width,
-                                    &app.ui_fb_height);
-      glViewport(0, 0, app.ui_fb_width, app.ui_fb_height);
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-      update_display_metrics_for_window(app.ui_window);
-      if (app.ui_force_pie_open_pending) {
-        ui_render(app.ui);
-        app.ui_force_pie_open_pending = false;
-        app.ui_force_pie_open = true;
-      } else if (app.ui_force_pie_open) {
-        mouse.button_r = 1;
-        ui_render(app.ui);
-        mouse.button_r = 0;
-        app.ui_force_pie_open = false;
-      } else {
-        ui_render(app.ui);
-      }
-      update_ui_input_region();
-      if (app.ui_pending_close) {
-        app.ui_pending_close = false;
-        if (!debug_ui_has_open_panels()) {
-          printf("UI debug: auto-closing UI (no panels)\n");
-          hide_ui_window();
-        }
-      }
-      if (debug_ui_consume_close_request()) {
-        debug_ui_prepare_for_close();
-        mouse.button_l = 0;
-        mouse.button_r = 0;
-        mouse.button_m = 0;
-        ui_render(app.ui);
-        if (debug_ui_consume_force_close_request() ||
-            !debug_ui_has_open_panels()) {
-          printf("UI debug: close request consumed\n");
-          hide_ui_window();
-        } else {
-          printf("UI debug: close request ignored (panels still open)\n");
-        }
-      }
-      platform_swap_buffers(app.ui_window);
-    }
   }
 
   Settings settings = {0};
@@ -1647,8 +1564,6 @@ int main(int argc, char *argv[]) {
   viseme_free(&app.viseme);
   audio_free(&app.audio);
   ipc_cleanup(&app.ipc);
-  if (app.ui_window)
-    platform_destroy_window(app.ui_window);
   platform_destroy_window(app.window);
-  return 0;
+  return exit_status;
 }

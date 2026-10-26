@@ -258,6 +258,7 @@ typedef struct {
   int spring_group_count;
   SpringColliderGroup *spring_colliders;
   int spring_collider_count;
+  struct SpringRuntime *spring_runtime;
 
   /* VRM expressions (blendshapes) - parsed from VRM 0.x/1.0 */
   struct VrmExpressionMap *vrm_expressions;

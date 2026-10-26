@@ -90,40 +90,6 @@ PlatformWindow *platform_create_window(int width, int height, const char *title,
     return win;
 }
 
-PlatformWindow *platform_create_shared_window(int width, int height, const char *title, bool transparent, bool decorated, PlatformWindow *share) {
-    if (!glfw_inited) {
-        glfwSetErrorCallback(glfw_error_cb);
-        if (!glfwInit()) return NULL;
-        glfw_inited = 1;
-    }
-
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_DECORATED, decorated ? GLFW_TRUE : GLFW_FALSE);
-    glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
-
-    GLFWwindow *glfw = glfwCreateWindow(width, height, title, NULL, share ? share->glfw : NULL);
-    if (!glfw) return NULL;
-
-    PlatformWindow *win = calloc(1, sizeof(PlatformWindow));
-    win->glfw = glfw;
-    glfwSetWindowUserPointer(glfw, win);
-    glfwMakeContextCurrent(glfw);
-    glfwSwapInterval(1);
-
-    glfwSetFramebufferSizeCallback(glfw, glfw_resize_cb);
-    glfwSetCursorPosCallback(glfw, glfw_cursor_cb);
-    glfwSetMouseButtonCallback(glfw, glfw_mouse_cb);
-    glfwSetScrollCallback(glfw, glfw_scroll_cb);
-    glfwSetKeyCallback(glfw, glfw_key_cb);
-
-    win->x_display = glfwGetX11Display();
-    win->x_window = glfwGetX11Window(glfw);
-
-    return win;
-}
-
 void platform_destroy_window(PlatformWindow *win) {
     if (!win) return;
     glfwDestroyWindow(win->glfw);
