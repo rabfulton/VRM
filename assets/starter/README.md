@@ -7,14 +7,15 @@ libraries are left in place. The basic fox remains available by file import or
 the launch command below; it is not featured in Discover.
 
 ```sh
-python3 control.py --studio --model assets/starter/models/anime.vrm
-python3 control.py --studio --model assets/starter/models/fox.glb
+./domovushka --studio --model assets/starter/models/anime.vrm
+./domovushka --studio --model assets/starter/models/fox.glb
 ```
 
 A fresh clone uses the anime avatar when no saved/local avatar exists. An explicit
 `--animation-dir` is respected at initial launch. Manually choosing a starter avatar
-in Studio selects that avatar's library. LLM access stays opt-in through the existing
-library checkboxes; automatic idle/transition coordination uses local metadata.
+in Studio selects that avatar's library. Library checkboxes enable/disable automatic
+use; clicking any name previews one pass, even when unchecked. LLM access is a separate **Available to LLM** property
+under **⋯**; automatic idle/transition coordination uses enabled clips' metadata.
 
 ## Humanoid library
 
@@ -32,6 +33,15 @@ relaxed bedtime animation. `lying_idle` is a held pose. The sitting clip assumes
 a seat underneath the character; these assets do not create a chair or attach to
 a desktop window. Climbing/walking do not move the overlay across the desktop.
 Window movement/contact and a continuous wall-climb loop remain separate work.
+
+Walking/jogging, pushing, climbing and the seated/lying motion families are baked
+with a 90° turn around the vertical axis for a side profile from the default front
+camera. Standing social idles remain front-facing. The normal animation blend
+turns the body between these clips; the camera is not orbited. The source motion
+and hips displacement turn together, including all get-up/lie-down transitions.
+The bake recipe records this as `facingYaw` in the VRMA extras and `facing_yaw` in
+the manifest. Future desktop travel can select a direction independently; these
+remain in-place motion previews, not desktop navigation.
 
 These clips normalize hips displacement for VRM 0 humanoids and retarget rotations
 through the runtime's humanoid mapping. Full cloth/body collision is still limited;

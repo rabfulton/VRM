@@ -1,11 +1,41 @@
 import math
 import unittest
 from unittest.mock import patch
-from vrm_overlay.asset_build import MotionSource,append_accessor,humanoid_clip,slerp
+from vrm_overlay.asset_build import MotionSource,append_accessor,humanoid_clip,slerp,face_humanoid_clip,rotate
 from vrm_overlay.vrma import accessor_values
 
 
 class AssetBuildTests(unittest.TestCase):
+    def test_side_facing_turns_hips_displacement_and_keeps_local_limb_animation(self):
+        source = self.source()
+        with patch('vrm_overlay.asset_build.rig_mapping',return_value=dict(hips=1,head=5,leftHand=3,rightHand=4)):
+            front, binary = humanoid_clip(source, 'Motion', 'Front', fps=10)
+            side, data = humanoid_clip(source, 'Motion', 'Side', fps=10, facing_yaw=90)
+        self.assertEqual(front['nodes'], side['nodes'])  # Rest/retarget axes must not turn.
+        self.assertEqual(self.track(front,binary,'head','rotation'), self.track(side,data,'head','rotation'))
+        for q in self.track(side,data,'hips','rotation'):
+            forward = rotate(q,(0,0,-1))
+            self.assertAlmostEqual(forward[0], -1, places=5)
+            self.assertAlmostEqual(forward[2], 0, places=5)
+        # Give the hips a horizontal pose displacement, independently of root locomotion.
+        from vrm_overlay.asset_build import append_accessor
+        mutable = bytearray(binary)
+        animation = front['animations'][0]
+        channel = next(c for c in animation['channels'] if c['target']['path'] == 'translation')
+        sampler = animation['samplers'][channel['sampler']]
+        original = self.track(front,binary,'hips','translation')
+        displaced = [(p[0]+.1,p[1],p[2]+.2) for p in original]
+        sampler['output'] = append_accessor(front,mutable,displaced,'VEC3')
+        front['buffers'][0]['byteLength'] = len(mutable)
+        side,data = face_humanoid_clip(front,bytes(mutable),90)
+        for old,new in zip(displaced,self.track(side,data,'hips','translation')):
+            self.assertAlmostEqual(new[0], .2, places=5)
+            self.assertAlmostEqual(new[1], old[1], places=5)
+            self.assertAlmostEqual(new[2], -.1, places=5)
+        self.assertEqual(face_humanoid_clip(side,data,90), (side,data))
+        restored,restored_data = face_humanoid_clip(side,data,0)
+        for a,b in zip(displaced,self.track(restored,restored_data,'hips','translation')):
+            for x,y in zip(a,b): self.assertAlmostEqual(x,y,places=5)
     def source(self):
         doc=dict(nodes=[dict(name='root',children=[1]),dict(translation=[0,2,0],children=[2,3,4]),
                         dict(translation=[0,.5,0],children=[5]),dict(translation=[1,.5,0]),

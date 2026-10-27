@@ -1,6 +1,6 @@
 # Architecture and timing
 
-The renderer and Studio are separate processes. `control.py` launches the
+The renderer and Studio are separate processes. `domovushka` launches the
 PySide6/Qt Quick workspace; `vrm-overlay` owns the transparent GLFW/OpenGL window,
 audio output and model state. Linux/X11 is the supported renderer platform.
 
@@ -74,8 +74,9 @@ queued playback and terminates owned inference; a later utterance can restart it
 Provider changes do not change renderer PCM transport or lip-sync timing.
 
 Chat uses Qt Network SSE and an OS keyring worker. Its generated prompt reflects
-the actual model and checked library entries. `animation_library.py` assigns cue
-IDs; the controller persists per-folder choices and revokes active turns on access
+the actual model and library entries with both master enable and LLM permission.
+`animation_library.py` assigns cue IDs; sidecars store LLM permissions and the
+controller persists per-folder master choices and revokes active turns on access
 changes. A bounded parser separates caption text, speech tags
 and gesture/expression cues. The coordinator queues cues between utterances on
 Studio's transport; generation/profile/context guards discard cancelled work.

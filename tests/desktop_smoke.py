@@ -199,6 +199,28 @@ Window { id: target; width: 100; height: 100; flags: Qt.FramelessWindowHint
                 expected_y=max(screen.top(),min(point.y(),screen.bottom()+1-menu.height()))
                 assert abs(menu.x()-expected_x)<=1 and abs(menu.y()-expected_y)<=1,(menu.position(),point)
                 print('Input check: background and interior gaps pass clicks through; figure opens menu at Qt cursor coordinates.',flush=True)
+                QTest.qWait(80)
+                subprocess.run(['xdotool','click','3'],check=True)
+                wait(lambda:not menu.isVisible())
+                QTest.qWait(300)
+                assert not menu.isVisible(),'Second right-click reopened the menu after cancellation'
+                subprocess.run(['xdotool','mousemove','--sync','--window',wid,str(x+rw//2),str(y+rh//2),'click','3'],check=True)
+                wait(lambda:menu.isVisible())
+                QTest.qWait(80)
+                outside_clicks=underlay.property('clicks')
+                subprocess.run(['xdotool','mousemove','--sync','--window',wid,'2','2','click','1'],check=True)
+                wait(lambda:not menu.isVisible())
+                assert underlay.property('clicks')==outside_clicks,'Menu cancellation leaked a click to the underlying window'
+                print('Menu dismissal: second right-click and outside left-click close it without triggering an action.',flush=True)
+                for enabled in (False,True):
+                    bridge.overlayMenuRequested.emit(dict(x=100,y=100))
+                    wait(lambda:menu.isVisible())
+                    click('overlayAlwaysOnTopCheck')
+                    wait(lambda:bridge.state['always_on_top']==enabled and not bridge.busy)
+                    assert f'always_on_top={int(enabled)}\n' in (root/'settings.cfg').read_text()
+                    wait(lambda:('_NET_WM_STATE_ABOVE' in subprocess.check_output(['xprop','-id',wid,'_NET_WM_STATE'],text=True))==enabled)
+                bridge.overlayMenuRequested.emit(dict(x=100,y=100))
+                wait(lambda:menu.isVisible())
                 click('overlayStudioButton')
                 wait(lambda: window.isVisible() and not menu.isVisible())
                 window.close()
@@ -216,6 +238,21 @@ Window { id: target; width: 100; height: 100; flags: Qt.FramelessWindowHint
                 wait(lambda: bool(quits) and process.poll() is not None)
                 assert process.returncode == 0,process.returncode
                 print('Desktop check passed: WM hints, hidden/closable Studio, actual overlay right-click, Chat, Studio and Quit.',flush=True)
+                from vrm_overlay import IpcClient
+                for number,expected in enumerate((True,False)):
+                    restored_socket=str(root/f'restored-{number}.sock')
+                    process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',restored_socket],cwd=root,stdout=log,stderr=subprocess.STDOUT)
+                    wait(lambda:Path(restored_socket).exists())
+                    with IpcClient(restored_socket) as restored:
+                        assert restored.request(dict(action='get_state'),timeout_s=30)['data']['always_on_top']==expected
+                        restored_wid=subprocess.check_output(['xdotool','search','--pid',str(process.pid),'--name','^VRM Overlay$'],text=True).splitlines()[0]
+                        wait(lambda:('_NET_WM_STATE_ABOVE' in subprocess.check_output(['xprop','-id',restored_wid,'_NET_WM_STATE'],text=True))==expected)
+                        if expected:
+                            restored.request(dict(action='set_render',always_on_top=False))
+                        restored.request(dict(action='shutdown'))
+                    process.wait(timeout=5)
+                    assert process.returncode==0
+                print('Always on top: window-manager ABOVE hint and saved on/off choices survive renderer restarts.',flush=True)
             except Exception:
                 log.flush(); log.seek(0)
                 print('\n'.join(log.read().splitlines()[-20:]),file=sys.stderr)

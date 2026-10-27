@@ -2,5 +2,6 @@
 legacy Sendagaya Shibu `AvatarSample_D.vrm` (CC0). See
 [starter asset provenance](../../assets/starter/NOTICE.md).
 
-Other Discover thumbnails load directly from the creator's BOOTH image host
-when the dialog is open. They are not redistributed with this repository.
+Other Discover thumbnails download from the creator's BOOTH image host when first
+needed and are cached in the user's application cache directory for later/offline
+use. They are not redistributed with this repository.

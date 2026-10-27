@@ -68,8 +68,8 @@ It does not use a negative render scale, so winding and lighting stay normal.
 Expression-control nodes keep their scalar strengths rather than having their X
 value negated. Shared output accessors/samplers are copied before transformation.
 Spring/seam tuning and sidecar comments are retained; obsolete bounds are discarded.
-The new clip defaults to `loopable=0`, `startup=0`, `is_idle=0` and remains unchecked
-for LLM access until you enable it in Studio.
+The new clip defaults to `loopable=0`, `startup=0`, `is_idle=0`, `llm_enabled=0`.
+It is available for manual testing; grant LLM access separately in **⋯ → Available to LLM**.
 
 The tool supports a single embedded binary buffer with ordinary float animation
 accessors. Mesh/skin-bearing models, sparse outputs and compressed/external buffers

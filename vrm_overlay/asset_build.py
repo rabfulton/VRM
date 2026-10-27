@@ -112,7 +112,7 @@ def append_accessor(doc, binary, values, kind):
     return index
 
 
-def humanoid_clip(source, clip, name, *, reverse=False, hold=False, fps=30):
+def humanoid_clip(source, clip, name, *, reverse=False, hold=False, fps=30, facing_yaw=0):
     """Collapse helper/root bones, normalize T-pose axes and bake at fixed rate.
 
     Root locomotion is removed; hips retain pose displacement (sit/get-up/bob).
@@ -170,7 +170,55 @@ def humanoid_clip(source, clip, name, *, reverse=False, hold=False, fps=30):
     anim['channels'].append(dict(sampler=len(anim['samplers']),target=dict(node=indices['hips'],path='translation')))
     anim['samplers'].append(dict(input=inputs,output=output,interpolation='LINEAR'))
     doc['animations']=[anim];doc['buffers'][0]['byteLength']=len(binary)
-    return doc,bytes(binary)
+    return face_humanoid_clip(doc, bytes(binary), facing_yaw)
+
+
+def face_humanoid_clip(document, binary, degrees):
+    """Set facing for a canonical baked clip while retaining its retarget rest pose.
+
+    Turn the animated hips and their displacement about the rest hips position.
+    Child rotations stay local, so the same change turns standing and lying poses
+    together and the runtime's normal animation blending handles the turn.
+    """
+    degrees = float(degrees)
+    if not math.isfinite(degrees) or not -180 <= degrees <= 180:
+        raise ValueError('Facing yaw must be between -180 and 180 degrees.')
+    extra = document.get('extras', {}).get('vrmOverlay', {})
+    if not extra.get('normalizedHips'):
+        raise ValueError('Facing baking requires a canonical normalized-hips clip.')
+    previous = float(extra.get('facingYaw', 0))
+    if degrees == previous:
+        return document, binary
+    hips = document['extensions']['VRMC_vrm_animation']['humanoid']['humanBones']['hips']['node']
+    if any(hips in node.get('children', []) for node in document['nodes']):
+        raise ValueError('Facing baking expects the hips to be a root node.')
+    result = copy.deepcopy(document)
+    origin = document['nodes'][hips].get('translation', [0, 1, 0])
+    angle = math.radians(degrees - previous) / 2
+    yaw = (0, math.sin(angle), 0, math.cos(angle))
+    output = bytearray(binary[:document['buffers'][0]['byteLength']])
+    for animation in result['animations']:
+        for channel in animation['channels']:
+            target = channel['target']
+            if target.get('node') != hips or target['path'] not in ('rotation', 'translation'):
+                continue
+            sampler = copy.deepcopy(animation['samplers'][channel['sampler']])
+            if sampler.get('interpolation', 'LINEAR') not in ('LINEAR', 'STEP'):
+                raise ValueError('Bake cubic hips channels before changing facing.')
+            values = accessor_values(document, binary, sampler['output'])
+            if target['path'] == 'rotation':
+                changed = [mul(yaw, q) for q in values]
+                kind = 'VEC4'
+            else:
+                changed = [tuple(a + b for a, b in zip(origin, rotate(yaw, tuple(a - b for a, b in zip(p, origin)))))
+                           for p in values]
+                kind = 'VEC3'
+            sampler['output'] = append_accessor(result, output, changed, kind)
+            channel['sampler'] = len(animation['samplers'])
+            animation['samplers'].append(sampler)
+    result['extras']['vrmOverlay']['facingYaw'] = degrees
+    result['buffers'][0]['byteLength'] = len(output)
+    return result, bytes(output)
 
 
 def select_animation(doc,binary,clip):

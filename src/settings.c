@@ -32,7 +32,13 @@ bool settings_load(const char *path, Settings *out_settings) {
         *eq = '\0';
         char *key = trim(line);
         char *val = trim(eq + 1);
-        if (strcmp(key, "camera_distance") == 0) {
+        if (strcmp(key, "always_on_top") == 0) {
+            if (strcmp(val, "0") == 0 || strcmp(val, "1") == 0) {
+                out_settings->always_on_top = strcmp(val, "1") == 0;
+                out_settings->has_always_on_top = true;
+                found = true;
+            }
+        } else if (strcmp(key, "camera_distance") == 0) {
             char *end = NULL;
             float v = strtof(val, &end);
             if (end && end != val) {
@@ -114,6 +120,9 @@ bool settings_save(const char *path, const Settings *settings) {
     if (!path || !settings) return false;
     FILE *f = fopen(path, "w");
     if (!f) return false;
+    if (settings->has_always_on_top) {
+        fprintf(f, "always_on_top=%d\n", settings->always_on_top ? 1 : 0);
+    }
     if (settings->has_camera_distance) {
         fprintf(f, "camera_distance=%.6f\n", settings->camera_distance);
     }

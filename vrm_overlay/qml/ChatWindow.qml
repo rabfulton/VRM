@@ -12,22 +12,38 @@ ApplicationWindow {
     minimumHeight: 420
     visible: false
     transientParent: null
-    title: "Chat · VRM"
+    title: "domovushka chat"
     color: "#111822"
     palette.disabled.buttonText: "#8793a5"
     property bool followReply: true
+
+    function followLatest() {
+        if (followReply) followTimer.restart()
+    }
+    Timer {
+        id: followTimer
+        interval: 0
+        onTriggered: {
+            if (window.followReply) {
+                transcript.forceLayout()
+                transcript.positionViewAtEnd()
+            }
+        }
+    }
 
     function showChat() {
         show()
         raise()
         requestActivate()
         composer.forceActiveFocus()
+        followLatest()
     }
     function sendMessage() {
         if (composer.text.trim().length && chat.config.model.length && !chat.credentialBusy) {
             chat.send(composer.text)
             composer.clear()
             followReply = true
+            followLatest()
         }
     }
     Connections {
@@ -39,8 +55,7 @@ ApplicationWindow {
             window.showChat()
         }
         function onMessagesChanged() {
-            if (window.followReply)
-                Qt.callLater(function() { transcript.positionViewAtEnd() })
+            window.followLatest()
         }
     }
     Shortcut { sequence: "Escape"; enabled: window.active && !settings.visible; onActivated: window.hide() }
@@ -70,21 +85,34 @@ ApplicationWindow {
             clip: true
             spacing: 14
             model: window.chat.messages
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar {
+                onPressedChanged: {
+                    if (pressed) window.followReply = false
+                    else if (transcript.atYEnd) window.followReply = true
+                }
+            }
             onMovementStarted: window.followReply = false
-            onAtYEndChanged: { if (atYEnd) window.followReply = true }
+            onMovementEnded: { if (atYEnd) window.followReply = true }
+            onContentHeightChanged: window.followLatest()
+            onHeightChanged: window.followLatest()
+            onWidthChanged: window.followLatest()
             delegate: Frame {
+                id: bubble
+                objectName: "chatBubble" + index
                 required property var modelData
                 required property int index
                 width: transcript.width
                 padding: 12
+                height: implicitHeight
+                onHeightChanged: window.followLatest()
                 background: Rectangle { color: modelData.role === "user" ? "#243246" : "#17212f"; radius: 10 }
-                ColumnLayout {
-                    width: parent.width
+                contentItem: ColumnLayout {
                     spacing: 6
                     Label { text: modelData.role === "user" ? "You" : "Companion"; color: "#52cbb4"; font.bold: true; font.pixelSize: 12 }
                     TextArea {
+                        objectName: "chatMessageText" + bubble.index
                         Layout.fillWidth: true
+                        visible: text.length > 0
                         text: modelData.text
                         textFormat: TextEdit.PlainText
                         readOnly: true
@@ -93,7 +121,7 @@ ApplicationWindow {
                         background: null
                         padding: 0
                     }
-                    Label { visible: modelData.state.length > 0; text: modelData.state; color: "#9eacc0"; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 12 }
+                    Label { objectName: "chatMessageState" + bubble.index; visible: modelData.state.length > 0; text: modelData.state; color: "#9eacc0"; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 12 }
                 }
             }
             Label {
@@ -108,8 +136,10 @@ ApplicationWindow {
         }
         Label { text: window.chat.error; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#ffc2c8" }
         ScrollView {
+            objectName: "chatComposerArea"
             Layout.fillWidth: true
             Layout.preferredHeight: 90
+            clip: true
             contentWidth: availableWidth
             TextArea {
                 id: composer

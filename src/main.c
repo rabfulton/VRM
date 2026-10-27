@@ -96,6 +96,16 @@ static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
 static bool save_springs_to_config(void);
 
+static void set_always_on_top(bool enabled) {
+  app.always_on_top = enabled;
+  platform_set_always_on_top(app.window, enabled);
+  Settings settings = {0};
+  settings_load(SETTINGS_PATH, &settings);
+  settings.has_always_on_top = true;
+  settings.always_on_top = enabled;
+  settings_save(SETTINGS_PATH, &settings);
+}
+
 static void apply_animation_metadata(const AnimConfig *cfg) {
   animator_set_loop_policy(&app.animator, cfg->has_loopable, cfg->loopable);
   app.animation_startup = cfg->has_startup && cfg->startup;
@@ -768,8 +778,7 @@ static void on_ipc_command(const char *action, void *params, int id,
     app.renderer.active = program;
     app.renderer.shader_mode = mode;
     if (top) {
-      app.always_on_top = cJSON_IsTrue(top);
-      platform_set_always_on_top(app.window, app.always_on_top);
+      set_always_on_top(cJSON_IsTrue(top));
     }
     if (scale) {
       app.model_scale = (float)scale->valuedouble;
@@ -1478,8 +1487,7 @@ static void on_key(int key, int action, void *user) {
     app.running = false;
     break;
   case PLATFORM_KEY_T:
-    app.always_on_top = !app.always_on_top;
-    platform_set_always_on_top(app.window, app.always_on_top);
+    set_always_on_top(!app.always_on_top);
     break;
   case PLATFORM_KEY_C:
     renderer_toggle_shader(&app.renderer);
@@ -1592,6 +1600,10 @@ int main(int argc, char *argv[]) {
   {
     Settings settings = {0};
     if (settings_load(SETTINGS_PATH, &settings)) {
+      if (settings.has_always_on_top) {
+        app.always_on_top = settings.always_on_top;
+        platform_set_always_on_top(app.window, app.always_on_top);
+      }
       if (settings.has_camera_distance) {
         float saved_distance = settings.camera_distance;
         if (saved_distance < 0.5f)
@@ -1791,6 +1803,8 @@ int main(int argc, char *argv[]) {
   }
 
   Settings settings = {0};
+  settings.has_always_on_top = true;
+  settings.always_on_top = app.always_on_top;
   settings.has_camera_distance = true;
   settings.camera_distance = app.camera.distance;
   settings.has_model_position = true;

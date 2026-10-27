@@ -48,13 +48,14 @@ class MirrorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)/'right.vrma';target=Path(directory)/'left.vrma'
             write_glb(source,doc,binary)
-            source.with_suffix('.cfg').write_text('# Keep attribution\nspring.drag=1.250\nbounds.world_w=1.0\nstartup=1\n')
+            source.with_suffix('.cfg').write_text('# Keep attribution\nspring.drag=1.250\nbounds.world_w=1.0\nstartup=1\nllm_enabled=1\n')
             original=source.read_bytes();mirror_vrma(source,target)
             self.assertEqual(source.read_bytes(),original)
             self.assertTrue(load_glb(target)[0]['animations'])
             config=target.with_suffix('.cfg').read_text()
             self.assertIn('spring.drag=1.250',config);self.assertIn('Keep attribution',config)
             self.assertIn('startup=0',config);self.assertNotIn('bounds.world',config)
+            self.assertIn('llm_enabled=0',config)
             with self.assertRaises(ValueError):mirror_vrma(source,target)
 
     def test_bad_geometry_and_buffer_layouts_fail_explicitly(self):

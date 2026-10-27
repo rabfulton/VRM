@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=domovushka
+GenericName=Desktop Companion
+Comment=Animated desktop companion with chat and speech
+Exec=domovushka
+TryExec=domovushka
+Terminal=false
+StartupNotify=false
+Categories=Utility;
+Keywords=avatar;companion;VRM;chat;

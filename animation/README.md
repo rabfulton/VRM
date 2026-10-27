@@ -8,7 +8,7 @@ work through the selected library; `make test-ui` tests all files it finds.
 The [CC0 starter pack](../assets/starter/README.md) has a separate versioned
 library and two avatars selectable through **Starter avatars…** in Studio.
 For additional user content, supply a VRM/glTF avatar
-with `python3 control.py --model /path/to/avatar.vrm` and select an animation folder
+with `./domovushka --model /path/to/avatar.vrm` and select an animation folder
 using `--animation-dir /path/to/animations` or Studio's file picker.
 
 This directory's contents are ignored except for this README. Existing local

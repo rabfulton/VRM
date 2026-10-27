@@ -9,10 +9,12 @@ from PySide6.QtGui import QDesktopServices
 
 from .avatar_catalog import featured_avatars
 from .avatar_library import AvatarStore
+from .qt_thumbnail_cache import ThumbnailCache
 
 
 class AvatarLibrary(QObject):
     changed = Signal()
+    featuredChanged = Signal()
     imported = Signal(str)
     _finished = Signal(object, str)
 
@@ -20,6 +22,10 @@ class AvatarLibrary(QObject):
         super().__init__(parent)
         self._store = AvatarStore(root or Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)) / 'avatars')
         self._featured = featured_avatars()
+        cache_root = (Path(root) / '.thumbnails' if root else
+                      Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)) / 'avatar-thumbnails')
+        self._thumbnails = ThumbnailCache(cache_root, self)
+        self._thumbnails.changed.connect(self.featuredChanged)
         self._installed = self._store.entries()
         self._busy = False
         self._error = ''
@@ -32,7 +38,8 @@ class AvatarLibrary(QObject):
         self._closing = False
         self._finished.connect(self._complete)
 
-    featured = Property('QVariantList', lambda self: self._featured, constant=True)
+    featured = Property('QVariantList', lambda self: [dict(e, thumbnail=self._thumbnails.localUrl(e['thumbnail']))
+                                                    for e in self._featured], notify=featuredChanged)
     installed = Property('QVariantList', lambda self: self._installed, notify=changed)
     choices = Property('QStringList', lambda self: self._choices, notify=changed)
     busy = Property(bool, lambda self: self._busy, notify=changed)
@@ -43,6 +50,7 @@ class AvatarLibrary(QObject):
     @Slot()
     def refresh(self):
         self._installed = self._store.entries()
+        self._thumbnails.ensure(e['thumbnail'] for e in self._featured)
         self.changed.emit()
 
     @Slot(str)
@@ -140,6 +148,7 @@ class AvatarLibrary(QObject):
 
     def shutdown(self):
         self._closing = True
+        self._thumbnails.shutdown()
         self._cancelled.set()
         if self._thread:
             self._thread.join(timeout=1)

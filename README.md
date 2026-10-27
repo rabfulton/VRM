@@ -1,6 +1,7 @@
-# vrm-overlay
+# domovushka
 
-A lightweight Linux/X11 avatar overlay with a standalone Qt Quick controller.
+An animated desktop companion for Linux/X11, with a Qt Quick control window,
+**domovushka studio**.
 The C/C++ runtime renders VRM/glTF models, plays VRMA/GLB animations, simulates
 spring bones, and drives expressions and lip sync through JSON IPC.
 
@@ -17,7 +18,7 @@ make -j4
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements-gui.txt
-python3 control.py --studio
+./domovushka --studio
 ```
 
 For an existing clone, initialize dependencies with
@@ -29,16 +30,28 @@ The [CC0 starter pack](assets/starter/README.md) includes an anime avatar, a fox
 in Studio for a thumbnail gallery, the included anime avatar and creator download
 pages. Import a downloaded VRM, GLB, glTF or ZIP; **My avatars** keeps local copies
 between sessions. See [avatar imports](docs/avatars.md). A fresh clone can run with
-`python3 control.py --studio`; existing saved/local avatars are preserved.
+`./domovushka --studio`; existing saved/local avatars are preserved.
 Additional user avatars, animations, speech downloads and local settings stay
 ignored by Git. See [asset setup](animation/README.md).
+The `domovushka` launcher uses this checkout's `.venv` when present, otherwise
+the current Python interpreter. Run `./domovushka` for just the companion, or
+`./domovushka --studio` to open the controls. All existing command-line options
+are supported, and `control.py` remains a compatibility entry point. Saved
+preferences, imported avatars and keyring credentials are retained.
+
+The desktop entry in [packaging/domovushka.desktop](packaging/domovushka.desktop)
+is provided for future packaging. It expects the
+`domovushka` command to be installed on `PATH`.
+
 Studio remembers the selected model and animation folder. On a new session it
 enables blinking, plays a configured startup once, then moves to an idle.
 Use **⋯** beside an animation to edit looping, startup, idle, pose and floor-contact properties in its
 `.cfg` file; see [animation properties](docs/animation-properties.md).
 
 The companion starts with Studio hidden. Right-click the avatar for **Chat**,
-**Studio** and **Quit**. Closing Studio or chat keeps the companion running;
+**Studio**, **Always on top** and **Quit**. The floating preference is remembered
+across restarts. Right-click again or left-click outside to dismiss the menu.
+Closing Studio or chat keeps the companion running;
 **Quit** stops it. Pass `--studio` to open the controls immediately. Missing assets
 or errors open Studio for setup and recovery. The avatar requests exclusion from
 X11 taskbars and window lists. Animations marked `is_idle` take turns while the
@@ -47,7 +60,7 @@ To manage the renderer separately:
 
 ```sh
 ./vrm-overlay --socket /tmp/my-avatar.sock /path/to/avatar.vrm
-python3 control.py --attach --socket /tmp/my-avatar.sock
+./domovushka --attach --socket /tmp/my-avatar.sock
 ```
 
 The runtime supports one active controller connection. Disconnect Studio before
@@ -60,8 +73,8 @@ connecting another client. Use a separate socket for each independent instance.
 - Fixed-step spring simulation with garment/arm collision proxies and diagnostics.
 - Flat-floor foot planting with leg IK and smooth contact release.
 - VRM expressions, automatic blinking and lip sync enabled by default.
-- API chat with streamed replies, system-keyring credentials, sentence speech
-  and library checkboxes selecting which animations the character may use.
+- API chat with streamed replies, system-keyring credentials, sentence speech,
+  animation master switches and separate per-animation LLM permissions.
 - Local speech with Nano/CrispASR on Vulkan by default; selectable Turbo, Kokoro,
   Piper and custom CrispASR backends, with saved profiles and optional CPU processing.
 

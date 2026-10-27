@@ -31,7 +31,7 @@ def capabilities(state, files):
         return {}
     result = {}
     for entry in describe_animations(files):
-        if entry["llm_enabled"] and not entry.get('config_error'):
+        if entry['enabled'] and entry["llm_enabled"] and not entry.get('config_error'):
             name = entry["llm_id"]
             result[("animation", name)] = Capability("animation", name, entry["llm_description"], (
                 {"action": "load_animation", "path": entry["path"]},

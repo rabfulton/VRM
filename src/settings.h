@@ -4,6 +4,8 @@
 #include <stdbool.h>
 
 typedef struct {
+    bool has_always_on_top;
+    bool always_on_top;
     bool has_camera_distance;
     float camera_distance;
     bool has_model_position;

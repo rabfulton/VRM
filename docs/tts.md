@@ -8,7 +8,7 @@ build. No Python ML packages are installed by this integration.
 
 ## First use
 
-Start `python3 control.py`, open **Speech**, and click **Prepare voice**. It
+Start `./domovushka`, open **Speech**, and click **Prepare voice**. It
 downloads a missing native engine and caches the selected model. Nano/Turbo model
 files are pinned to repository revisions and verified with SHA-256. Interrupted
 downloads resume on the next Prepare attempt; the two models share one decoder.

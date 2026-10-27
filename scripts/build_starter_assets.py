@@ -39,6 +39,11 @@ CLIPS=[
  ('lying_idle','UAL2','LayToIdle',True,True,'lying','lying',False,False,True),
  ('climb_up','UAL2','ClimbUp_1m_RM',False,False,'standing','standing',False,False,False)]
 
+# Keep standing social idles front-facing. Motion, seated and floor-pose families
+# share a side profile, including each pose transition's complete trajectory.
+SIDE_PROFILE_CLIPS = {'walk', 'walk_formal', 'jog', 'push', 'sit_down', 'sitting_idle',
+                      'stand_up', 'get_up', 'lie_down', 'lying_idle', 'climb_up'}
+
 
 def unpack_glb(data):
     length,kind=struct.unpack_from('<II',data,12)
@@ -92,8 +97,10 @@ def main():
         if source is None:raise ValueError('No source motion: '+pack)
         for output,p,clip,loop,idle,entry,exit,floor,reverse,hold in CLIPS:
             if p!=pack:continue
-            doc,binary=humanoid_clip(source,clip,output,reverse=reverse,hold=hold)
-            glb(f'animations/humanoid/{output}.vrma',doc,binary,pack,clip=clip,reverse=reverse,hold=hold,root_motion='in_place')
+            facing_yaw = 90 if output in SIDE_PROFILE_CLIPS else 0
+            doc,binary=humanoid_clip(source,clip,output,reverse=reverse,hold=hold,facing_yaw=facing_yaw)
+            glb(f'animations/humanoid/{output}.vrma',doc,binary,pack,clip=clip,reverse=reverse,hold=hold,
+                root_motion='in_place',facing_yaw=facing_yaw)
             config(f'animations/humanoid/{output}.cfg',loop,idle,entry,exit,floor)
             print('Baked',output,flush=True)
     animal='Models/GLB format/animal-fox.glb'

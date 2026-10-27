@@ -59,6 +59,27 @@ static float segment_length(Rig &rig,int a,int b) {
     return sqrtf(length);
 }
 static void continuity_regressions() {
+    /* A large but supported clip-floor calibration needs the pelvis to settle
+     * before judging full-weight IK reach. A static stance must not replant
+     * every few frames while that correction is still converging. */
+    for(int fps:{30,60,144}) for(bool jitter:{false,true}) {
+        Rig rig;FootLock lock;foot_lock_init(&lock);foot_lock_set_model(&lock,&rig.model);
+        for(int frame=0;frame<fps*2;frame++) {
+            const float dt=(jitter ? (frame%2 ? 1.2f : 0.8f) : 1.0f)/fps;
+            rig.step(lock,dt,0,0.16f);
+            if(frame>fps/2) {
+                assert(lock.feet[0].planted && lock.feet[1].planted);
+                near(lock.feet[0].weight,1);near(lock.feet[1].weight,1);
+                assert(lock.feet[0].error<0.004f && lock.feet[1].error<0.004f);
+            }
+        }
+        /* Settling allowance must not retain contact once the authored feet
+         * actually leave the calibrated floor. */
+        for(int frame=0;frame<fps/2;frame++)rig.step(lock,1.0f/fps,0,0.46f);
+        assert(!lock.feet[0].planted && !lock.feet[1].planted);
+        near(lock.feet[0].weight,0);near(lock.feet[1].weight,0);
+        near(lock.pelvis_offset,0);
+    }
     for(int fps:{30,60,144}) {
         Rig rig;FootLock lock;foot_lock_init(&lock);foot_lock_set_model(&lock,&rig.model);
         idle(rig,lock,fps);
@@ -167,5 +188,5 @@ int main() {
     rig.model.humanoid_bone_count=9;foot_lock_set_model(&lock,nullptr);
     rig.nodes[2].scale[0]=2;gltf_update_transforms(&rig.model);
     foot_lock_set_model(&lock,&rig.model);assert(!lock.feet[0].supported);
-    std::puts("Foot planting tests passed: stable anchors/orientation, blend/root motion, 30/60/144 Hz, lift/step/jump release, reach limits and unsupported rigs");
+    std::puts("Foot planting tests passed: stable anchors/orientation, pelvis settling, blend/root motion, 30/60/144 Hz/jitter, lift/step/jump release, reach limits and unsupported rigs");
 }

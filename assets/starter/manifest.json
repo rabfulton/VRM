@@ -30,7 +30,8 @@
       "clip": "Idle_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 0
     },
     "animations/humanoid/idle.cfg": {
       "source": "vrm-overlay",
@@ -44,7 +45,8 @@
       "clip": "Idle_Talking_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 0
     },
     "animations/humanoid/idle_talking.cfg": {
       "source": "vrm-overlay",
@@ -53,12 +55,13 @@
     },
     "animations/humanoid/walk.vrma": {
       "source": "UAL1",
-      "sha256": "ec51c55bdf23a82deb0bf536da5254389ded5293296bd4f8dcec4512a44295ae",
-      "bytes": 64956,
+      "sha256": "dfdee203d64461c27a997a6915ec8d333d6bcfa5a1edef24f611f75096b3faa8",
+      "bytes": 66792,
       "clip": "Walk_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/walk.cfg": {
       "source": "vrm-overlay",
@@ -67,12 +70,13 @@
     },
     "animations/humanoid/walk_formal.vrma": {
       "source": "UAL1",
-      "sha256": "1f73f2417493a349b33773a06282c892efe08c81fe4b2b8cbfe0f21f072049c5",
-      "bytes": 64992,
+      "sha256": "aa94ef8bb0b455bebf5fba8402799d8704ed3316ff3f64545d01c4a53f87a695",
+      "bytes": 66828,
       "clip": "Walk_Formal_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/walk_formal.cfg": {
       "source": "vrm-overlay",
@@ -81,12 +85,13 @@
     },
     "animations/humanoid/jog.vrma": {
       "source": "UAL1",
-      "sha256": "8fa1d27edc632e0c17db917644310c7082220b7652e6417a8399f41963827df5",
-      "bytes": 54780,
+      "sha256": "d0152803fbf23f58fe23dc12712903be573338cbf7b278c30867ce02e64aac24",
+      "bytes": 56276,
       "clip": "Jog_Fwd_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/jog.cfg": {
       "source": "vrm-overlay",
@@ -95,12 +100,13 @@
     },
     "animations/humanoid/push.vrma": {
       "source": "UAL1",
-      "sha256": "b04bd383d5ae605224007716814d070e3cb6831f3b04320635756dff05f2eaf4",
-      "bytes": 99080,
+      "sha256": "f724d0709f7913c1bcd0d3415c0b71ef578ba14afe650f221d60c9c7bd67a9f7",
+      "bytes": 102028,
       "clip": "Push_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/push.cfg": {
       "source": "vrm-overlay",
@@ -109,12 +115,13 @@
     },
     "animations/humanoid/sit_down.vrma": {
       "source": "UAL1",
-      "sha256": "cf3c6aecd2c6809f0b02cd6abf4572bd10acc8a3cfada7a1034bd2b3e3a0d980",
-      "bytes": 63248,
+      "sha256": "66fd69b5bf226128e679e8e3450a305d3c2645d073af288fddddf0eb0a7b84bf",
+      "bytes": 65024,
       "clip": "Sitting_Enter",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/sit_down.cfg": {
       "source": "vrm-overlay",
@@ -123,12 +130,13 @@
     },
     "animations/humanoid/sitting_idle.vrma": {
       "source": "UAL1",
-      "sha256": "f1be6c472db66b3d0215515253ed63364c18439eb59e633c2f62a308a318a728",
-      "bytes": 72480,
+      "sha256": "0b3459a424c720743f9b623d85d52b7d1fbb6d09ee46365802fbccd33baa3cc3",
+      "bytes": 74492,
       "clip": "Sitting_Idle_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/sitting_idle.cfg": {
       "source": "vrm-overlay",
@@ -137,12 +145,13 @@
     },
     "animations/humanoid/stand_up.vrma": {
       "source": "UAL1",
-      "sha256": "ea8f7841e900cba3787be8348eb0984204288718aa6dd2d4551c0dde83940ad4",
-      "bytes": 56424,
+      "sha256": "651b82e613b626575448dc237eb7e2f7f3d1ac68c213d1e37efdf1c07d796cad",
+      "bytes": 57976,
       "clip": "Sitting_Exit",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/stand_up.cfg": {
       "source": "vrm-overlay",
@@ -156,7 +165,8 @@
       "clip": "Idle_FoldArms_Loop",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 0
     },
     "animations/humanoid/idle_folded_arms.cfg": {
       "source": "vrm-overlay",
@@ -165,12 +175,13 @@
     },
     "animations/humanoid/get_up.vrma": {
       "source": "UAL2",
-      "sha256": "8d8eaea88e7d853974420cab1de6a5fcfa02dc2f1e517aa321849e87b1cab2a0",
-      "bytes": 69248,
+      "sha256": "5114eb968fb00b17abbe956cfb8ca1f34a93a8052c0cea0a499538ea474f8d40",
+      "bytes": 71220,
       "clip": "LayToIdle",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/get_up.cfg": {
       "source": "vrm-overlay",
@@ -179,12 +190,13 @@
     },
     "animations/humanoid/lie_down.vrma": {
       "source": "UAL2",
-      "sha256": "2681a4651a63446420614a6378702ad8643c52edbf8680b51ed223a4052caf66",
-      "bytes": 69252,
+      "sha256": "45b43061e57bad24aa9f2538d1b9514f0e266aef04afa00ae8d57e58e06f9986",
+      "bytes": 71224,
       "clip": "LayToIdle",
       "reverse": true,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/lie_down.cfg": {
       "source": "vrm-overlay",
@@ -193,12 +205,13 @@
     },
     "animations/humanoid/lying_idle.vrma": {
       "source": "UAL2",
-      "sha256": "fe5fc135661897113e906452cb08083c2ddf014f134face0d01ba40e6bf15df1",
-      "bytes": 55548,
+      "sha256": "743ba75c49cf513a062989b0e983c4cc7e2eaa3a6cb88d40b1f35d1aa3e4296c",
+      "bytes": 57072,
       "clip": "LayToIdle",
       "reverse": false,
       "hold": true,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/lying_idle.cfg": {
       "source": "vrm-overlay",
@@ -207,12 +220,13 @@
     },
     "animations/humanoid/climb_up.vrma": {
       "source": "UAL2",
-      "sha256": "1e964214d388842336726e5ee87e0c45355f1c43b811e151258d41352bb48f57",
-      "bytes": 48020,
+      "sha256": "b0e409785d528532c50551012c7675d3fd64e2967fe9a2cea078a0156cf7f8f8",
+      "bytes": 49284,
       "clip": "ClimbUp_1m_RM",
       "reverse": false,
       "hold": false,
-      "root_motion": "in_place"
+      "root_motion": "in_place",
+      "facing_yaw": 90
     },
     "animations/humanoid/climb_up.cfg": {
       "source": "vrm-overlay",

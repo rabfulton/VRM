@@ -10,7 +10,7 @@ def transition_route(entries, source, target):
         pose,path=queue.popleft()
         for entry in entries:
             start,end=entry.get('entry_pose','standing'),entry.get('exit_pose','standing')
-            if entry.get('config_error') or entry.get('loopable') or start!=pose or end==start or end in visited:continue
+            if not entry.get('enabled',True) or entry.get('config_error') or entry.get('loopable') or start!=pose or end==start or end in visited:continue
             route=path+[entry]
             if end==target:return route
             visited.add(end);queue.append((end,route))

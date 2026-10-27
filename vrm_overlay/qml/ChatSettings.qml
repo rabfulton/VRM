@@ -47,7 +47,7 @@ Dialog {
             CheckBox { id: actions; text: "Allow the character's listed gestures and expressions" }
             Label { text: "Character description"; font.bold: true }
             TextArea { id: character; objectName: "chatCharacter"; Layout.fillWidth: true; Layout.preferredHeight: 170; wrapMode: TextEdit.Wrap; selectByMouse: true }
-            Label { text: "Available actions and speech formatting are appended automatically. Check animations in Studio's library to let the LLM use them."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
+            Label { text: "Available actions and speech formatting are appended automatically. Enable a clip in Studio's library and turn on ⋯ → Available to LLM to let the character use it."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
             GroupBox {
                 title: "Current system prompt"
                 Layout.fillWidth: true

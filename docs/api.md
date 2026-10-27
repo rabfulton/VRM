@@ -324,6 +324,8 @@ change runtime state. Qt Studio polls this snapshot to keep controls synchronize
   errors if there is no current animation or the file cannot be written. Global
   transition duration and group blend factors are not persisted by this command.
 - `set_render`: shader `anime`, `toon` or `pbr`; boolean `always_on_top`; scale 0.1–10.
+  `always_on_top` changes the avatar's native floating-window property and is
+  saved immediately in the renderer's `settings.cfg` for subsequent launches.
   Scale changes also update the camera framing. Invalid options reject the update.
 - `clear_expressions`: sets every available expression to zero. Automatic blinking
   and lip sync can continue to drive their expressions while enabled.
@@ -383,10 +385,12 @@ callers can still disable the analyzer. A new stream enables it as before.
 
 `get_state.data.overlay_menu_seq` is an unsigned 32-bit counter incremented by a
 right-button press on the avatar. `overlay_menu_position` records its global X11
-`x`/`y` coordinates. The background controller opens its QML **Chat / Studio / Quit**
+`x`/`y` coordinates. The background controller opens its QML **Chat / Studio / Always on top / Quit**
 menu even with Studio hidden. Establish a baseline on connect; do not replay old
 clicks. Qt uses its own current cursor and available-screen geometry to place the
 menu, since X11 native pixels differ from Qt logical coordinates on scaled displays.
+The menu owns mouse input while visible; a second right-click or an outside
+left-click dismisses it without sending the cancelling press back to the avatar.
 The legacy `chat_request_seq` field remains for older runtimes/controllers;
 new right-clicks update only the menu sequence. Chat credentials and conversation
 handling live in the controller, not the renderer IPC server.

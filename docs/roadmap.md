@@ -35,6 +35,10 @@ semantic names, and curate the animation library before expanding the catalogue.
 Add microphone/ASR as an optional adapter and an optional current-sentence bubble.
 Broaden fixture-driven behaviour scenarios as capabilities grow.
 
+Consider subscription-backed chat sign-in alongside API keys. See the
+[ChatGPT/Grok login research note](subscription-login.md) for provider options,
+implementation scope and open questions.
+
 ## 3. Better body and clothing contacts
 
 Add collider/contact visualization and per-model chain overrides before expanding

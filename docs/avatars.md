@@ -39,9 +39,13 @@ Importing alone does not interrupt the current avatar or its playback.
   model is imported without unpacking unrelated assets; accompanying text/Markdown
   and PDF notices are retained. Extract packages containing a `.gltf` first.
 
-A missing thumbnail displays an initial instead. Creator-hosted previews load
-when the dialog opens, with an offline fallback. Imported VRM thumbnails are local.
-No additional Python or native dependencies are required.
+A missing thumbnail displays an initial instead. Creator-hosted previews download
+once when the dialog opens and are saved in Qt's application cache directory under
+`avatar-thumbnails/`. Later openings and application restarts use those local copies,
+including while offline. Changing a catalog image URL fetches a new preview;
+clearing this cache fetches the previews again. Failed requests retry on a later
+opening. Imported VRM thumbnails are already local. No additional dependencies
+are required.
 
 The bundled anime model has a known camera/motion profile. Other humanoid imports
 keep your chosen animation library, except when replacing the bundled fox or an
@@ -64,8 +68,9 @@ Creator models remain private user downloads. They are neither bundled in this
 repository nor fetched through a mirror or an unofficial Hub API. Author credits,
 source pages and embedded license links remain accessible when available. The
 short terms summaries are navigation aids; the creator's current full terms govern
-use. Discover thumbnails stay on the creator's image host rather than being
-redistributed in the repository. Adding a featured entry requires a public creator
+use. Discover thumbnails originate from the creator's image host and are cached
+privately on the user's machine; they are not redistributed in the repository.
+Adding a featured entry requires a public creator
 page, an actual VRM download option, and reviewed terms and preview URLs in
 `vrm_overlay/avatar_catalog.py`.
 

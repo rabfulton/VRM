@@ -58,7 +58,7 @@ Install `requirements-gui.txt` to include offscreen QML interaction tests;
 otherwise those tests skip. To check the workspace alone:
 
 ```sh
-QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software python3 control.py --check
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software ./domovushka --check
 ```
 
 Use a separate `TEST_BUILD_DIR` when testing a non-default feature configuration

@@ -21,7 +21,7 @@ def starter_avatars():
 
 
 def featured_avatars():
-    """Creator pages, not mirrors. Remote previews stay on the creator's host."""
+    """Creator pages and original preview URLs, cached privately by the gallery."""
     rows = []
     for entry in starter_avatars():
         if entry['rig'] != 'humanoid':

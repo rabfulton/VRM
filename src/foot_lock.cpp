@@ -217,7 +217,12 @@ void foot_lock_apply(FootLock *lock,GltfModel *model,float dt) {
             maximum_drop=std::max(maximum_drop,foot.length*0.18f*weight);
         }
     }
-    smooth_pelvis(lock,std::max(pelvis_drop,-maximum_drop),dt);
+    const float pelvis_target=std::max(pelvis_drop,-maximum_drop);
+    smooth_pelvis(lock,pelvis_target,dt);
+    /* Contact influence can reach one before the damped pelvis catches up.
+     * That remaining drop is expected temporary IK error, not a failed anchor.
+     * Rejecting it here would release/reacquire a stationary foot repeatedly. */
+    const float pending_drop=std::max(0.0f,lock->pelvis_offset-pelvis_target);
     if(valid(model,lock->pelvis) && fabsf(lock->pelvis_offset)>1e-7f) {
         int parent=model->nodes[lock->pelvis].parent_index;
         vec3 local_delta={0,lock->pelvis_offset,0};
@@ -263,7 +268,7 @@ void foot_lock_apply(FootLock *lock,GltfModel *model,float dt) {
         set_world_rotation(model,foot.ankle,result);
         gltf_update_transforms(model);
         float ankle[3];position(model,foot.ankle,ankle);foot.error=distance(ankle,foot.anchor);
-        if(foot.weight>=0.99f && foot.error>foot.length*0.04f) foot.planted=false;
+        if(foot.weight>=0.99f && foot.error>foot.length*0.04f+pending_drop) foot.planted=false;
     }
 #else
     (void)dt;

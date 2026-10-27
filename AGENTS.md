@@ -1,4 +1,4 @@
-# Project guide (vrm-overlay)
+# Project guide (domovushka)
 
 This repository builds a Linux/X11 OpenGL avatar renderer with JSON IPC and a
 separate Python/PySide6 Qt Quick controller. Read [README.md](README.md) for setup.
@@ -7,7 +7,8 @@ separate Python/PySide6 Qt Quick controller. Read [README.md](README.md) for set
 
 - `src/`: renderer, loader, animation, spring simulation, contacts, IPC and audio.
 - `vrm_overlay/`: reusable Python client, speech providers, Qt controller and QML.
-- `control.py`: Studio launcher; the renderer has no embedded GUI.
+- `domovushka`: application launcher; `control.py` remains a compatibility entry
+  point. The renderer has no embedded GUI.
 - `deps/`: vendored libraries and the ozz-animation submodule.
 - `tests/`: maintained native/Python/QML regressions; `scripts/`: speech setup.
 - `examples/chat_tts/`: independent typed-chat and sentence-speech prototype.
@@ -91,7 +92,7 @@ Analyze at ingest or use a non-destructive tap/FIFO.
 
 ## Build and verification
 
-Build with `make`; run `python3 control.py --model /path/to/avatar.vrm`, or
+Build with `make`; run `./domovushka --model /path/to/avatar.vrm`, or
 `./vrm-overlay /path/to/avatar.vrm`. Initialize the ozz submodule before building.
 `USE_OZZ=0` omits ozz sampling/transitions and leg IK; run `make clean` when changing
 this feature flag. There is no Jolt dependency.

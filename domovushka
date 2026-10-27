@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Launch domovushka from a checkout, using its virtual environment if present."""
+import os
+from pathlib import Path
+import sys
+
+
+def main():
+    root = Path(__file__).resolve().parent
+    environment = root / '.venv'
+    python = environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    if python.is_file() and Path(sys.prefix).resolve() != environment.resolve():
+        os.execv(str(python), [str(python), str(root / 'domovushka'), *sys.argv[1:]])
+    from vrm_overlay.gui import main as run
+    return run()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

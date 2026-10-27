@@ -10,16 +10,20 @@ Window {
     property var palette
     property var font
     transientParent: null
-    flags: Qt.Popup | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    // A tool window with an explicit input grab avoids Qt's popup-stack replay
+    // sending the cancelling right-click back to the separate GLFW process.
+    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     width: 180
     height: actions.implicitHeight + 12
     color: "#17212f"
     visible: false
+    Component.onCompleted: controller.registerOverlayMenu(menu)
     onActiveChanged: { if (!active) hide() }
     Shortcut { sequence: "Escape"; enabled: menu.visible; onActivated: menu.hide() }
     Connections {
         target: menu.controller
         function onOverlayMenuRequested(position) {
+            if (menu.visible) { menu.hide(); return }
             // All coordinates, including workarea bounds, come from Qt so they
             // remain in the same logical coordinate space on scaled displays.
             menu.x = position.x ?? 0
@@ -55,6 +59,19 @@ Window {
             font: menu.font
             Layout.fillWidth: true
             onClicked: { menu.hide(); menu.controller.showStudio() }
+        }
+        CheckDelegate {
+            objectName: "overlayAlwaysOnTopCheck"
+            text: "Always on top"
+            palette: menu.palette
+            font: menu.font
+            Layout.fillWidth: true
+            checked: menu.controller.state.always_on_top
+            enabled: menu.controller.connected
+            onToggled: {
+                menu.hide()
+                menu.controller.command("set_render", {always_on_top: checked})
+            }
         }
         Button {
             objectName: "overlayQuitButton"

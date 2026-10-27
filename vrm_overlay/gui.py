@@ -1,4 +1,4 @@
-"""Launch the Qt Quick controller: python3 -m vrm_overlay.gui."""
+"""domovushka's Qt Quick application, also available as python3 -m vrm_overlay.gui."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ import sys
 
 
 def main():
-    parser = argparse.ArgumentParser(description="VRM Studio — Qt Quick avatar controller")
+    parser = argparse.ArgumentParser(prog='domovushka', description="domovushka — animated desktop companion")
     parser.add_argument("--socket", default="/tmp/vrm-overlay.sock")
     parser.add_argument("--attach", action="store_true", help="Connect only; leave the existing renderer running on exit")
     parser.add_argument("--model", help="Avatar to load when starting a new renderer")
@@ -26,8 +26,12 @@ def main():
 
     QQuickStyle.setStyle("Fusion")
     app = QGuiApplication([sys.argv[0]])
+    # These storage identifiers retain existing QSettings, imported avatars and
+    # cached previews. Visible branding and the desktop launcher have their own IDs.
     app.setOrganizationName("vrm-overlay")
     app.setApplicationName("VRM Studio")
+    app.setApplicationDisplayName('domovushka')
+    app.setDesktopFileName('domovushka')
     app.setQuitOnLastWindowClosed(False)
     bridge = Controller(args.socket, attach=args.attach, model=args.model, animation_dir=args.animation_dir,
                         show_studio=args.studio)

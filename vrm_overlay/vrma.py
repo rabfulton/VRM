@@ -154,11 +154,11 @@ def mirror_vrma(source, destination):
     for animation in mirrored.get('animations', []):
         animation['name'] = destination.stem
     write_glb(destination, mirrored, data)
-    # Keep tuning and notices, but discard source bounds and startup/idle roles.
+    # Keep tuning/notices; a new derivative needs its own roles and LLM permission.
     from .animation_config import save_properties
     config = source.with_suffix('.cfg')
     if config.exists():
         lines = config.read_text().splitlines(keepends=True)
         destination.with_suffix('.cfg').write_text(''.join(line for line in lines if not line.lstrip().startswith('bounds.')))
-    save_properties(destination, dict(loopable=False, startup=False, is_idle=False))
+    save_properties(destination, dict(loopable=False, startup=False, is_idle=False, llm_enabled=False))
     return destination

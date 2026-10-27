@@ -19,7 +19,7 @@ if HAS_QT:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ["QT_QPA_PLATFORMTHEME"] = "basic"
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
-    from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QUrl
+    from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, Qt, QUrl
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtNetwork import QLocalServer
     from PySide6.QtQml import QQmlApplicationEngine
@@ -101,6 +101,10 @@ class QtControllerTests(unittest.TestCase):
                     self.state["playing"] = True
                 elif action == "pause":
                     self.state["playing"] = False
+                elif action == 'set_playback':
+                    self.state.update({k: command[k] for k in ('speed', 'loop') if k in command})
+                elif action == 'set_render' and 'always_on_top' in command:
+                    self.state['always_on_top'] = command['always_on_top']
                 elif action == "auto_blink_enable":
                     self.state["blink"]["enabled"] = command["enabled"]
                 elif action == "set_foot_lock":
@@ -247,6 +251,94 @@ class QtControllerTests(unittest.TestCase):
             window.grabWindow().save("/tmp/vrm-chat-preview.png")
             window.close()
 
+    def test_studio_status_and_buttons_stay_stable_between_speech_requests(self):
+        self.load_qml()
+        speech = self.bridge.speech
+        speech._busy, speech._status = True, 'Speaking'
+        speech.changed.emit()
+        QTest.qWait(20)
+        status = self.window.findChild(QQuickItem, 'runtimeStatusLabel')
+        indicator = self.window.findChild(QQuickItem, 'runtimeActivityIndicator')
+        controls = [self.window.findChild(QQuickItem, name) for name in
+                    ('openChatButton', 'resumeIdleButton', 'runtimeStatusArea', 'connectionButton')]
+        for width in (940, 1120):
+            self.window.setWidth(width)
+            QTest.qWait(20)
+            positions = [(c.x(), c.width()) for c in controls]
+            for _ in range(3):
+                self.bridge._queue([dict(action='audio_status')], 'Speech playback')
+                self.wait_for(lambda: not self.bridge.busy)
+                QTest.qWait(20)
+                self.assertEqual(status.property('text'), 'Speaking')
+                self.assertTrue(indicator.property('running'))
+                self.assertEqual([(c.x(), c.width()) for c in controls], positions)
+        speech._busy = False
+        speech.changed.emit()
+        self.wait_for(lambda: status.property('text') == 'Connected')
+        self.assertFalse(indicator.property('running'))
+
+    def test_pending_and_streamed_chat_bubble_stays_above_composer_after_wrapping_and_resize(self):
+        from chat_http_fixture import ChatServer
+        first, finish = threading.Event(), threading.Event()
+        self.addCleanup(first.set)
+        self.addCleanup(finish.set)
+        server = ChatServer([('A reply that wraps across many lines. ' * 8, first), (' Done.', finish)])
+        self.addCleanup(server.close)
+        self.load_qml()
+        chat = self.bridge.chat
+        self.assertTrue(chat.saveSettings({**chat.config, 'endpoint': server.endpoint, 'model': 'fixture',
+                                           'no_key': True, 'read_aloud': False}))
+        chat._messages = [dict(role='user' if n % 2 == 0 else 'assistant', text='Previous conversation. ' * 6, state='')
+                          for n in range(8)]
+        chat.messagesChanged.emit()
+        self.click('openChatButton')
+        window = self.window.findChild(QObject, 'chatWindow')
+        window.findChild(QQuickItem, 'chatInput').setProperty('text', 'A question that wraps onto several lines. ' * 4)
+        self.click('sendChatButton', window)
+        self.wait_for(lambda: bool(server.requests))
+        transcript = window.findChild(QQuickItem, 'chatTranscript')
+        composer = window.findChild(QQuickItem, 'chatComposerArea')
+
+        def find_visual(parent, name):
+            if parent.objectName() == name:
+                return parent
+            for child in parent.childItems():
+                found = find_visual(child, name)
+                if found is not None:
+                    return found
+            return None
+
+        def assert_bottom_visible():
+            self.wait_for(lambda: transcript.property('atYEnd'))
+            QTest.qWait(30)
+            state = find_visual(window.contentItem(), 'chatMessageState9')
+            bubble = find_visual(window.contentItem(), 'chatBubble9')
+            self.assertIsNotNone(state)
+            self.assertIsNotNone(bubble)
+            bottom = transcript.mapToScene(QPointF(0, transcript.height())).y()
+            self.assertLessEqual(state.mapToScene(QPointF(0, state.height())).y(), bottom)
+            self.assertLessEqual(bubble.mapToScene(QPointF(0, bubble.height())).y(), bottom)
+            self.assertGreaterEqual(composer.mapToScene(QPointF()).y(), bottom + 8)
+
+        for size in ((440, 600), (360, 420), (560, 700)):
+            window.resize(*size)
+            assert_bottom_visible()
+        first.set()
+        self.wait_for(lambda: bool(chat.messages[-1]['text']))
+        for size in ((360, 420), (440, 600)):
+            window.resize(*size)
+            assert_bottom_visible()
+        # Stream updates must not re-enable following after the user scrolls back.
+        window.setProperty('followReply', False)
+        transcript.setProperty('contentY', transcript.property('originY'))
+        chat._messages[-1]['text'] += ' More reply text.'
+        chat.messagesChanged.emit()
+        QTest.qWait(50)
+        self.assertFalse(window.property('followReply'))
+        finish.set()
+        self.wait_for(lambda: not chat.busy)
+        window.close()
+
     def test_chat_settings_dialog_is_usable_and_keeps_keys_out_of_settings(self):
         self.load_qml()
         self.click("openChatButton")
@@ -331,6 +423,42 @@ class QtControllerTests(unittest.TestCase):
         self.assertTrue(self.bridge.connected)
         self.bridge.showStudio()
         self.wait_for(lambda: self.window.isVisible())
+
+    def test_overlay_menu_cancels_on_second_request_right_click_outside_click_and_escape(self):
+        self.load_qml()
+        menu = self.window.findChild(QObject, 'overlayMenu')
+        def show():
+            self.bridge.overlayMenuRequested.emit(dict(x=40, y=50))
+            self.wait_for(menu.isVisible)
+            QTest.qWait(30)
+        show()
+        self.bridge.overlayMenuRequested.emit(dict(x=40, y=50))
+        self.assertFalse(menu.isVisible())
+        show()
+        QTest.mouseClick(menu, Qt.RightButton, Qt.NoModifier, QPoint(12, 12))
+        self.assertFalse(menu.isVisible())
+        show()
+        QTest.mouseClick(menu, Qt.LeftButton, Qt.NoModifier, QPoint(-15, -15))
+        self.assertFalse(menu.isVisible())
+        show()
+        QTest.keyClick(menu, Qt.Key_Escape)
+        self.assertFalse(menu.isVisible())
+        self.assertFalse(any(c['action'] == 'shutdown' for c in self.commands))
+        self.assertTrue(self.bridge.connected)
+
+    def test_overlay_always_on_top_toggle_tracks_renderer_state(self):
+        self.load_qml()
+        menu = self.window.findChild(QObject, 'overlayMenu')
+        option = menu.findChild(QQuickItem, 'overlayAlwaysOnTopCheck')
+        for expected in (True, False):
+            self.bridge.overlayMenuRequested.emit(dict(x=40, y=50))
+            self.wait_for(menu.isVisible)
+            QTest.qWait(30)
+            self.assertEqual(option.property('checked'), not expected)
+            self.click('overlayAlwaysOnTopCheck', menu)
+            self.wait_for(lambda: self.bridge.state['always_on_top'] == expected and not self.bridge.busy)
+            self.assertFalse(menu.isVisible())
+        self.assertEqual([c['always_on_top'] for c in self.commands if c['action'] == 'set_render'], [True, False])
 
     def test_expected_socket_close_during_quit_does_not_open_error_window(self):
         quits=[]
@@ -424,26 +552,53 @@ raise SystemExit(gui.main())
         self.wait_for(lambda: self.bridge.selectedAnimation == 2 and not self.bridge.busy)
         self.assertEqual(self.bridge.state["animation_path"], str(self.files[2]))
 
-    def test_animation_llm_checks_persist_without_playing_and_filter_uses_source_row(self):
+    def test_animation_master_checks_persist_without_playing_and_filter_uses_source_row(self):
         self.load_qml()
         self.assertEqual(self.bridge.llmAnimationCount, 0)
-        self.click("llmAnimationCheck0")
-        self.assertTrue(self.bridge.animationFiles[0]["llm_enabled"])
-        self.assertIn("[[animation:a]]", self.bridge.chat.prompt)
+        self.assertEqual(self.bridge.enabledAnimationCount, 3)
+        self.click("animationEnabledCheck0")
+        self.assertFalse(self.bridge.animationFiles[0]['enabled'])
+        self.assertFalse(self.bridge.animationFiles[0]["llm_enabled"])
+        self.assertNotIn("[[animation:a]]", self.bridge.chat.prompt)
         self.assertFalse(any(c["action"] == "load_animation" for c in self.commands))
         self.window.findChild(QQuickItem, "animationSearch").setProperty("text", "C")
         QTest.qWait(25)
-        self.click("llmAnimationCheck2")
-        self.assertTrue(self.bridge.animationFiles[2]["llm_enabled"])
-        self.assertFalse(self.bridge.animationFiles[1]["llm_enabled"])
+        self.click("animationEnabledCheck2")
+        self.assertFalse(self.bridge.animationFiles[2]['enabled'])
+        self.assertTrue(self.bridge.animationFiles[1]['enabled'])
         other = Controller(self.bridge.socketPath, attach=True, settings=self.bridge._settings)
         self.addCleanup(other.shutdown)
         self.assertEqual(other.animationFolder, self.bridge.animationFolder)
-        self.assertEqual([f["llm_enabled"] for f in other.animationFiles], [True, False, True])
+        self.assertEqual([f['enabled'] for f in other.animationFiles], [False, True, False])
+        self.assertFalse(any(f['llm_enabled'] for f in other.animationFiles))
         self.bridge.disconnectRuntime()
         QTest.qWait(20)
-        self.click("llmAnimationCheck2")
-        self.assertFalse(self.bridge.animationFiles[2]["llm_enabled"])
+        self.click("animationEnabledCheck2")
+        self.assertTrue(self.bridge.animationFiles[2]['enabled'])
+
+    def test_llm_access_property_is_saved_separately_and_master_disable_gates_prompt(self):
+        self.load_qml()
+        self.click('animationPropertiesButton1')
+        QTest.qWait(25)
+        dialog = self.window.findChild(QObject, 'animationPropertiesDialog')
+        control = dialog.findChild(QQuickItem, 'animationLlmAccessProperty')
+        self.assertFalse(control.property('checked'))
+        control.setProperty('checked', True)
+        self.click('saveAnimationPropertiesButton')
+        self.wait_for(lambda: not dialog.property('visible'))
+        self.assertTrue(self.bridge.animationFiles[1]['enabled'])
+        self.assertTrue(self.bridge.animationFiles[1]['llm_enabled'])
+        self.assertIn('llm_enabled=1', self.files[1].with_suffix('.cfg').read_text())
+        self.assertIn('[[animation:b]]', self.bridge.chat.prompt)
+        self.assertFalse(any(c['action'] == 'load_animation' for c in self.commands))
+        self.click('animationEnabledCheck1')
+        self.assertTrue(self.bridge.animationFiles[1]['llm_enabled'])
+        self.assertNotIn('[[animation:b]]', self.bridge.chat.prompt)
+        self.click('animationEnabledCheck1')
+        self.assertIn('[[animation:b]]', self.bridge.chat.prompt)
+        other = Controller(self.bridge.socketPath, attach=True, settings=self.bridge._settings)
+        self.addCleanup(other.shutdown)
+        self.assertTrue(other.animationFiles[1]['llm_enabled'])
 
     def test_animation_permissions_are_per_library_and_new_files_are_not_auto_enabled(self):
         self.bridge.setAnimationLlmEnabled(1, True)
@@ -461,6 +616,145 @@ raise SystemExit(gui.main())
         self.assertFalse(relaxed["llm_enabled"])
         self.assertNotIn("[[animation:idle]]", self.bridge.chat.prompt)
         self.assertIn("[[animation:b]]", self.bridge.chat.prompt)
+
+    def test_existing_sidebar_choices_migrate_to_master_switches_once(self):
+        self.bridge._settings.remove(self.bridge._animation_enabled_key())
+        self.bridge._settings.setValue(self.bridge._animation_choices_key(), json.dumps({'A.vrma': False, 'B.glb': True, 'C.vrma': False}))
+        self.bridge.scanAnimations()
+        self.assertEqual([f['enabled'] for f in self.bridge.animationFiles], [False, True, False])
+        self.assertEqual([f['llm_enabled'] for f in self.bridge.animationFiles], [False, True, False])
+        self.bridge.setAnimationEnabled(0, True)
+        self.bridge.scanAnimations()
+        self.assertTrue(self.bridge.animationFiles[0]['enabled'])
+        self.assertFalse(self.bridge.animationFiles[0]['llm_enabled'])
+        new = Path(self.directory.name) / 'New.vrma'
+        new.touch()
+        self.bridge.scanAnimations()
+        entry = next(f for f in self.bridge.animationFiles if f['path'] == str(new))
+        self.assertTrue(entry['enabled'])
+        self.assertFalse(entry['llm_enabled'])
+
+    def test_disabled_automatic_playback_stops_but_manual_preview_still_works(self):
+        self.bridge.setAnimationLlmEnabled(1, True)
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(self.files[1])), 'Character B')
+        self.wait_for(lambda: self.bridge.selectedAnimation == 1 and not self.bridge.busy)
+        self.bridge.tune('set_time', 't', 0.7)
+        self.bridge.setAnimationEnabled(1, False)
+        self.wait_for(lambda: not self.bridge.state['playing'] and not self.bridge.busy)
+        self.bridge.tune('set_time', 't', 0.9)
+        QTest.qWait(120)
+        self.assertFalse(any(c['action'] == 'set_time' for c in self.commands))
+        self.assertNotIn('[[animation:b]]', self.bridge.chat.prompt)
+        self.bridge.command('play', {})
+        self.assertIn('preview', self.bridge.lastError)
+        self.bridge.clearError()
+        self.bridge.playAnimation(1)
+        self.wait_for(lambda: self.bridge.state['playing'] and not self.bridge.busy)
+        self.assertFalse(self.bridge.state['loop'])
+        self.assertFalse(self.bridge.animationFiles[1]['enabled'])
+        self.assertEqual(self.bridge.previewAnimationPath, str(self.files[1]))
+        self.assertNotIn('[[animation:b]]', self.bridge.chat.prompt)
+        self.bridge.stepAnimation(1)
+        self.wait_for(lambda: self.bridge.selectedAnimation == 2 and not self.bridge.busy)
+        self.bridge.stepAnimation(-1)
+        self.wait_for(lambda: self.bridge.selectedAnimation == 1 and not self.bridge.busy)
+
+    def test_sidebar_previews_a_disabled_loopable_clip_once_without_granting_access(self):
+        self.bridge.saveAnimationProperties(str(self.files[1]), dict(loopable=True, startup=False, is_idle=True, llm_enabled=True))
+        self.bridge.setAnimationEnabled(1, False)
+        self.load_qml()
+        self.click('animationPreviewButton1')
+        self.wait_for(lambda: self.bridge.selectedAnimation == 1 and not self.bridge.busy)
+        self.assertTrue(self.bridge.state['playing'])
+        self.assertFalse(self.bridge.state['loop'])
+        self.assertFalse(self.bridge.animationFiles[1]['enabled'])
+        self.assertTrue(self.bridge.animationFiles[1]['llm_enabled'])
+        self.assertEqual(self.bridge.llmAnimationCount, 0)
+        self.assertIsNone(self.bridge._motion)
+        self.assertNotIn('[[animation:b]]', self.bridge.chat.prompt)
+        self.assertTrue(self.window.findChild(QQuickItem, 'playPauseButton').isEnabled())
+        self.click('playPauseButton')
+        self.wait_for(lambda: not self.bridge.state['playing'] and not self.bridge.busy)
+        self.click('playPauseButton')
+        self.wait_for(lambda: self.bridge.state['playing'] and not self.bridge.busy)
+        self.bridge.setAnimationEnabled(1, True)
+        self.bridge.setAnimationEnabled(1, False)
+        QTest.qWait(30)
+        self.assertTrue(self.bridge.state['playing'])
+        self.finish_current_motion()
+        QTest.qWait(50)
+        self.assertEqual(self.bridge.state['animation_path'], str(self.files[1]))
+        self.assertIsNone(self.bridge._motion)
+
+    def test_disabled_startup_and_idles_never_load_and_disabling_current_idle_uses_another(self):
+        from vrm_overlay.animation_config import save_properties
+        entrance, idle = self.motion_library()
+        other = Path(self.directory.name) / 'OtherIdle.vrma'
+        other.touch()
+        save_properties(other, dict(loopable=True, startup=False, is_idle=True))
+        self.bridge.scanAnimations()
+        index = lambda path: next(i for i, f in enumerate(self.bridge.animationFiles) if f['path'] == str(path))
+        self.bridge.setAnimationEnabled(index(entrance), False)
+        self.bridge.setAnimationEnabled(index(idle), False)
+        avatar = Path(self.directory.name) / 'new.vrm'
+        avatar.touch()
+        self.bridge.loadModel(str(avatar))
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(other) and not self.bridge.busy)
+        self.assertFalse(any(c['action'] == 'load_animation' and c['path'] in (str(entrance), str(idle)) for c in self.commands))
+        self.bridge.setAnimationEnabled(index(idle), True)
+        self.bridge.setAnimationEnabled(index(other), False)
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(idle) and not self.bridge.busy)
+        self.assertTrue(self.bridge.state['playing'])
+        self.assertFalse(self.bridge.animationFiles[index(idle)]['llm_enabled'])
+        self.assertEqual([e['path'] for e in self.bridge._idle_entries()], [str(idle)])
+
+    def test_disabling_an_inflight_load_cancels_its_remaining_blend_and_play(self):
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(self.files[1])), 'Character B')
+        self.assertIsNotNone(self.bridge._pending)
+        self.bridge.setAnimationEnabled(1, False)
+        self.bridge.setAnimationEnabled(1, True)  # Re-enabling must not revive an old transaction.
+        self.wait_for(lambda: not self.bridge.busy)
+        self.assertTrue(any(c['action'] == 'pause' for c in self.commands))
+        self.assertFalse(any(c['action'] in ('blend_to', 'play') for c in self.commands))
+
+    def test_enabling_an_idle_adds_it_to_a_previously_resident_loop(self):
+        from vrm_overlay.animation_config import save_properties
+        _entrance, idle = self.motion_library()
+        other = Path(self.directory.name) / 'OtherIdle.vrma'
+        other.touch()
+        save_properties(other, dict(loopable=True, startup=False, is_idle=True))
+        self.bridge.scanAnimations()
+        index = next(i for i, f in enumerate(self.bridge.animationFiles) if f['path'] == str(other))
+        self.bridge.setAnimationEnabled(index, False)
+        self.bridge.resumeIdle()
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(idle) and not self.bridge.busy)
+        self.assertTrue(self.bridge.state['loop'])
+        self.bridge.setAnimationEnabled(index, True)
+        self.wait_for(lambda: not self.bridge.state['loop'] and not self.bridge.busy)
+        self.finish_current_motion()
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(other) and not self.bridge.busy)
+
+    def test_disabling_a_future_pose_transition_prevents_its_dispatch(self):
+        from vrm_overlay.animation_config import save_properties
+        root = Path(self.directory.name)
+        lying, situp, standup, walk = [root / (name + '.vrma') for name in ('Lying', 'SitUp', 'StandUp', 'Walk')]
+        for path, start, end in ((lying, 'lying', 'lying'), (situp, 'lying', 'sitting'),
+                                 (standup, 'sitting', 'standing'), (walk, 'standing', 'standing')):
+            path.touch()
+            save_properties(path, dict(loopable=path in (lying, walk), startup=False, is_idle=path == lying,
+                                       entry_pose=start, exit_pose=end))
+        self.bridge.scanAnimations()
+        self.state.update(animation_path=str(lying), playing=True, time=1, duration=1, loop=True)
+        self.bridge.refresh()
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(lying))
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(walk)), 'Walk')
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(situp) and not self.bridge.busy)
+        index = next(i for i, f in enumerate(self.bridge.animationFiles) if f['path'] == str(standup))
+        self.bridge.setAnimationEnabled(index, False)
+        self.finish_current_motion()
+        QTest.qWait(100)
+        self.assertFalse(any(c['action'] == 'load_animation' and c['path'] in (str(standup), str(walk)) for c in self.commands))
+        self.assertIsNone(self.bridge._motion)
 
     def test_streamed_chat_can_call_a_checked_animation_but_cannot_call_unchecked_one(self):
         from chat_http_fixture import ChatServer
@@ -686,7 +980,7 @@ raise SystemExit(gui.main())
         self.assertTrue(other.animationFiles[1]['loopable'])
         self.assertTrue(other.animationFiles[1]['startup'])
 
-    def test_chat_one_shot_finishes_before_returning_to_an_unchecked_idle(self):
+    def test_chat_one_shot_finishes_before_returning_to_an_idle_unavailable_to_llm(self):
         from chat_http_fixture import ChatServer
         _entrance,idle=self.motion_library()
         self.bridge.setAnimationLlmEnabled(1,True)

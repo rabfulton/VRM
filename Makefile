@@ -105,6 +105,9 @@ $(TEST_BUILD_DIR)/bounds-test: tests/bounds_test.c src/bounds.c src/camera.c src
 $(TEST_BUILD_DIR)/input-mask-test: tests/input_mask_test.c src/input_mask.c src/input_mask.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/input_mask_test.c src/input_mask.c -o $@
 
+$(TEST_BUILD_DIR)/settings-test: tests/settings_test.c src/settings.c src/settings.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/settings_test.c src/settings.c -o $@
+
 ifeq ($(USE_OZZ),1)
 $(TEST_BUILD_DIR)/animator.o: src/animator.c src/animator.h src/ozz_bridge.h src/foot_lock.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) -DVRM_USE_OZZ=1 -c src/animator.c -o $@
@@ -125,7 +128,7 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
@@ -136,13 +139,14 @@ test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR
 	$(TEST_BUILD_DIR)/anim-config-test
 	$(TEST_BUILD_DIR)/bounds-test
 	$(TEST_BUILD_DIR)/input-mask-test
+	$(TEST_BUILD_DIR)/settings-test
 	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) python3 -m unittest discover -s tests -v
 
 test-sanitize:
 	$(MAKE) test TEST_BUILD_DIR=build/tests/sanitize TEST_SANITIZERS=address,undefined
 
 studio: all
-	python3 control.py
+	./domovushka --studio
 
 # Requires PySide6, an X11 display, sample model and animation assets.
 test-ui: all

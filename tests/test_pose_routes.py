@@ -26,6 +26,13 @@ class PoseRoutesTests(unittest.TestCase):
         self.assertIsNone(current_pose(dict(animation_path='getup',duration=2,time=1),entries))
         self.assertEqual(current_pose(dict(animation_path='getup',duration=2,time=2),entries),'standing')
 
+    def test_internal_route_uses_enabled_transitions_independently_of_llm_access(self):
+        entries = [dict(path='getup', entry_pose='lying', exit_pose='standing', loopable=False,
+                        enabled=True, llm_enabled=False)]
+        self.assertEqual([e['path'] for e in transition_route(entries, 'lying', 'standing')], ['getup'])
+        entries[0]['enabled'] = False
+        self.assertIsNone(transition_route(entries, 'lying', 'standing'))
+
     def test_motion_config_round_trip_preserves_tuning_and_flag_only_edit(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'get_up.vrma'

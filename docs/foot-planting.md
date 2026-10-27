@@ -30,6 +30,14 @@ would still apply full knee-plane corrections at tiny weights. Anchored ankle or
 position. Limbs with missing mappings, zero length, nonuniform/sheared/reflected
 transforms or spring-bone ownership are skipped rather than distorted.
 
+Full-weight IK reach checks account for the pelvis drop that is still settling.
+Contact influence can reach full strength before the damped pelvis reaches its
+target, especially on avatars with a larger clip-floor calibration. That expected
+temporary reach error must not discard the anchor: doing so repeatedly releases
+and reacquires an otherwise stationary foot and makes the body bounce. Error
+beyond the normal tolerance plus the pending drop still releases contact, as do
+authored lifting, stepping and turning.
+
 The floor plane comes from each ankle's bind-pose height. At clip entry, a bounded
 constant height offset is inferred from the lower target foot to accommodate
 retargeted clips that float slightly above the model's bind floor. The physical
@@ -65,6 +73,9 @@ Continuity regressions reproduce an incoming knee-plane flip with an unchanged
 display pose, and an 8 cm double pelvis correction during a planted transition.
 They check direct/restarted/paused/reloaded blends at 30/60/144 Hz, and vanishing
 pelvis movement as frame duration approaches zero.
+Large calibrated-floor stances also stay planted at 30/60/144 Hz and with varying
+frame durations, then release normally when jumping. `spin_around` was checked
+on the local reference, test2 and bundled anime avatars at those three frame rates.
 `make test-ui` checks all local clips, standing contacts on the local reference avatar,
 and release while the Jump clip is airborne. Sanitizer coverage uses the same tests.
 

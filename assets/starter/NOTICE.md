@@ -14,7 +14,10 @@ retained as a courtesy; no creator endorses this application.
   https://quaternius.com/packs/universalanimationlibrary2.html.
 - Changes: selected clips baked at 30 Hz onto an animation-only humanoid hierarchy,
   helper-bone motion retained, T-pose orientations normalized, hips height normalized,
-  locomotion-root translation removed and files renamed. `lie_down` reverses
+  locomotion-root translation removed and files renamed. Movement, seated and
+  lying families have a baked 90° vertical-axis facing turn, including rotated
+  hips displacement; standing social idles retain their original facing.
+  `lie_down` reverses
   `LayToIdle`; `lying_idle` holds its initial pose. These two are derived motions,
   not additional original clips supplied by Quaternius.
 - The source archives' pinned SHA-256 values, original clip names and generated

@@ -12,7 +12,7 @@ ApplicationWindow {
     minimumHeight: 680
     visible: bridge.studioVisible
     onClosing: function(close) { close.accepted = false; bridge.hideStudio() }
-    title: "VRM Studio"
+    title: "domovushka studio"
     color: "#111822"
     palette.window: "#111822"
     palette.windowText: "#e5edf6"
@@ -30,14 +30,17 @@ ApplicationWindow {
     property var physics: runtime.physics || ({garment_collisions: false, garment_chains: 0, arm_colliders: 0, generated_arm_colliders: 0, contacts: 0, unresolved_contacts: 0, max_penetration: 0, garment_arm_penetration: 0})
     property var planting: runtime.foot_lock || ({enabled: false, supported: 0, pelvis_offset: 0, left: {supported: false, planted: false, weight: 0, error: 0}, right: {supported: false, planted: false, weight: 0, error: 0}})
     property bool canControl: bridge.connected && runtime.model_loaded
+    readonly property bool activityBusy: bridge.speech.busy || bridge.chat.busy || bridge.busy
+    readonly property string activityStatus: bridge.speech.busy ? bridge.speech.status : bridge.chat.busy ? bridge.chat.status : bridge.status
     property var playingEntry: bridge.animationFiles.find(entry => entry.path === runtime.animation_path)
+    readonly property bool playbackEnabled: !playingEntry || playingEntry.enabled || bridge.previewAnimationPath === runtime.animation_path
     property var filteredAnimations: {
         let result = []
         let files = bridge.animationFiles
         for (let i = 0; i < files.length; i++) {
             if (files[i].name.toLowerCase().includes(search.text.toLowerCase()))
                 result.push({ name: files[i].name, file: files[i].file, path: files[i].path,
-                              llm_enabled: files[i].llm_enabled, llm_id: files[i].llm_id, sourceIndex: i })
+                              enabled: files[i].enabled, llm_enabled: files[i].llm_enabled, llm_id: files[i].llm_id, sourceIndex: i })
         }
         return result
     }
@@ -78,15 +81,29 @@ ApplicationWindow {
             Layout.fillWidth: true
             ColumnLayout {
                 spacing: 3
-                Label { text: "VRM STUDIO"; font.pixelSize: 23; font.bold: true; font.letterSpacing: 2 }
+                Label { text: "domovushka studio"; font.pixelSize: 23; font.bold: true; font.letterSpacing: 2 }
                 Label { text: "Animation & behaviour workspace"; color: "#9eacc0" }
             }
             Item { Layout.fillWidth: true }
             Button { objectName: "openChatButton"; text: "Chat…"; onClicked: bridge.chat.open(); ToolTip.visible: hovered; ToolTip.text: "Chat with your companion (Ctrl+Enter)" }
             Button { objectName: "resumeIdleButton"; text: "Resume idle"; enabled: window.canControl; onClicked: bridge.resumeIdle() }
-            BusyIndicator { running: bridge.busy; visible: running; Layout.preferredWidth: 30; Layout.preferredHeight: 30 }
-            Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
-            Label { text: bridge.status; Layout.maximumWidth: 240; elide: Text.ElideRight }
+            RowLayout {
+                objectName: "runtimeStatusArea"
+                Layout.minimumWidth: 220
+                Layout.preferredWidth: 220
+                Layout.maximumWidth: 220
+                BusyIndicator { objectName: "runtimeActivityIndicator"; running: window.activityBusy; Layout.preferredWidth: 26; Layout.preferredHeight: 30 }
+                Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
+                Label {
+                    objectName: "runtimeStatusLabel"
+                    text: window.activityStatus
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    HoverHandler { id: statusHover }
+                    ToolTip.visible: statusHover.hovered
+                    ToolTip.text: text
+                }
+            }
             Button {
                 objectName: "connectionButton"
                 text: bridge.connected ? "Disconnect" : "Connect"
@@ -149,13 +166,14 @@ ApplicationWindow {
                             required property var modelData
                             width: ListView.view.width
                             highlighted: bridge.selectedAnimation === modelData.sourceIndex
-                            Accessible.name: "Play " + modelData.name
+                            objectName: "animationPreviewButton" + modelData.sourceIndex
+                            Accessible.name: "Preview " + modelData.name + " once"
                             onClicked: { if (window.canControl && !bridge.busy) bridge.playAnimation(modelData.sourceIndex) }
                             contentItem: RowLayout {
                                 spacing: 6
                                 CheckBox {
-                                    objectName: "llmAnimationCheck" + modelData.sourceIndex
-                                    checked: modelData.llm_enabled
+                                    objectName: "animationEnabledCheck" + modelData.sourceIndex
+                                    checked: modelData.enabled
                                     indicator: Rectangle {
                                         implicitWidth: 20; implicitHeight: 20
                                         x: parent.leftPadding; y: (parent.height - height) / 2
@@ -164,16 +182,26 @@ ApplicationWindow {
                                         border.color: parent.activeFocus ? "#e5edf6" : "#8793a5"
                                         Text { anchors.centerIn: parent; text: "✓"; color: "#0e211e"; font.bold: true; visible: parent.parent.checked }
                                     }
-                                    onToggled: bridge.setAnimationLlmEnabled(modelData.sourceIndex, checked)
-                                    Accessible.name: "Allow " + modelData.name + " for LLM"
+                                    onToggled: bridge.setAnimationEnabled(modelData.sourceIndex, checked)
+                                    Accessible.name: "Enable automatic use of " + modelData.name
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "Allow LLM to use [[animation:" + modelData.llm_id + "]]"
+                                    ToolTip.text: "Enable startup, idle, transitions and permitted LLM use. Click the name to preview once."
                                 }
                                 Label {
                                     text: modelData.name
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                     enabled: window.canControl && !bridge.busy
+                                    color: modelData.enabled ? "#e5edf6" : "#9eacc0"
+                                }
+                                Label {
+                                    text: "AI"
+                                    visible: modelData.llm_enabled
+                                    color: modelData.enabled ? "#52cbb4" : "#8793a5"
+                                    font.pixelSize: 11
+                                    HoverHandler { id: llmHover }
+                                    ToolTip.visible: llmHover.hovered
+                                    ToolTip.text: "LLM cue: [[animation:" + modelData.llm_id + "]] · requires library enable"
                                 }
                                 ToolButton {
                                     objectName: "animationPropertiesButton" + modelData.sourceIndex
@@ -181,11 +209,11 @@ ApplicationWindow {
                                     Accessible.name: "Properties for " + modelData.name
                                     onClicked: animationProperties.edit(bridge.animationFiles[modelData.sourceIndex])
                                     ToolTip.visible: hovered
-                                    ToolTip.text: "Looping, startup and idle properties"
+                                    ToolTip.text: "LLM access, looping, startup, idle and pose properties"
                                 }
                             }
                             ToolTip.visible: hovered
-                            ToolTip.text: modelData.file
+                            ToolTip.text: "Preview once · " + modelData.file
                         }
                         Label {
                             anchors.centerIn: parent
@@ -195,8 +223,8 @@ ApplicationWindow {
                             color: "#9eacc0"; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                         }
                     }
-                    Label { text: animationList.count + " animations · " + bridge.llmAnimationCount + " enabled for LLM"; color: "#9eacc0"; font.pixelSize: 12 }
-                    Label { text: "Click a name to play · check to allow LLM"; color: "#9eacc0"; font.pixelSize: 11 }
+                    Label { text: bridge.enabledAnimationCount + " automatic · " + bridge.llmAnimationCount + " available to LLM"; color: "#9eacc0"; font.pixelSize: 12 }
+                    Label { text: "Click name to preview once · check for automatic use"; color: "#9eacc0"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     RowLayout {
                         Layout.fillWidth: true
                         Button {
@@ -219,6 +247,7 @@ ApplicationWindow {
                 spacing: 14
                 Frame {
                     Layout.fillWidth: true
+                    enabled: window.playbackEnabled
                     background: Rectangle { color: "#17212f"; radius: 8 }
                     ColumnLayout {
                         anchors.fill: parent

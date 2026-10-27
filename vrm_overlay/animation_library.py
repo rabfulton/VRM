@@ -18,9 +18,10 @@ DEFAULT_ANIMATIONS = {
 }
 
 
-def describe_animations(files, choices=None):
+def describe_animations(files, choices=None, enabled_choices=None):
     """Enrich every row before filtering/enabling so IDs do not depend on checks.
 
+    An explicit llm_enabled property overrides legacy per-library choices.
     choices=None means first-use defaults (or a caller's explicit llm_enabled).
     A saved choice map makes new files opt-in, including newly added default clips.
     """
@@ -34,7 +35,8 @@ def describe_animations(files, choices=None):
         if not slug or not slug[0].isalpha():
             slug = "animation_" + slug
         identifier = default[0] if default else slug[:48].rstrip("_")
-        enabled = choices.get(filename, False) if choices is not None else entry.get("llm_enabled", default is not None)
+        llm_enabled = entry.get('llm_enabled', choices.get(filename, False) if choices is not None else default is not None)
+        enabled = enabled_choices.get(filename, True) if enabled_choices is not None else entry.get('enabled', True)
         properties = {key: entry.get(key, value) for key, value in default_properties(name).items()}
         description = default[1] if default else "Play animation " + json.dumps(name, ensure_ascii=False)
         description += "; " + ("loopable" if properties["loopable"] else "one-shot")
@@ -43,7 +45,7 @@ def describe_animations(files, choices=None):
         if entry.get('entry_pose','standing')!='standing' or entry.get('exit_pose','standing')!='standing':
             description+='; '+entry.get('entry_pose','standing')+' to '+entry.get('exit_pose','standing')
         rows.append(dict(entry, **properties, file=filename, llm_id=identifier,
-                         llm_enabled=enabled is True,
+                         enabled=enabled is True, llm_enabled=llm_enabled is True,
                          llm_description=description,
                          llm_loop=properties["loopable"]))
     counts = Counter(row["llm_id"] for row in rows)

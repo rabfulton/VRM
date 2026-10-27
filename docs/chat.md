@@ -5,7 +5,7 @@ renderer connection and speech profile; it is not another IPC client.
 
 ## Start a conversation
 
-1. Install `requirements-gui.txt`, build with `make`, then start `python3 control.py`.
+1. Install `requirements-gui.txt`, build with `make`, then start `./domovushka`.
 2. Open **Chat…** in Studio, press **Ctrl+Enter** while this application has focus,
    or choose **Chat** from the avatar's right-click menu. Chat opens near the pointer, kept
    within the current screen. The shortcut is application-wide, not an OS global hotkey.
@@ -55,15 +55,21 @@ error. New saves omit the key from JSON.
 
 Settings contain an editable character description and a preview of the current
 system prompt. The app appends speech formatting and a capability catalogue from
-the loaded avatar/library. In Studio's **Animation Library**, check the box next
-to each animation the LLM may use. Clicking its name still plays it manually;
-checking it changes access without starting playback. The prompt preview updates
-immediately, and the next API request includes only the checked animations.
+the loaded avatar/library. In Studio's **Animation Library**, the sidebar checkbox
+enables/disables a clip's automatic use. Open **⋯ → Available to LLM** to grant the
+separate chat permission. Both must be on for a clip to appear in the prompt.
+Clicking any name previews one pass, even when unchecked; that explicit preview
+does not grant automatic or LLM access. Changing checkboxes alone does not start it.
+The prompt preview updates immediately. An **AI** label marks LLM-permitted clips.
 
-Selections are remembered per library folder, including across restarts. Newly
-added files start unchecked. Changing access stops an active chat turn and
-invalidates pending speech/gestures from its old catalogue. An animation already
-playing is left in its current playback state. The global **Allow gestures and
+Master states are remembered per library folder; LLM permissions are stored in
+the animation's `.cfg` as `llm_enabled=0|1`. New files start master-enabled but
+remain unavailable to the LLM unless explicitly configured. Changing access stops
+an active chat turn and invalidates pending speech/gestures from its old catalogue.
+Disabling an automatically playing clip pauses it; disabling an automatic idle
+can switch to another enabled idle. Manual previews remain available independently.
+Changing only LLM access preserves manual playback.
+The global **Allow gestures and
 expressions** setting can disable all character actions without losing selections.
 
 On the first scan of a library, the original four gestures keep their defaults:
@@ -75,18 +81,21 @@ On the first scan of a library, the original four gestures keep their defaults:
 | `[[animation:greet]]` | `VRMA_02` | One-shot greeting |
 | `[[animation:angry]]` | `Angry` | One-shot annoyed gesture |
 
-Any other VRMA/GLB animation can be enabled through its checkbox. Cue names are
+Any other VRMA/GLB animation can be offered through **Available to LLM**. Cue names are
 generated from filenames (for example `Clapping.vrma` becomes
 `[[animation:clapping]]`). A short suffix distinguishes colliding names; hover the
-checkbox to see the exact cue. Playback honours each animation's `loopable` flag;
+**AI** label to see the exact cue. Playback honours each animation's `loopable` flag;
 startup/idle labels are also included. **⋯** in the library edits these
 [animation properties](animation-properties.md). Names stay the same when boxes are toggled
 or the list is filtered. The model receives a label and cue, not a local path.
-Missing and unchecked files are omitted, and unlisted cues cannot execute.
+Missing, master-disabled and LLM-unavailable files are omitted; unlisted cues cannot execute.
 
-Choices live in QSettings under `chat/animation_libraries`, keyed by a digest of
-the library folder and then by filename. Moving/renaming a file makes it a new
-choice. No animations are downloaded, renamed or removed by this feature.
+The old QSettings `chat/animation_libraries` map supplies defaults for sidecars
+without an explicit LLM flag and makes newly discovered files opt-in for chat.
+Its existing sidebar check states also migrate once to the new master map under
+`animations/enabled_libraries`. Moving a sidecar with its animation preserves the
+explicit LLM permission; master states remain per installation/folder/filename.
+No animations are downloaded, renamed or removed by this feature.
 
 Expressions are mapped from the avatar's actual names to `happy`, `angry`, `sad`,
 `surprised` and `neutral`, where supported. Cues request a moderate 0.55 weight;
