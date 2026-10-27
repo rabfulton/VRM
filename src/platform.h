@@ -15,9 +15,22 @@ typedef struct {
     void (*on_mouse_button)(int button, int action, void *user);
     void (*on_scroll)(double dx, double dy, void *user);
     void (*on_key)(int key, int action, void *user);
+    void (*on_menu_action)(int action, void *user); /* 0 Chat, 1 Studio, 2 Quit */
     void *user_data;
 } PlatformCallbacks;
 
+/* Selection must precede window creation. auto prefers a usable Wayland layer. */
+bool platform_select_backend(const char *name);
+const char *platform_backend_name(void);
+bool platform_frame_ready(PlatformWindow *win);
+/* Resolve the bounded avatar FBO into the backend's presentation surface. */
+void platform_present(PlatformWindow *win, unsigned int source, int width, int height);
+/* Returns false for X11, whose menu is owned by the Qt controller. */
+bool platform_open_menu(PlatformWindow *win);
+
+/* Geometry describes the bounded avatar viewport. On X11 it is a native
+ * window rectangle; on Wayland it is output-local placement within the canvas.
+ * Pointer coordinates are viewport-local logical units on both backends. */
 /* Window management */
 PlatformWindow *platform_create_window(int width, int height, const char *title, bool transparent, bool decorated);
 void platform_destroy_window(PlatformWindow *win);

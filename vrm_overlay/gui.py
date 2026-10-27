@@ -8,6 +8,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(prog='domovushka', description="domovushka — animated desktop companion")
+    parser.add_argument("--window-backend", choices=("auto", "x11", "wayland"), default="auto")
     parser.add_argument("--socket", default="/tmp/vrm-overlay.sock")
     parser.add_argument("--attach", action="store_true", help="Connect only; leave the existing renderer running on exit")
     parser.add_argument("--model", help="Avatar to load when starting a new renderer")
@@ -34,7 +35,7 @@ def main():
     app.setDesktopFileName('domovushka')
     app.setQuitOnLastWindowClosed(False)
     bridge = Controller(args.socket, attach=args.attach, model=args.model, animation_dir=args.animation_dir,
-                        show_studio=args.studio)
+                        show_studio=args.studio, window_backend=args.window_backend)
     # QGuiApplication.quit() asks visible windows to close. Studio intentionally
     # rejects ordinary close events to hide itself, which can veto that request
     # after the renderer has already stopped. Explicit companion Quit must end

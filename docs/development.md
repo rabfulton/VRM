@@ -32,8 +32,8 @@ make clean
 make USE_OZZ=0 -j4
 ```
 
-Run `make clean` again before returning to `make`. Object files are currently
-built beside their sources, so a flag change alone does not invalidate them.
+Run `make clean` again before returning to `make`. Runtime object files live under `build/obj/<backend>-ozz<flag>/`, so backend
+and ozz configurations cannot reuse incompatible objects.
 `make clean` removes runtime objects and the executable; it keeps dependency
 builds, downloaded voices and local assets. The former `USE_OZZ_JOLT` option has
 been replaced by `USE_OZZ`; Jolt was an unused stub and is no longer required.
@@ -138,3 +138,21 @@ without an API key or paid LLM request. The local animation folder must include
 `make test-fit` checks actual alpha edges for wide push poses and their mirrored
 variant. See [window fitting and mirroring](window-fitting.md) for local asset
 requirements and the dependency-free mirroring script.
+
+## Window backends
+
+The default `WINDOW_BACKEND=both` build chooses at runtime. `x11` and `wayland`
+builds omit the other backend and its direct dependencies. `--window-backend`
+(and `VRM_WINDOW_BACKEND` when selection is auto) controls runtime selection.
+See [Wayland](wayland.md) for the native layer-shell contract and limitations.
+Focused real-display checks use isolated settings and the bundled avatar:
+
+```sh
+python3 tests/window_backend_smoke.py --backend wayland --auto
+python3 tests/window_backend_smoke.py --backend x11
+```
+
+The native check removes `DISPLAY`; the X11 check removes `WAYLAND_DISPLAY`.
+Both inspect rendered avatar pixels and exercise visibility and IPC shutdown.
+They do not inject pointer input or assert popup interaction. Existing X11 desktop
+smokes should explicitly run with `VRM_WINDOW_BACKEND=x11`.

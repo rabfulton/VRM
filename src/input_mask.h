@@ -2,7 +2,7 @@
 #define INPUT_MASK_H
 #include <stdbool.h>
 
-/* Top-left, LSB-first X11 bitmap derived from bottom-left framebuffer samples. */
+/* Top-left, LSB-first bitmap derived from bottom-left framebuffer samples. */
 typedef struct {
   unsigned char *bits;
   int width, height, stride;
@@ -16,4 +16,7 @@ int input_mask_recenter(InputMask *mask, int width, int height);
 int input_mask_update(InputMask *mask, const unsigned char *stencil,
                       int framebuffer_w, int framebuffer_h, int width, int height);
 bool input_mask_contains(const InputMask *mask, int x, int y);
+/* Emit exact non-overlapping rectangles, merging equal runs vertically. */
+void input_mask_rectangles(const InputMask *mask,
+                          void (*emit)(int x,int y,int w,int h,void *user),void *user);
 #endif

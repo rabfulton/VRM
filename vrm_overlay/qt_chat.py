@@ -113,6 +113,9 @@ class ChatController(QObject):
     @Slot()
     def openNearCursor(self):
         from PySide6.QtGui import QCursor, QGuiApplication
+        if QGuiApplication.platformName().startswith('wayland'):
+            self.open()
+            return
         point = QCursor.pos()
         screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
         if screen is None:

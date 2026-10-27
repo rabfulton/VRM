@@ -64,3 +64,25 @@ bool input_mask_contains(const InputMask *mask, int x, int y) {
   return mask->bits && x>=0 && y>=0 && x<mask->width && y<mask->height &&
          (mask->bits[(size_t)y*mask->stride+x/8] & (1u<<(x%8)))!=0;
 }
+
+static bool same_run(const InputMask *mask,int y,int start,int end) {
+  if(y<0 || y>=mask->height)return false;
+  if(start && input_mask_contains(mask,start-1,y))return false;
+  if(end<mask->width && input_mask_contains(mask,end,y))return false;
+  for(int x=start;x<end;x++)if(!input_mask_contains(mask,x,y))return false;
+  return true;
+}
+
+void input_mask_rectangles(const InputMask *mask,
+                          void (*emit)(int,int,int,int,void *),void *user) {
+  if(!mask || !mask->bits || !emit)return;
+  for(int y=0;y<mask->height;y++) for(int x=0;x<mask->width;) {
+    if(!input_mask_contains(mask,x,y)) { x++; continue; }
+    int start=x++;
+    while(x<mask->width && input_mask_contains(mask,x,y))x++;
+    if(same_run(mask,y-1,start,x))continue;
+    int end=y+1;
+    while(same_run(mask,end,start,x))end++;
+    emit(start,y,x-start,end-y,user);
+  }
+}

@@ -1,6 +1,6 @@
 # domovushka
 
-An animated desktop companion for Linux/X11, with a Qt Quick control window,
+An animated desktop companion for Linux/X11 and Wayland, with a Qt Quick control window,
 **domovushka studio**.
 The C/C++ runtime renders VRM/glTF models, plays VRMA/GLB animations, simulates
 spring bones, and drives expressions and lip sync through JSON IPC.
@@ -8,8 +8,20 @@ spring bones, and drives expressions and lip sync through JSON IPC.
 ## Build and launch
 
 Requires a C11/C++20 toolchain, GNU Make 4.3+, CMake, pkg-config, and development
-packages for GLFW, libepoxy, X11 and Xext. Python 3.10+, PySide6 and keyring are
-needed for Studio and chat. The renderer itself has no Qt dependency.
+packages for libepoxy, GLFW, X11 and Xext, plus wayland-client, wayland-egl,
+EGL, Cairo and wayland-protocols for the native backend. Python 3.10+, PySide6 and keyring are
+needed for Studio and chat. The renderer itself has no Qt dependency. The default build includes X11 and
+native Wayland (layer-shell) backends. At runtime, `auto` tries Wayland when
+`WAYLAND_DISPLAY` is set and reports an X11/XWayland fallback if unavailable.
+Studio uses Qt's platform selection independently.
+
+Use `./domovushka --window-backend wayland --studio` to require native Wayland,
+or `--window-backend x11` to require X11. The renderer accepts the same option;
+`VRM_WINDOW_BACKEND` can override `auto`. Explicit selections never fall back.
+Build one backend with `make WINDOW_BACKEND=x11` or `make WINDOW_BACKEND=wayland`;
+objects are separated by backend and ozz configuration. The Wayland-only build
+has no direct GLFW/X11/Xext requirement. See [native Wayland support](docs/wayland.md)
+for controls and current limitations.
 
 ```sh
 git clone --recurse-submodules https://github.com/rabfulton/VRM.git

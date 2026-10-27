@@ -61,6 +61,7 @@ typedef struct {
   char current_model_path[4096];
   float frame_rate;
   uint32_t chat_request_seq;
+  uint32_t studio_request_seq;
   uint32_t overlay_menu_seq;
   int overlay_menu_x, overlay_menu_y;
   ClipBoundsCache bounds_cache[32];
@@ -563,6 +564,8 @@ static void respond_state(int id) {
 #endif
   cJSON_AddNumberToObject(state, "frame_rate", app.frame_rate);
   cJSON_AddNumberToObject(state, "chat_request_seq", app.chat_request_seq);
+  cJSON_AddNumberToObject(state, "studio_request_seq", app.studio_request_seq);
+  cJSON_AddStringToObject(state, "window_backend", platform_backend_name());
   cJSON_AddNumberToObject(state, "overlay_menu_seq", app.overlay_menu_seq);
   cJSON *menu = cJSON_AddObjectToObject(state, "overlay_menu_position");
   cJSON_AddNumberToObject(menu, "x", app.overlay_menu_x);
@@ -1441,12 +1444,20 @@ static void on_mouse_button(int button, int action, void *user) {
     }
   } else if (button == PLATFORM_MOUSE_RIGHT && action &&
              model_hit_test(model_mouse_x, model_mouse_y)) {
+    if (platform_open_menu(win)) return;
     int wx, wy;
     platform_get_window_pos(win,&wx,&wy);
     app.overlay_menu_x = wx+model_mouse_x;
     app.overlay_menu_y = wy+model_mouse_y;
     app.overlay_menu_seq++;
   }
+}
+
+static void on_menu_action(int action, void *user) {
+  (void)user;
+  if (action == 0) app.chat_request_seq++;
+  else if (action == 1) app.studio_request_seq++;
+  else if (action == 2) app.running = false;
 }
 
 static void on_scroll(double dx, double dy, void *user) {
@@ -1544,20 +1555,26 @@ static bool model_hit_test(int x, int y) {
 int main(int argc, char *argv[]) {
   const char *socket_path = "/tmp/vrm-overlay.sock";
   const char *model_path = NULL;
+  const char *window_backend = "auto";
   int exit_status = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-      printf("Usage: %s [--socket PATH] [MODEL.vrm]\n", argv[0]);
+      printf("Usage: %s [--socket PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
       return 0;
     } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
       socket_path = argv[++i];
+    } else if (strcmp(argv[i], "--window-backend") == 0 && i + 1 < argc) {
+      window_backend = argv[++i];
+    } else if (strncmp(argv[i], "--window-backend=", 17) == 0) {
+      window_backend = argv[i]+17;
     } else if (argv[i][0] != '-' && !model_path) {
       model_path = argv[i];
     } else {
-      fprintf(stderr, "Usage: %s [--socket PATH] [MODEL.vrm]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [--socket PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
       return 1;
     }
   }
+  if (!platform_select_backend(window_backend)) { fprintf(stderr,"Invalid window backend\n"); return 1; }
   if (!ipc_init(&app.ipc, socket_path, on_ipc_command, &app)) return 1;
 
   app.auto_resize = true;
@@ -1581,7 +1598,7 @@ int main(int argc, char *argv[]) {
 
   GLint max_samples = 0;
   glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
-  app.msaa_samples = max_samples >= 4 ? 4 : max_samples;
+  app.msaa_samples = max_samples >= 4 ? 4 : (max_samples > 0 ? max_samples : 1);
   printf("MSAA samples: %d\n", app.msaa_samples);
 
   int w, h;
@@ -1625,7 +1642,10 @@ int main(int argc, char *argv[]) {
         app.model_position[1] = settings.model_position[1];
         app.model_position[2] = settings.model_position[2];
       }
-      if (settings.has_window_position) {
+      if (!strcmp(platform_backend_name(),"wayland") && settings.has_wayland_position) {
+        platform_move_window(app.window,settings.wayland_pos[0],settings.wayland_pos[1]);
+      }
+      if (strcmp(platform_backend_name(),"wayland") && settings.has_window_position) {
         platform_move_window(app.window, settings.window_pos[0],
                              settings.window_pos[1]);
       }
@@ -1662,7 +1682,7 @@ int main(int argc, char *argv[]) {
   g_rand_state = (uint32_t)(platform_get_time() * 1000000.0);
 
   PlatformCallbacks cb = {on_resize, on_mouse_move, on_mouse_button,
-                          on_scroll, on_key,        app.window};
+                          on_scroll, on_key, on_menu_action, app.window};
   platform_set_callbacks(app.window, &cb);
 
   app.visible = true;
@@ -1750,6 +1770,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    if (!platform_frame_ready(app.window)) continue;
     fit_overlay_window(false);
     sync_render_size();
     double update_finished = platform_get_time();
@@ -1779,13 +1800,7 @@ int main(int argc, char *argv[]) {
     else
       hit_capture_reset(&app.hit_capture);
 
-    if (app.msaa_fbo) {
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, app.msaa_fbo);
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-      glBlitFramebuffer(0, 0, app.fb_width, app.fb_height, 0, 0, app.fb_width,
-                        app.fb_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
+    platform_present(app.window,app.msaa_fbo,app.fb_width,app.fb_height);
 
     double render_finished = platform_get_time();
     platform_swap_buffers(app.window);
@@ -1803,6 +1818,7 @@ int main(int argc, char *argv[]) {
   }
 
   Settings settings = {0};
+  settings_load(SETTINGS_PATH, &settings);
   settings.has_always_on_top = true;
   settings.always_on_top = app.always_on_top;
   settings.has_camera_distance = true;
@@ -1817,9 +1833,13 @@ int main(int argc, char *argv[]) {
     int wx = 0, wy = 0, ww = 0, wh = 0;
     platform_get_window_pos(app.window, &wx, &wy);
     platform_get_window_size(app.window, &ww, &wh);
-    settings.has_window_position = true;
-    settings.window_pos[0] = wx;
-    settings.window_pos[1] = wy;
+    if (!strcmp(platform_backend_name(),"wayland")) {
+      settings.has_wayland_position = true;
+      settings.wayland_pos[0] = wx; settings.wayland_pos[1] = wy;
+    } else {
+      settings.has_window_position = true;
+      settings.window_pos[0] = wx; settings.window_pos[1] = wy;
+    }
     settings.has_window_size = true;
     settings.window_size[0] = ww;
     settings.window_size[1] = wh;

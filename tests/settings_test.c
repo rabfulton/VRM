@@ -15,6 +15,8 @@ int main(void) {
     settings.camera_distance = 3.5f;
     settings.has_window_position = true;
     settings.window_pos[0] = 42; settings.window_pos[1] = 84;
+    settings.has_wayland_position = true;
+    settings.wayland_pos[0] = 120; settings.wayland_pos[1] = 180;
     settings.has_always_on_top = true;
     for (int enabled = 1; enabled >= 0; enabled--) {
         settings.always_on_top = enabled;
@@ -22,6 +24,7 @@ int main(void) {
         Settings restored;
         assert(settings_load(path, &restored));
         assert(restored.has_always_on_top && restored.always_on_top == (enabled != 0));
+        assert(restored.has_wayland_position && restored.wayland_pos[0] == 120 && restored.wayland_pos[1] == 180);
         assert(restored.has_camera_distance && restored.camera_distance == 3.5f);
         assert(restored.has_window_position && restored.window_pos[0] == 42 && restored.window_pos[1] == 84);
     }
