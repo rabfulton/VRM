@@ -7,6 +7,13 @@ width measured between their leftmost/rightmost bones.
 
 ## Fitting policy
 
+Wheel input is combined once per rendered frame. Zooming keeps the viewport at
+its largest required size, with spare room reserved for further zoom-in, so
+zoom-out changes the figure without repeatedly resizing the compositor surface.
+Explicit camera/refit changes can reclaim that space. Native moves and resizes
+use one request; framebuffer allocation and projection are reconciled against
+the actual window size immediately before drawing.
+
 The loader builds compact geometry envelopes for skinned joints, including the
 rendered morph-target extents. Clip sampling collects a model-space 3D envelope
 across every clip in the loaded file. The camera projects that envelope, and live
@@ -16,7 +23,7 @@ includes the outline and the renderer's offset/blurred silhouette shadow.
 Expansion preserves the screen-space camera centre and pixel density; enlarging
 an ordinary viewport's height alone would magnify the avatar. The projection
 compensates for that height change. The viewport can grow during playback but
-only shrinks on explicit refitting, such as a camera or zoom change, to avoid
+only shrinks on explicit refitting, such as a camera change, to avoid
 breathing with each gesture. Clip switches preserve the viewport; live expansion
 uses 64-pixel steps to avoid reallocating render surfaces for small spring changes.
 Window dimensions are limited by the monitor workarea
@@ -40,8 +47,9 @@ and gaps between limbs do not capture clicks. Outlines remain interactive.
 The stencil is resolved and transferred through two fenced pixel buffers at up
 to 60 Hz. Only completed transfers are mapped, avoiding a synchronous GPU wait.
 The resulting bitmap sets the X11 input shape and supplies mouse hit testing.
-It can trail the visible pose by a frame or two. Resizing, hiding, unloading and
-pending startup clear old coverage immediately; an empty figure is click-through.
+It can trail the visible pose by a frame or two. Resizing recentres the last
+silhouette until the new GPU readback arrives; hiding, unloading and pending
+startup clear coverage immediately. An empty figure is click-through.
 Framebuffer/window scaling, fractional scaling and the bottom-left OpenGL origin
 are accounted for when producing the top-left X11 bitmap.
 
@@ -90,6 +98,12 @@ an empty buffer immediately after a resize.
 a synthetic triangle, with no avatar assets. Shadow-target allocation must restore
 the caller's framebuffer; otherwise a resize renders to the default target and the
 subsequent MSAA resolve overwrites it with a blank frame. This caused resize flicker.
+The check also keeps avatar input active across asynchronous hit-buffer resizes.
+
+`make test-zoom` sends real X11 wheel events to an isolated bundled avatar and
+checks visible window samples, delivered zoom steps and reuse of the native
+surface on zoom-out. Use `make test-zoom ZOOM_MODEL=test2.vrm` for a local avatar.
+It requires PySide6, xdotool and a display; settings and sockets are temporary.
 
 Studio's View tab exposes frame/load timings and a counter reset. The slowest
 frame's IPC/update/render/swap breakdown helps distinguish synchronous clip

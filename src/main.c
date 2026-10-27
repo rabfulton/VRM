@@ -57,6 +57,7 @@ typedef struct {
   double last_time;
   float model_position[3], model_rotation[3];
   float model_scale;
+  double pending_scroll, last_scroll_time;
   char current_model_path[4096];
   float frame_rate;
   uint32_t chat_request_seq;
@@ -270,13 +271,16 @@ static void fit_overlay_window(bool allow_shrink) {
   float zoom = 1;
   if (!gltf_fit_viewport(&bounds,view_model,app.camera.fov,base_w,base_h,max_w,max_h,&w,&h,&zoom)) return;
   if (!allow_shrink) {
+    bool zooming=app.last_scroll_time>0 && platform_get_time()-app.last_scroll_time<0.25;
     if (w < old_w) w = old_w;
     if (h < old_h) h = old_h;
-    if (app.fit_zoom > 0 && zoom > app.fit_zoom) zoom = app.fit_zoom;
+    if (!zooming && app.fit_zoom > 0 && zoom > app.fit_zoom) zoom = app.fit_zoom;
     /* Grow in chunks: a few pixels of spring movement must not repeatedly
      * reallocate MSAA/shadow buffers and ask the compositor for a new surface. */
-    if (w > old_w) w = (int)fminf(max_w, ceilf(w/64.0f)*64);
-    if (h > old_h) h = (int)fminf(max_h, ceilf(h/64.0f)*64);
+    float chunk=zooming ? 256 : 64;
+    float reserve=zooming ? 1.15f : 1;
+    if (w > old_w) w = (int)fminf(max_w, ceilf(w*reserve/chunk)*chunk);
+    if (h > old_h) h = (int)fminf(max_h, ceilf(h*reserve/chunk)*chunk);
   }
   app.fit_zoom = zoom;
   app.camera.viewport_height_scale = h / (base_h*zoom);
@@ -284,14 +288,7 @@ static void fit_overlay_window(bool allow_shrink) {
   if (w != old_w || h != old_h) {
     app.window_resizes++;
     /* Preserve the screen-space camera centre and pixel density. */
-    platform_resize_window(app.window,w,h);
-    platform_move_window(app.window,old_x+(old_w-w)/2,old_y+(old_h-h)/2);
-    int fw,fh;
-    platform_get_framebuffer_size(app.window,&fw,&fh);
-    if (fw > 0 && fh > 0 && (fw != app.fb_width || fh != app.fb_height)) {
-      glViewport(0,0,fw,fh);
-      msaa_resize(&app,fw,fh);
-    }
+    platform_set_window_rect(app.window,old_x+(old_w-w)/2,old_y+(old_h-h)/2,w,h);
   }
 }
 
@@ -1358,19 +1355,29 @@ static int window_drag_start_pos[2] = {0, 0};
 
 static void on_resize(int w, int h, void *user) {
   (void)user;
-  glViewport(0, 0, w, h);
-  if (w <= 0 || h <= 0) return;
-  hit_capture_reset(&app.hit_capture);
-  app.camera.aspect = (float)w / (float)h;
-  if (app.auto_resize) {
-    int ww, wh;
-    platform_get_window_size(app.window,&ww,&wh);
-    app.camera.viewport_height_scale = wh / (fmaxf(100,550*app.model_scale)*fmaxf(app.fit_zoom,0.01f));
-  }
-  if (w != app.fb_width || h != app.fb_height) msaa_resize(&app, w, h);
-  app.fb_width = w;
-  app.fb_height = h;
+  (void)w; (void)h;
+  /* A wheel burst can deliver several ConfigureNotify events. Reconcile the
+   * final size once, immediately before drawing, rather than allocating here. */
+}
 
+static void sync_render_size(void) {
+  int w,h,ww,wh;
+  platform_get_framebuffer_size(app.window,&w,&h);
+  platform_get_window_size(app.window,&ww,&wh);
+  if(w<=0 || h<=0 || ww<=0 || wh<=0)return;
+  if(w!=app.fb_width || h!=app.fb_height ||
+     (app.hit_capture.mask.bits &&
+      (ww!=app.hit_capture.mask.width || wh!=app.hit_capture.mask.height))) {
+    hit_capture_resize(&app.hit_capture,ww,wh);
+  }
+  if(w!=app.fb_width || h!=app.fb_height) {
+    msaa_resize(&app,w,h);
+    app.fb_width=w;app.fb_height=h;
+  }
+  glViewport(0,0,w,h);
+  app.camera.aspect=(float)w/h;
+  if(app.auto_resize)
+    app.camera.viewport_height_scale=wh/((int)fmaxf(100,550*app.model_scale)*fmaxf(app.fit_zoom,0.01f));
 }
 
 static void on_mouse_move(double x, double y, void *user) {
@@ -1436,10 +1443,16 @@ static void on_mouse_button(int button, int action, void *user) {
 static void on_scroll(double dx, double dy, void *user) {
   (void)user;
   (void)dx;
-  if (dy > 0)
-    app.model_scale *= 1.1f;
-  else if (dy < 0)
-    app.model_scale *= 0.9f;
+  if(!isfinite(dy) || dy==0)return;
+  app.pending_scroll=fmax(-100,fmin(100,app.pending_scroll+dy));
+  app.last_scroll_time=platform_get_time();
+}
+
+static void apply_scroll_zoom(void) {
+  double steps=app.pending_scroll;
+  if(steps==0)return;
+  app.pending_scroll=0;
+  app.model_scale*=(float)(steps>0 ? pow(1.1,steps) : pow(0.9,-steps));
   if (app.model_scale < 0.1f)
     app.model_scale = 0.1f;
   if (app.model_scale > 10.0f)
@@ -1451,7 +1464,8 @@ static void on_scroll(double dx, double dy, void *user) {
 
   renderer_set_model_transform(&app.renderer, app.model_position,
                                app.model_rotation, app.model_scale);
-  update_window_for_zoom();
+  /* The normal frame fit grows the viewport only when needed. Keeping its
+   * high-water size avoids compositor reallocations on every zoom-out tick. */
 }
 
 static void on_key(int key, int action, void *user) {
@@ -1666,6 +1680,7 @@ int main(int argc, char *argv[]) {
     hit_capture_poll(&app.hit_capture);
     platform_poll_events();
     ipc_poll(&app.ipc);
+    apply_scroll_zoom();
     double ipc_finished = platform_get_time();
 
     // Event system updates
@@ -1724,6 +1739,7 @@ int main(int argc, char *argv[]) {
     }
 
     fit_overlay_window(false);
+    sync_render_size();
     double update_finished = platform_get_time();
 
     platform_make_context_current(app.window);

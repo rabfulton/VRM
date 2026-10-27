@@ -37,9 +37,14 @@ runtime preserves its current model, playback and behaviour state.
 
 ## Controls
 
-- Avatar: load a VRM/GLB/glTF file through the file picker, or choose **Starter avatars…**
-  for the anime avatar/fox with matching motions and camera framing. Explicit
-  `--animation-dir` takes precedence over a profile at initial startup.
+- Avatar: **Choose / import avatar…** opens a thumbnail gallery with Discover and
+  My avatars. Use the included anime companion, visit creator download pages, or
+  import/drop a local VRM, GLB, glTF or ZIP. ZIPs offer a variant picker. Imported
+  models are copied to user data and remain available after restart; **Use avatar**
+  activates one. Browsing and importing also work while disconnected.
+  **Add current avatar to library** saves an existing external avatar.
+  Explicit `--animation-dir` takes precedence over a starter profile at initial
+  startup. See [avatar imports](avatars.md) for formats, credits and storage.
 - Library: choose a folder, search its VRMA/GLB files, click a name to play, or use
   Previous/Next. Check each animation the LLM may use; selections persist per folder
   and update the chat prompt. Boxes work while disconnected and do not start playback.
@@ -81,6 +86,8 @@ When a startup animation is set, nothing is shown before that animation begins.
 - `control.py` / `vrm_overlay/gui.py`: entry point and QML engine lifecycle.
 - `vrm_overlay/qml/Main.qml`: layout and control presentation.
 - `vrm_overlay/qml/OverlayMenu.qml`: independent popup usable with Studio hidden.
+- `vrm_overlay/qml/AvatarImportDialog.qml`, `qt_avatar_library.py`, `avatar_library.py`:
+  visual gallery, background imports and persistent local model installs.
 - `vrm_overlay/qml/TuningSlider.qml`: reusable slider with confirmed-state binding.
 - `vrm_overlay/qt_controller.py`: QObject properties/slots, QLocalSocket framing,
   ordered command transactions, timeouts, QProcess ownership and state polling.

@@ -1,8 +1,10 @@
 # Starter avatars and motions
 
-Open Studio using the avatar's right-click menu, then choose **Starter avatars…**
-in the Avatar panel. Choosing an avatar selects its matching animation library
-and recommended camera framing. Existing user libraries are left in place.
+Open Studio using the avatar's right-click menu, then **Choose / import avatar…**
+in the Avatar panel. Discover includes the anime companion; **Use avatar** selects
+its matching animation library and recommended camera framing. Existing user
+libraries are left in place. The basic fox remains available by file import or
+the launch command below; it is not featured in Discover.
 
 ```sh
 python3 control.py --studio --model assets/starter/models/anime.vrm

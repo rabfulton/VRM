@@ -200,6 +200,13 @@ void platform_resize_window(PlatformWindow *win, int w, int h) {
     glfwSetWindowSize(win->glfw, w, h);
 }
 
+void platform_set_window_rect(PlatformWindow *win, int x, int y, int w, int h) {
+    /* Let the WM apply the new centre and size in one ConfigureRequest. Two
+     * requests expose an intermediate, incorrectly positioned surface. */
+    XMoveResizeWindow(win->x_display,win->x_window,x,y,(unsigned)w,(unsigned)h);
+    XFlush(win->x_display);
+}
+
 void platform_show_window(PlatformWindow *win) {
     glfwShowWindow(win->glfw);
 }

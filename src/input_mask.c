@@ -7,6 +7,27 @@ void input_mask_clear(InputMask *mask) {
   memset(mask,0,sizeof(*mask));
 }
 
+int input_mask_recenter(InputMask *mask, int width, int height) {
+  if(!mask->bits || width<=0 || height<=0 || width>16384 || height>16384)return -1;
+  if(width==mask->width && height==mask->height)return 0;
+  int stride=(width+7)/8;
+  unsigned char *bits=calloc((size_t)stride*height,1);
+  if(!bits)return -1;
+  int dx=(width-mask->width)/2,dy=(height-mask->height)/2;
+  for(int y=0;y<mask->height;y++) {
+    int target_y=y+dy;
+    if(target_y<0 || target_y>=height)continue;
+    for(int x=0;x<mask->width;x++) {
+      int target_x=x+dx;
+      if(target_x>=0 && target_x<width &&
+         (mask->bits[(size_t)y*mask->stride+x/8] & (1u<<(x%8))))
+        bits[(size_t)target_y*stride+target_x/8]|=(unsigned char)(1u<<(target_x%8));
+    }
+  }
+  free(mask->bits);mask->bits=bits;mask->width=width;mask->height=height;mask->stride=stride;
+  return 1;
+}
+
 int input_mask_update(InputMask *mask, const unsigned char *stencil,
                       int fw, int fh, int width, int height) {
   if (!stencil || fw<=0 || fh<=0 || width<=0 || height<=0 ||

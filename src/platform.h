@@ -38,6 +38,7 @@ void platform_set_callbacks(PlatformWindow *win, PlatformCallbacks *cb);
 void platform_set_always_on_top(PlatformWindow *win, bool on_top);
 void platform_move_window(PlatformWindow *win, int x, int y);
 void platform_resize_window(PlatformWindow *win, int w, int h);
+void platform_set_window_rect(PlatformWindow *win, int x, int y, int w, int h);
 void platform_show_window(PlatformWindow *win);
 void platform_hide_window(PlatformWindow *win);
 

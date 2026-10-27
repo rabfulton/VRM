@@ -16,6 +16,7 @@ from .qt_chat import ChatController
 from .animation_library import describe_animations
 from .animation_config import load_properties, load_motion_properties, save_properties
 from .avatar_catalog import starter_avatars
+from .qt_avatar_library import AvatarLibrary
 from .pose_routes import current_pose, transition_route
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,7 +67,7 @@ class Controller(QObject):
     quitRequested = Signal()
 
     def __init__(self, socket_path="/tmp/vrm-overlay.sock", *, attach=False,
-                 model=None, animation_dir=None, settings=None, show_studio=False, parent=None):
+                 model=None, animation_dir=None, settings=None, show_studio=False, avatar_dir=None, parent=None):
         super().__init__(parent)
         self._settings = settings if settings is not None else QSettings()
         self._socket_path = socket_path
@@ -93,6 +94,7 @@ class Controller(QObject):
         self._owns_process = False
         self._initialised = False
         self._initial_animation_override=animation_dir is not None
+        self._requested_avatar = False
         self._chat_request_seq = None
         self._menu_request_seq = None
         self._studio_visible = show_studio
@@ -130,6 +132,7 @@ class Controller(QObject):
         self._debounce.timeout.connect(self._flush_tuning)
         self._speech = SpeechController(self._settings, self._queue, lambda: self._connected, self)
         self._chat = ChatController(self, self._settings, self)
+        self._avatars = AvatarLibrary(self, root=avatar_dir)
         self.scanAnimations()
 
     connected = Property(bool, lambda self: self._connected, notify=changed)
@@ -149,6 +152,7 @@ class Controller(QObject):
     speech = Property(QObject, lambda self: self._speech, constant=True)
     chat = Property(QObject, lambda self: self._chat, constant=True)
     starterAvatars = Property('QVariantList',lambda self:self._starter_avatars,constant=True)
+    avatars = Property(QObject, lambda self: self._avatars, constant=True)
     studioVisible = Property(bool, lambda self: self._studio_visible, notify=changed)
 
     @Slot()
@@ -268,7 +272,11 @@ class Controller(QObject):
         self._status = "Connected"
         self._poll.start()
         self.changed.emit()
-        if self._owns_process and not self._initialised:
+        if self._requested_avatar:
+            self._requested_avatar = False
+            self._initialised = True
+            self._start_avatar(self._model)
+        elif self._owns_process and not self._initialised:
             self._initialised = True
             if not self._state["model_loaded"] and Path(self._model).is_file():
                 self._start_avatar(self._model,keep_animation_folder=self._initial_animation_override)
@@ -485,6 +493,37 @@ class Controller(QObject):
         self._settings.setValue("model", self._model)
         self.changed.emit()
         self._start_avatar(self._model)
+
+    @Slot(str, str)
+    def useAvatar(self, path, rig):
+        """Activate a library entry, including while the renderer is disconnected."""
+        model = local_path(path)
+        if not model.is_file():
+            self._fail(f"Model file does not exist: {model}")
+            return
+        # Don't apply the bundled fox's node animations to a newly imported human.
+        generic_folders = {e['animations'] for e in self._starter_avatars if e['rig'] == 'generic'}
+        managed_generic = Path(self._avatars.folder) / 'generic-animations'
+        if rig == 'humanoid' and (self._folder in generic_folders or Path(self._folder).is_relative_to(managed_generic)):
+            human = next((e for e in self._starter_avatars if e['rig'] == 'humanoid'), None)
+            if human:
+                self._folder = human['animations']
+                self.scanAnimations()
+        elif rig == 'generic' and not any(e['path'] == str(model) for e in self._starter_avatars):
+            # Generic rigs need their own node animations; begin with an empty library.
+            folder = Path(self._avatars.folder) / 'generic-animations' / hashlib.sha256(str(model).encode()).hexdigest()
+            folder.mkdir(parents=True, exist_ok=True)
+            self._folder = str(folder)
+            self.scanAnimations()
+        self._model = str(model)
+        self._settings.setValue('model', self._model)
+        self._settings.setValue('animations', self._folder)
+        self.changed.emit()
+        if self._connected:
+            self._start_avatar(self._model)
+        else:
+            self._requested_avatar = True
+            self.connectRuntime()
 
     @Slot()
     def scanAnimations(self):
@@ -761,6 +800,7 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         self._closing = True
+        self._avatars.shutdown()
         self._invalidate_motion()
         self._chat.shutdown()
         if self._speech.busy and self._socket.state() == QLocalSocket.ConnectedState:

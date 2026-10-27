@@ -73,6 +73,7 @@ make test-chat
 make test-render
 make test-desktop
 make test-springs
+make test-zoom
 make test-assets
 ```
 

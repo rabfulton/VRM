@@ -2,6 +2,7 @@
 #include "platform.h"
 #include "renderer.h"
 #include "camera.h"
+#include "hit_capture.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,7 @@ int main(void) {
   model.loaded=true; model.node_count=1; model.nodes=&node; model.mesh_count=1; model.meshes=&mesh;
   renderer_set_model(&renderer,&model);
   renderer.capture_hit_mask=true;
+  HitCapture hit;hit_capture_init(&hit,window);
   glGenFramebuffers(1,&target); glGenRenderbuffers(1,&color);
   glGenFramebuffers(1,&resolved); glGenRenderbuffers(1,&resolved_color);
   glGenRenderbuffers(1,&depth); glGenRenderbuffers(1,&resolved_depth);
@@ -44,6 +46,11 @@ int main(void) {
   OrbitCamera camera;
   camera_init(&camera);
   for (int frame=0;frame<24;frame++) {
+    if(frame) {
+      hit_capture_resize(&hit,320,320);
+      assert(input_mask_contains(&hit.mask,160,160) && "Resize dropped input on the visible avatar");
+      assert(!input_mask_contains(&hit.mask,0,0));
+    }
     /* Exercise both allocation and cached-target frames at each size. */
     int w=320+(frame/2)*16, h=320+(frame/2)*8;
     camera.aspect=(float)w/h;
@@ -62,6 +69,14 @@ int main(void) {
     GLint bound;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&bound);
     assert((GLuint)bound == target && "Shadow allocation discarded the MSAA framebuffer");
+    hit.next_capture=0; /* Force every test frame through the readback path. */
+    hit_capture_submit(&hit,target,w,h,platform_get_time());
+    if(frame)assert(input_mask_contains(&hit.mask,160,160) && "GPU resize cleared the last visible input mask");
+    glFinish();hit_capture_poll(&hit);
+    assert(input_mask_contains(&hit.mask,160,160));
+    assert(!input_mask_contains(&hit.mask,0,0));
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&bound);
+    assert((GLuint)bound==target && "Hit capture changed the render target");
     glBindRenderbuffer(GL_RENDERBUFFER,resolved_color);
     glRenderbufferStorage(GL_RENDERBUFFER,GL_RGBA8,w,h);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER,resolved);
@@ -102,12 +117,13 @@ int main(void) {
   assert(stencil==0 && "Fully transparent fragments must pass clicks through");
   assert(glGetError()==GL_NO_ERROR);
   renderer_set_model(&renderer,NULL);
+  hit_capture_cleanup(&hit);
   renderer_cleanup(&renderer);
   glDeleteRenderbuffers(1,&color); glDeleteRenderbuffers(1,&resolved_color);
   glDeleteRenderbuffers(1,&depth); glDeleteRenderbuffers(1,&resolved_depth);
   glDeleteFramebuffers(1,&target); glDeleteFramebuffers(1,&resolved);
   glDeleteBuffers(1,&vbo); glDeleteVertexArrays(1,&vao);
   platform_destroy_window(window);
-  puts("Render target check passed: 24 MSAA resize frames; avatar-only hit coverage, transparent fragments and shadow exclusion.");
+  puts("Render target check passed: 24 MSAA resize frames; retained asynchronous avatar input, transparent fragments and shadow exclusion.");
   return 0;
 }

@@ -18,11 +18,32 @@ void hit_capture_reset(HitCapture *c) {
   c->next_capture=0;
 }
 
-void hit_capture_cleanup(HitCapture *c) {
-  hit_capture_reset(c);
+void hit_capture_resize(HitCapture *c, int width, int height) {
+  /* Old GPU transfers refer to the old projection. Preserve/recentre the
+   * last visible bitmap until a new one arrives instead of making a visible
+   * avatar briefly click-through (which also drops consecutive wheel events). */
+  for(int i=0;i<2;i++)if(c->fences[i]) {
+    glDeleteSync(c->fences[i]);c->fences[i]=0;
+  }
+  c->next_capture=0;
+  int changed=input_mask_recenter(&c->mask,width,height);
+  if(changed>0)platform_set_input_mask(c->window,c->mask.bits,width,height);
+}
+
+static void release_capture_buffers(HitCapture *c) {
+  for(int i=0;i<2;i++)if(c->fences[i]) {
+    glDeleteSync(c->fences[i]);c->fences[i]=0;
+  }
   glDeleteBuffers(2,c->buffers);
   glDeleteFramebuffers(1,&c->fbo);
   glDeleteRenderbuffers(1,&c->depth_stencil);
+  memset(c->buffers,0,sizeof(c->buffers));c->fbo=c->depth_stencil=0;
+  c->next_slot=0;c->next_capture=0;
+}
+
+void hit_capture_cleanup(HitCapture *c) {
+  hit_capture_reset(c);
+  release_capture_buffers(c);
   PlatformWindow *window=c->window;
   memset(c,0,sizeof(*c)); c->window=window;
 }
@@ -61,7 +82,7 @@ void hit_capture_submit(HitCapture *c, GLuint source, int w, int h, double now) 
   glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
   glGetIntegerv(GL_RENDERBUFFER_BINDING,&renderbuffer);
   if (c->width!=w || c->height!=h || c->window_w!=ww || c->window_h!=wh) {
-    hit_capture_cleanup(c);
+    release_capture_buffers(c);
     c->width=w; c->height=h; c->window_w=ww; c->window_h=wh;
     glGenFramebuffers(1,&c->fbo); glGenRenderbuffers(1,&c->depth_stencil);
     glBindRenderbuffer(GL_RENDERBUFFER,c->depth_stencil);

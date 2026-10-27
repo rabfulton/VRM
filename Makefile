@@ -37,7 +37,7 @@ OBJ = $(C_OBJ) $(CXX_OBJ)
 
 TARGET = vrm-overlay
 
-.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs studio
+.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs test-zoom studio
 
 all: $(TARGET)
 
@@ -163,10 +163,14 @@ test-fit: all
 test-desktop: all
 	python3 tests/desktop_smoke.py
 
+ZOOM_MODEL ?= assets/starter/models/anime.vrm
+test-zoom: all
+	python3 tests/zoom_smoke.py --model "$(ZOOM_MODEL)"
+
 test-assets: all
 	python3 tests/starter_assets_smoke.py
 
-$(TEST_BUILD_DIR)/render-target-test.o: tests/render_target_test.c src/renderer.h src/platform.h src/camera.h src/gltf_loader.h | $(TEST_BUILD_DIR)
+$(TEST_BUILD_DIR)/render-target-test.o: tests/render_target_test.c src/renderer.h src/platform.h src/camera.h src/gltf_loader.h src/hit_capture.h | $(TEST_BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
 $(TEST_BUILD_DIR)/render-target-test: $(TEST_BUILD_DIR)/render-target-test.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))

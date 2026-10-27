@@ -16,6 +16,7 @@ typedef struct {
 
 void hit_capture_init(HitCapture *capture, PlatformWindow *window);
 void hit_capture_reset(HitCapture *capture);
+void hit_capture_resize(HitCapture *capture, int window_width, int window_height);
 void hit_capture_cleanup(HitCapture *capture);
 void hit_capture_poll(HitCapture *capture);
 void hit_capture_submit(HitCapture *capture, GLuint source_fbo, int width, int height, double now);

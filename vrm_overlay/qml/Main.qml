@@ -57,12 +57,7 @@ ApplicationWindow {
         onActivated: chatWindow.visible ? chatWindow.hide() : bridge.chat.open()
     }
 
-    FileDialog {
-        id: modelDialog
-        title: "Load avatar"
-        nameFilters: ["Avatars (*.vrm *.glb *.gltf)", "All files (*)"]
-        onAccepted: bridge.loadModel(selectedFile.toString())
-    }
+    AvatarImportDialog { id: avatarDialog; controller: bridge }
     FolderDialog {
         id: folderDialog
         title: "Choose animation library"
@@ -128,19 +123,8 @@ ApplicationWindow {
                     }
                     Button {
                         objectName: "loadModelButton"
-                        text: "Load avatar…"; Layout.fillWidth: true
-                        enabled: bridge.connected && !bridge.busy
-                        onClicked: modelDialog.open()
-                    }
-                    ComboBox {
-                        objectName: "starterAvatarPicker"
-                        Layout.fillWidth: true
-                        model: bridge.starterAvatars
-                        textRole: "name"
-                        currentIndex: -1
-                        displayText: "Starter avatars…"
-                        enabled: bridge.connected && !bridge.busy
-                        onActivated: index => bridge.loadModel(bridge.starterAvatars[index].path)
+                        text: "Choose / import avatar…"; Layout.fillWidth: true
+                        onClicked: avatarDialog.open()
                     }
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#304055" }
                     RowLayout {

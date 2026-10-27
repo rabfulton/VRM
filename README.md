@@ -25,8 +25,10 @@ For an existing clone, initialize dependencies with
 is ozz-animation; other runtime libraries are vendored under `deps/`.
 
 The [CC0 starter pack](assets/starter/README.md) includes an anime avatar, a fox,
-14 humanoid motions and seven fox animations. Open **Starter avatars…** in Studio
-to select a model and its matching library. A fresh clone can run with
+14 humanoid motions and seven fox animations. Open **Choose / import avatar…**
+in Studio for a thumbnail gallery, the included anime avatar and creator download
+pages. Import a downloaded VRM, GLB, glTF or ZIP; **My avatars** keeps local copies
+between sessions. See [avatar imports](docs/avatars.md). A fresh clone can run with
 `python3 control.py --studio`; existing saved/local avatars are preserved.
 Additional user avatars, animations, speech downloads and local settings stay
 ignored by Git. See [asset setup](animation/README.md).

@@ -69,7 +69,8 @@ class QtControllerTests(unittest.TestCase):
         self.addCleanup(self.server.close)
         self.server.newConnection.connect(self.accept_peer)
         self.bridge = Controller(path, attach=True, animation_dir=str(root),
-                                 settings=QSettings(str(root / "settings.ini"), QSettings.IniFormat))
+                                 settings=QSettings(str(root / "settings.ini"), QSettings.IniFormat),
+                                 avatar_dir=root / 'avatars')
         self.addCleanup(self.bridge.shutdown)
         self.bridge.connectRuntime()
         self.wait_for(lambda: self.bridge.connected)
@@ -132,6 +133,63 @@ class QtControllerTests(unittest.TestCase):
         self.window = self.engine.rootObjects()[0]
         self.addCleanup(self.close_qml)
         QTest.qWait(30)
+
+    def test_avatar_dialog_import_select_and_persist_without_starting_playback(self):
+        from test_avatar_library import model_bytes
+        self.bridge.avatars._featured = [dict(e, thumbnail='') for e in self.bridge.avatars._featured]
+        self.load_qml()
+        self.click('loadModelButton')
+        dialog = self.window.findChild(QObject, 'avatarImportDialog')
+        self.wait_for(lambda: dialog.property('visible'))
+        avatar = Path(self.directory.name) / 'import.vrm'
+        avatar.write_bytes(model_bytes('My companion'))
+        self.bridge.avatars.importFile(QUrl.fromLocalFile(str(avatar)).toString(), '')
+        self.wait_for(lambda: not self.bridge.avatars.busy and bool(self.bridge.avatars.installed))
+        self.assertEqual(self.bridge.avatars.error, '')
+        entry = self.bridge.avatars.installed[0]
+        self.assertEqual(entry['name'], 'My companion')
+        self.assertFalse(any(c['action'] == 'load' for c in self.commands))
+        self.wait_for(lambda: dialog.property('selected')['id'] == entry['id'])
+        self.click('useAvatarButton')
+        self.wait_for(lambda: self.bridge.state['model_path'] == entry['path'] and not self.bridge.busy)
+        self.assertFalse(dialog.property('visible'))
+        self.assertNotEqual(entry['path'], str(avatar))
+        avatar.unlink()
+        from vrm_overlay.qt_avatar_library import AvatarLibrary
+        restarted = AvatarLibrary(root=Path(self.directory.name) / 'avatars')
+        self.addCleanup(restarted.shutdown)
+        self.assertEqual(restarted.installed[0]['path'], entry['path'])
+
+    def test_avatar_zip_variant_ui_and_import_error_recovery(self):
+        import zipfile
+        from test_avatar_library import model_bytes
+        self.bridge.avatars._featured = [dict(e, thumbnail='') for e in self.bridge.avatars._featured]
+        self.load_qml()
+        self.click('loadModelButton')
+        broken = Path(self.directory.name) / 'broken.zip'
+        broken.write_text('not a zip')
+        self.bridge.avatars.importFile(str(broken), '')
+        self.wait_for(lambda: not self.bridge.avatars.busy)
+        self.assertTrue(self.bridge.avatars.error)
+        package = Path(self.directory.name) / 'outfits.zip'
+        with zipfile.ZipFile(package, 'w') as z:
+            z.writestr('Outfit A.vrm', model_bytes('Outfit A'))
+            z.writestr('Outfit B.vrm', model_bytes('Outfit B'))
+        self.bridge.avatars.importFile(str(package), 'amane')
+        self.wait_for(lambda: len(self.bridge.avatars.choices) == 2 and not self.bridge.avatars.busy)
+        self.assertFalse(self.bridge.avatars.error)
+        self.click('importAvatarVariantButton')
+        self.wait_for(lambda: not self.bridge.avatars.busy and bool(self.bridge.avatars.installed))
+        self.assertEqual(self.bridge.avatars.installed[0]['name'], 'Outfit A')
+        self.assertEqual(self.bridge.avatars.installed[0]['source_id'], 'amane')
+
+    def test_avatar_choice_while_disconnected_loads_after_connecting(self):
+        avatar = Path(self.directory.name) / 'chosen.vrm'
+        avatar.touch()
+        self.bridge.disconnectRuntime()
+        self.bridge.useAvatar(str(avatar), 'humanoid')
+        self.wait_for(lambda: self.bridge.connected and self.bridge.state['model_path'] == str(avatar) and not self.bridge.busy)
+        self.assertFalse(self.bridge._requested_avatar)
 
     def close_qml(self):
         self.window.close()
