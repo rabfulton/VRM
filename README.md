@@ -1,5 +1,7 @@
 # domovushka
 
+![domovushka Studio beside a transparent avatar overlay on a Wayland desktop](screenshots/screenshot.png)
+
 An animated desktop companion for Linux/X11 and Wayland, with a Qt Quick control window,
 **domovushka studio**.
 The C/C++ runtime renders VRM/glTF models, plays VRMA/GLB animations, simulates
@@ -10,18 +12,7 @@ spring bones, and drives expressions and lip sync through JSON IPC.
 Requires a C11/C++20 toolchain, GNU Make 4.3+, CMake, pkg-config, and development
 packages for libepoxy, GLFW, X11 and Xext, plus wayland-client, wayland-egl,
 EGL, Cairo and wayland-protocols for the native backend. Python 3.10+, PySide6 and keyring are
-needed for Studio and chat. The renderer itself has no Qt dependency. The default build includes X11 and
-native Wayland (layer-shell) backends. At runtime, `auto` tries Wayland when
-`WAYLAND_DISPLAY` is set and reports an X11/XWayland fallback if unavailable.
-Studio uses Qt's platform selection independently.
-
-Use `./domovushka --window-backend wayland --studio` to require native Wayland,
-or `--window-backend x11` to require X11. The renderer accepts the same option;
-`VRM_WINDOW_BACKEND` can override `auto`. Explicit selections never fall back.
-Build one backend with `make WINDOW_BACKEND=x11` or `make WINDOW_BACKEND=wayland`;
-objects are separated by backend and ozz configuration. The Wayland-only build
-has no direct GLFW/X11/Xext requirement. See [native Wayland support](docs/wayland.md)
-for controls and current limitations.
+needed for Studio and chat. The renderer itself has no Qt dependency.
 
 ```sh
 git clone --recurse-submodules https://github.com/rabfulton/VRM.git
@@ -51,6 +42,40 @@ the current Python interpreter. Run `./domovushka` for just the companion, or
 are supported, and `control.py` remains a compatibility entry point. Saved
 preferences, imported avatars and keyring credentials are retained.
 
+## X11 and Wayland
+
+The default build includes both window backends and chooses one at runtime.
+On a Wayland session, it tries a native transparent layer-shell overlay when
+`WAYLAND_DISPLAY` is set. If the compositor cannot provide it, the renderer
+reports a fallback to X11/XWayland. Studio and Chat use Qt's platform selection
+independently.
+
+```sh
+./domovushka --studio                         # Automatically select the backend
+./domovushka --window-backend wayland --studio # Require native Wayland
+./domovushka --window-backend x11 --studio     # Require X11 or XWayland
+```
+
+Explicit backend selections never fall back. The renderer accepts the same
+`--window-backend` option; `VRM_WINDOW_BACKEND=x11` or `wayland` overrides automatic
+selection. To build only one backend, use `make WINDOW_BACKEND=x11` or
+`make WINDOW_BACKEND=wayland`. The Wayland-only build has no direct GLFW, X11 or
+Xext dependency; build objects are kept separate for each configuration.
+
+Native Wayland support currently targets compositors with `wlr-layer-shell` and
+has been exercised on Hyprland. The avatar appears on a transparent canvas with
+input restricted to its silhouette: gaps and shadows stay click-through. Left-drag
+to move the avatar within its output, middle-drag to orbit, and scroll to zoom.
+Right-click opens a native **Chat / Studio / Quit** popup at the pointer.
+
+This first native implementation uses one compositor-selected output with integer
+scaling. Fractional scaling, explicit output selection and migration, and
+fullscreen-aware visibility are still pending. The compositor controls placement
+and focus for Studio and Chat. See [native Wayland support](docs/wayland.md) for
+current behavior, validation and limits.
+
+## Companion controls
+
 The desktop entry in [packaging/domovushka.desktop](packaging/domovushka.desktop)
 is provided for future packaging. It expects the
 `domovushka` command to be installed on `PATH`.
@@ -61,7 +86,8 @@ Use **⋯** beside an animation to edit looping, startup, idle, pose and floor-c
 `.cfg` file; see [animation properties](docs/animation-properties.md).
 
 The companion starts with Studio hidden. Right-click the avatar for **Chat**,
-**Studio**, **Always on top** and **Quit**. The floating preference is remembered
+**Studio** and **Quit**. The X11 menu also includes **Always on top**; rendering
+preferences remain available in Studio. The floating preference is remembered
 across restarts. Right-click again or left-click outside to dismiss the menu.
 Closing Studio or chat keeps the companion running;
 **Quit** stops it. Pass `--studio` to open the controls immediately. Missing assets
@@ -122,6 +148,7 @@ matches request IDs and raises `IpcError` on rejected commands.
 
 ## Documentation and checks
 
+- [Native Wayland support](docs/wayland.md)
 - [Studio guide](docs/studio.md)
 - [API chat and character actions](docs/chat.md)
 - [Local speech](docs/tts.md)
