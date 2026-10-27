@@ -445,3 +445,17 @@ Optional, synchronous readback diagnostic for clipping checks. Reports framebuff
 count as visible. Empty frames use -1 bounds. MSAA is resolved offscreen for stable
 readback under desktop occlusion. Avoid polling this every frame; it allocates a
 readback buffer and synchronizes with the GPU. See [fitting tests](window-fitting.md).
+
+### Native window backend
+
+`get_state.window_backend` reports `x11` or `wayland` (separate from the animation
+`backend`). `studio_request_seq` increments when Studio is chosen from the native
+Wayland popup; controllers consume changes after their initial snapshot, just like
+`chat_request_seq`. Native popup Quit shuts down the renderer; the owning Studio
+controller follows its existing renderer-exit lifecycle.
+
+On Wayland, window geometry commands describe a bounded avatar viewport within
+the selected output's logical canvas, not global desktop window coordinates.
+`always_on_top` selects the top or bottom layer when the compositor supports it.
+The Wayland menu contains Chat, Studio and Quit; other rendering preferences remain
+available in Studio. See [Wayland](wayland.md) for current limitations.

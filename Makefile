@@ -1,11 +1,28 @@
-# VRM Desktop Overlay Viewer - Makefile (GLFW version)
+# VRM Desktop Overlay Viewer - X11 and native Wayland backends
 
 CC = gcc
 CXX = g++
 CFLAGS = -std=c11 -Wall -Wextra -g -O2 -MMD -MP
 CXXFLAGS = -std=c++20 -Wall -Wextra -g -O2 -MMD -MP
-CFLAGS += $(shell pkg-config --cflags glfw3 epoxy)
-CXXFLAGS += $(shell pkg-config --cflags glfw3 epoxy)
+WINDOW_BACKEND ?= both
+WAYLAND_PROBE_DIR = build/wayland-probe
+ifeq ($(filter $(WINDOW_BACKEND),x11 wayland both),)
+  $(error WINDOW_BACKEND must be x11, wayland or both)
+endif
+PLATFORM_PACKAGES = epoxy
+PLATFORM_SRC = src/platform.c
+ifneq ($(filter $(WINDOW_BACKEND),x11 both),)
+  PLATFORM_PACKAGES += glfw3 x11 xext
+  PLATFORM_SRC += src/platform_x11.c
+  CFLAGS += -DVRM_PLATFORM_X11
+endif
+ifneq ($(filter $(WINDOW_BACKEND),wayland both),)
+  PLATFORM_PACKAGES += wayland-client wayland-egl egl cairo
+  PLATFORM_SRC += src/platform_wayland.c
+  CFLAGS += -DVRM_PLATFORM_WAYLAND
+endif
+CFLAGS += $(shell pkg-config --cflags $(PLATFORM_PACKAGES))
+CXXFLAGS += $(shell pkg-config --cflags $(PLATFORM_PACKAGES))
 INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb
 
 # Optional ozz animation sampling and leg IK
@@ -16,7 +33,7 @@ OZZ_LIBS = $(OZZ_BUILD_DIR)/src/animation/offline/libozz_animation_offline_rd.a 
            $(OZZ_BUILD_DIR)/src/animation/runtime/libozz_animation_rd.a \
            $(OZZ_BUILD_DIR)/src/base/libozz_base_rd.a
 
-LDFLAGS = $(shell pkg-config --libs glfw3 epoxy) -lm -lstdc++ -lX11 -lXext -lpthread -ldl
+LDFLAGS = $(shell pkg-config --libs $(PLATFORM_PACKAGES)) -lm -lstdc++ -lpthread -ldl
 
 ifeq ($(USE_OZZ),1)
   INCLUDES += -Ideps/ozz-animation/include
@@ -25,23 +42,29 @@ ifeq ($(USE_OZZ),1)
   LDFLAGS += $(OZZ_LIBS)
 endif
 
-C_SRC = src/main.c src/platform.c src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
+C_SRC = src/main.c $(PLATFORM_SRC) src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp src/foot_lock.cpp
 ifeq ($(USE_OZZ),1)
   CXX_SRC += src/ozz_bridge.cpp
 endif
 
-C_OBJ = $(C_SRC:.c=.o)
-CXX_OBJ = $(CXX_SRC:.cpp=.o)
+OBJ_DIR = build/obj/$(WINDOW_BACKEND)-ozz$(USE_OZZ)
+C_OBJ = $(addprefix $(OBJ_DIR)/,$(C_SRC:.c=.o))
+CXX_OBJ = $(addprefix $(OBJ_DIR)/,$(CXX_SRC:.cpp=.o))
 OBJ = $(C_OBJ) $(CXX_OBJ)
+ifneq ($(filter $(WINDOW_BACKEND),wayland both),)
+  OBJ += $(WAYLAND_PROBE_DIR)/wlr-layer-shell-protocol.o $(WAYLAND_PROBE_DIR)/xdg-shell-protocol.o
+endif
 
 TARGET = vrm-overlay
 
-.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs test-zoom studio
+.PHONY: FORCE all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs test-zoom studio
 
 all: $(TARGET)
 
-$(TARGET): $(OBJ)
+FORCE:
+
+$(TARGET): $(OBJ) FORCE
 	$(CXX) $(OBJ) -o $@ $(LDFLAGS)
 
 ifeq ($(USE_OZZ),1)
@@ -52,10 +75,12 @@ $(OZZ_LIBS) &:
 $(TARGET): $(OZZ_LIBS)
 endif
 
-%.o: %.c
+$(OBJ_DIR)/%.o: %.c
+	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
-%.o: %.cpp
+$(OBJ_DIR)/%.o: %.cpp
+	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
@@ -177,8 +202,8 @@ test-assets: all
 $(TEST_BUILD_DIR)/render-target-test.o: tests/render_target_test.c src/renderer.h src/platform.h src/camera.h src/gltf_loader.h src/hit_capture.h | $(TEST_BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
-$(TEST_BUILD_DIR)/render-target-test: $(TEST_BUILD_DIR)/render-target-test.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/render-target-test.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+$(TEST_BUILD_DIR)/render-target-test: $(TEST_BUILD_DIR)/render-target-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/render-target-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
 
 # Needs an OpenGL/X11 display, but no avatar, speech engine or network.
 test-render: $(TEST_BUILD_DIR)/render-target-test
@@ -187,14 +212,14 @@ test-render: $(TEST_BUILD_DIR)/render-target-test
 $(TEST_BUILD_DIR)/asset-preview.o: tests/asset_preview.c src/renderer.h src/animator.h src/camera.h src/spring_bones.h | $(TEST_BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
-$(TEST_BUILD_DIR)/asset-preview: $(TEST_BUILD_DIR)/asset-preview.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/asset-preview.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+$(TEST_BUILD_DIR)/asset-preview: $(TEST_BUILD_DIR)/asset-preview.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/asset-preview.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
 
 $(TEST_BUILD_DIR)/spring-asset-test.o: tests/spring_asset_test.c src/spring_bones.h src/animator.h | $(TEST_BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
-$(TEST_BUILD_DIR)/spring-asset-test: $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+$(TEST_BUILD_DIR)/spring-asset-test: $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
 
 # Optional real-avatar check: ten seconds of settling in bind and animated poses.
 SPRING_MODEL ?= assets/starter/models/anime.vrm
@@ -203,3 +228,35 @@ SPRING_TIME ?= 1
 test-springs: $(TEST_BUILD_DIR)/spring-asset-test
 	$(TEST_BUILD_DIR)/spring-asset-test "$(SPRING_MODEL)"
 	$(TEST_BUILD_DIR)/spring-asset-test "$(SPRING_MODEL)" "$(SPRING_ANIMATION)" "$(SPRING_TIME)"
+
+# Standalone native Wayland feasibility probe; no GLFW/X11 or avatar dependencies.
+WAYLAND_PROTOCOLS_DIR ?= $(shell pkg-config --variable=pkgdatadir wayland-protocols)
+WAYLAND_SCANNER ?= wayland-scanner
+WAYLAND_LAYER_XML = deps/wayland-protocols/wlr-layer-shell-unstable-v1.xml
+
+$(WAYLAND_PROBE_DIR):
+	mkdir -p $@
+
+$(WAYLAND_PROBE_DIR)/wlr-layer-shell-client.h: $(WAYLAND_LAYER_XML) | $(WAYLAND_PROBE_DIR)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+$(WAYLAND_PROBE_DIR)/wlr-layer-shell-protocol.c: $(WAYLAND_LAYER_XML) | $(WAYLAND_PROBE_DIR)
+	$(WAYLAND_SCANNER) private-code $< $@
+
+$(WAYLAND_PROBE_DIR)/xdg-shell-protocol.c: $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml | $(WAYLAND_PROBE_DIR)
+	$(WAYLAND_SCANNER) private-code $< $@
+
+$(WAYLAND_PROBE_DIR)/overlay: examples/wayland_overlay/main.c $(WAYLAND_PROBE_DIR)/wlr-layer-shell-client.h $(WAYLAND_PROBE_DIR)/wlr-layer-shell-protocol.c $(WAYLAND_PROBE_DIR)/xdg-shell-protocol.c
+	$(CC) -std=c11 -Wall -Wextra -g -O2 -I$(WAYLAND_PROBE_DIR) $(shell pkg-config --cflags wayland-client wayland-egl egl epoxy) $(filter %.c,$^) -o $@ $(shell pkg-config --libs wayland-client wayland-egl egl epoxy)
+
+.PHONY: wayland-probe
+wayland-probe: $(WAYLAND_PROBE_DIR)/overlay
+
+$(WAYLAND_PROBE_DIR)/xdg-shell-client.h: $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml | $(WAYLAND_PROBE_DIR)
+	$(WAYLAND_SCANNER) client-header $< $@
+
+$(OBJ_DIR)/src/platform_wayland.o: $(WAYLAND_PROBE_DIR)/wlr-layer-shell-client.h $(WAYLAND_PROBE_DIR)/xdg-shell-client.h
+$(OBJ_DIR)/src/platform_wayland.o: INCLUDES += -I$(WAYLAND_PROBE_DIR)
+
+$(WAYLAND_PROBE_DIR)/%-protocol.o: $(WAYLAND_PROBE_DIR)/%-protocol.c
+	$(CC) -c $< -o $@ $(shell pkg-config --cflags wayland-client)

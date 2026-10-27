@@ -94,6 +94,14 @@ bool settings_load(const char *path, Settings *out_settings) {
                 out_settings->has_window_position = true;
                 found = true;
             }
+        } else if (strcmp(key, "wayland_pos_x") == 0 || strcmp(key, "wayland_pos_y") == 0) {
+            char *end = NULL;
+            long v = strtol(val, &end, 10);
+            if (end && end != val && !*end && v >= -16384 && v <= 16384) {
+                out_settings->wayland_pos[strcmp(key,"wayland_pos_y")==0] = (int)v;
+                out_settings->has_wayland_position = true;
+                found = true;
+            }
         } else if (strcmp(key, "window_size_w") == 0) {
             char *end = NULL;
             long v = strtol(val, &end, 10);
@@ -137,6 +145,9 @@ bool settings_save(const char *path, const Settings *settings) {
     if (settings->has_window_position) {
         fprintf(f, "window_pos_x=%d\n", settings->window_pos[0]);
         fprintf(f, "window_pos_y=%d\n", settings->window_pos[1]);
+    }
+    if (settings->has_wayland_position) {
+        fprintf(f, "wayland_pos_x=%d\nwayland_pos_y=%d\n", settings->wayland_pos[0],settings->wayland_pos[1]);
     }
     if (settings->has_window_size) {
         fprintf(f, "window_size_w=%d\n", settings->window_size[0]);

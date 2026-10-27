@@ -70,7 +70,7 @@ class Controller(QObject):
     quitRequested = Signal()
 
     def __init__(self, socket_path="/tmp/vrm-overlay.sock", *, attach=False,
-                 model=None, animation_dir=None, settings=None, show_studio=False, avatar_dir=None, parent=None):
+                 model=None, animation_dir=None, settings=None, show_studio=False, window_backend="auto", avatar_dir=None, parent=None):
         super().__init__(parent)
         self._settings = settings if settings is not None else QSettings()
         self._socket_path = socket_path
@@ -102,6 +102,7 @@ class Controller(QObject):
         self._requested_avatar = False
         self._chat_request_seq = None
         self._menu_request_seq = None
+        self._studio_request_seq = None
         self._overlay_menu_input = None
         self._studio_visible = show_studio
         self._quitting = False
@@ -118,6 +119,7 @@ class Controller(QObject):
         self._socket.disconnected.connect(self._disconnected)
         self._socket.readyRead.connect(self._read)
         self._socket.errorOccurred.connect(self._socket_error)
+        self._window_backend = window_backend
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.MergedChannels)
         self._process.readyReadStandardOutput.connect(self._read_process_log)
@@ -259,7 +261,7 @@ class Controller(QObject):
                     return
                 self._owns_process = True
                 self._process.setWorkingDirectory(str(ROOT))
-                self._process.start(str(binary), ["--socket", self._socket_path])
+                self._process.start(str(binary), ["--socket", self._socket_path, "--window-backend", self._window_backend])
                 self._status = "Starting renderer…"
                 self.changed.emit()
             return
@@ -269,6 +271,7 @@ class Controller(QObject):
     def _transport_connected(self):
         self._chat_request_seq = None
         self._menu_request_seq = None
+        self._studio_request_seq = None
         self._retry.stop()
         self._starting = False
         self._buffer.clear()
@@ -458,6 +461,11 @@ class Controller(QObject):
             previous, self._chat_request_seq = self._chat_request_seq, sequence
             if previous is not None and sequence != previous:
                 self._chat.openNearCursor()
+        sequence = state.get("studio_request_seq")
+        if isinstance(sequence, int):
+            previous, self._studio_request_seq = self._studio_request_seq, sequence
+            if previous is not None and sequence != previous:
+                self.showStudio()
         sequence = state.get("overlay_menu_seq")
         if isinstance(sequence, int):
             previous, self._menu_request_seq = self._menu_request_seq, sequence

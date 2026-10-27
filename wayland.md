@@ -1,6 +1,10 @@
 # Native Wayland implementation plan
 
-Status: design only; no Wayland backend is implemented by this document.
+Status: an initial native avatar backend is implemented alongside X11. See
+[current support and validation](docs/wayland.md). The remainder of this document
+is the broader port plan; later-stage capabilities are not implied by this status.
+The standalone [presentation probe](examples/wayland_overlay/README.md) remains
+available for diagnosing EGL/layer-shell separately.
 Primary target: **Hyprland on Omarchy**. Research checked on **2026-10-27**.
 Recheck the installed compositor, protocols and Omarchy configuration format when
 work starts on the target machine. The current X11 application remains supported.

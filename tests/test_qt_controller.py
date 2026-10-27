@@ -373,6 +373,21 @@ class QtControllerTests(unittest.TestCase):
         self.assertEqual(len(requests), 1)
         self.assertIn("left", requests[0])
 
+    def test_native_studio_sequence_is_not_replayed_on_attach(self):
+        requests = []
+        self.bridge.studioRequested.connect(lambda: requests.append(True))
+        self.state['studio_request_seq'] = 3
+        self.bridge.refresh()
+        self.wait_for(lambda: self.bridge._studio_request_seq == 3)
+        self.assertEqual(requests, [])
+        self.state['studio_request_seq'] = 4
+        self.bridge.refresh()
+        self.wait_for(lambda: bool(requests))
+        self.bridge.refresh()
+        self.wait_for(lambda: not self.bridge.busy)
+        self.assertEqual(requests, [True])
+        self.assertTrue(self.bridge.studioVisible)
+
     def test_overlay_menu_hides_and_reopens_studio_without_disconnect_and_quits_explicitly(self):
         self.assertFalse(self.bridge.studioVisible)
         self.load_qml()
