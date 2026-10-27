@@ -51,6 +51,7 @@ Dialog {
             GroupBox {
                 title: "Current system prompt"
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 TextArea { width: parent.width; text: dialog.chat.prompt; textFormat: TextEdit.PlainText; readOnly: true; wrapMode: TextEdit.Wrap; selectByMouse: true; background: null }
             }
             Label { text: dialog.chat.error; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#ffc2c8" }

@@ -7,7 +7,6 @@ Window {
     id: menu
     objectName: "overlayMenu"
     required property var controller
-    property var palette
     property var font
     transientParent: null
     // A tool window with an explicit input grab avoids Qt's popup-stack replay
