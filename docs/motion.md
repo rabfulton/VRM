@@ -13,10 +13,29 @@ Spring simulation runs at 120 Hz with a bounded accumulator. Reference-rate damp
 and forces no longer depend on render FPS. Collider motion is interpolated over
 catch-up steps, collider/joint radii account for node scale, authored zero gravity
 is preserved, and long stalls reset velocity. Contact projection iterates while
-preserving bone length. Garments test bone segments against sphere/capsule volumes;
-hair retains tail-sphere contacts with its authored collider assignments. Contact
+preserving bone length. Garment contacts test bone segments against assigned
+thigh/body volumes as well as arm volumes. Tail-only thigh checks leave gaps
+between skirt joints that expose the legs during movement. Hair retains its
+authored tail contacts and assignments. Contact
 corrections avoid injecting their push-out displacement into the next velocity.
-Unsolvable anchored-root contacts remain visible in the diagnostics.
+Garment segments have a 35-degree bending limit relative to their unsimulated
+attachment-space rest directions. Using the already bent parent as that reference
+would accumulate bends down the chain and still let a front panel fold upward.
+The reference follows the animated attachment, including reclining poses; hair
+is unrestricted. Contact projection solves the collision circle and bending cone
+together where feasible. Incompatible body/arm volumes remain reported as overlaps
+rather than forcing the fabric inside out.
+Volumes containing a shaft's anchored root are unsolvable without moving the
+body or the attachment. Both body and arm contacts fall back to the movable tip
+in this case; the shaft
+overlap remains visible in the diagnostics without rotating the skirt back and
+forth in an attempt to escape.
+
+On the first visible animated frame, tails and velocity history are initialized
+from the sampled pose. Offscreen entrance placement must not be interpreted as
+physical travel from the model's bind pose, which can otherwise pull a skirt
+sideways before the character has begun moving. Later animation transitions
+retain spring continuity.
 
 Animation transitions use the ozz sampler with a separate local-pose correction
 layer in `src/transition.c`. Each transition records the blended animation-layer
@@ -50,7 +69,9 @@ The policy is session state and is not saved into animation tuning files.
 `make test` runs deterministic synthetic tests for sphere/capsule shaft contact,
 missing arm assignments, generated arm volumes, scaled radii, zero gravity,
 30/60/144 Hz equivalence, long stalls, opposite bone directions, and impossible
-anchored-root contacts. It also tests transition endpoints, rotation/translation
+anchored-root contacts, including shallow root overlaps, thigh contacts between
+skirt particles, inverted garments, accumulated chain bends and rotated attachments.
+It also tests transition endpoints, rotation/translation
 velocity continuity, quaternion signs, clip reload, interruption/restart,
 half-speed timing, seeking, group settings and target-clock synchronization.
 `make test-sanitize` instruments these tests with ASan/UBSan.
@@ -58,6 +79,24 @@ half-speed timing, seeking, group settings and target-clock synchronization.
 `make test-ui` exercises every local animation against the actual renderer and
 samples sustained Relax/restless-arms/push poses after transitions complete. This measures skeleton proxies, not arbitrary skinned triangles. Assets are
 supplied locally; see [test setup](development.md).
+
+`make test-springs` checks the bundled avatar with the real loader and animation/IK
+pipeline in a hidden OpenGL window. It exercises moving colliders, checks finite,
+length-preserving joints, then measures residual skirt movement after settling
+in bind and selected animation poses. For a local avatar/motion, run e.g.
+`make test-springs SPRING_MODEL=test2.vrm SPRING_ANIMATION=animation/Relax.vrma`.
+`SPRING_TIME=1` selects the frozen pose in seconds. The check fails if a garment
+joint still moves by more than 1 mm per 120 Hz step after eight seconds of settling;
+reported overlap measures collision proxies, not mesh triangles.
+
+For visual checks, `build/tests/asset-preview MODEL ANIMATION TIME OUTPUT.ppm motion`
+replays the motion and springs up to the requested time. A numeric final argument
+instead settles the selected pose for that many seconds. A further optional
+argument selects render FPS (10–240, default 60) to check catch-up steps. Spring
+previews use the renderer/Studio default orientation and a front camera; previews
+without springs use auto correction. Fresh-clip previews do not reproduce all
+startup/idle transition history. Check the live Studio sequence too: collision
+counters and a stable pose alone cannot establish that skirt panels stay covered.
 
 ## Remaining work
 

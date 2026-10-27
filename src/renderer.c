@@ -233,6 +233,7 @@ static const char *pbr_frag_src =
     "    float ambient = 0.4;\n"
     "    color.rgb *= (key + fill + ambient);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
+    "    if (color.a <= (1.0 / 255.0)) discard;\n"
     "    FragColor = color;\n"
     "}\n";
 
@@ -275,6 +276,7 @@ static const char *toon_frag_src =
     "    color.rgb *= (shade + ambient);\n"
     "    color.rgb = mix(color.rgb, vec3(1.0), rim * rimStrength);\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
+    "    if (color.a <= (1.0 / 255.0)) discard;\n"
     "    FragColor = color;\n"
     "}\n";
 
@@ -315,6 +317,7 @@ static const char *anime_frag_src =
     "    rim = smoothstep(0.6, 0.8, rim);\n"
     "    color.rgb += vec3(0.15) * rim;\n"
     "    if (uAlphaMode == 1 && color.a < uAlphaCutoff) discard;\n"
+    "    if (color.a <= (1.0 / 255.0)) discard;\n"
     "    FragColor = color;\n"
     "}\n";
 
@@ -453,6 +456,13 @@ static void ensure_shadow_targets(Renderer *r, int w, int h) {
     return;
   }
 
+  /* Target allocation is called from inside renderer_draw, after the caller
+   * has bound its MSAA FBO. Leaving framebuffer 0 bound loses the entire frame
+   * when main subsequently resolves the still-empty MSAA target. */
+  GLint previous_read_fbo, previous_draw_fbo;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read_fbo);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw_fbo);
+
   r->shadow_tex_w = tw;
   r->shadow_tex_h = th;
 
@@ -489,7 +499,8 @@ static void ensure_shadow_targets(Renderer *r, int w, int h) {
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                          r->shadow_blur_tex, 0);
 
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)previous_read_fbo);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)previous_draw_fbo);
 }
 
 static bool init_shader_program(ShaderProgram *program, const char *frag_src) {
@@ -1098,6 +1109,17 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width,
     }
   }
 
+  if (r->capture_hit_mask) {
+    /* Shadow is already composited. Only visible avatar fragments contribute
+     * to input coverage, using the same skinning/morph/material shader path. */
+    glStencilMask(0xff);
+    const GLint empty=0;
+    glClearBufferiv(GL_STENCIL,0,&empty);
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_ALWAYS,1,0xff);
+    glStencilOp(GL_KEEP,GL_KEEP,GL_REPLACE);
+  }
+
   /* === Draw outline pass for anime mode (back faces extruded) === */
   if (r->shader_mode == RENDERER_SHADER_ANIME && r->outline_program) {
     glUseProgram(r->outline_program);
@@ -1273,6 +1295,7 @@ void renderer_draw(Renderer *r, const OrbitCamera *camera, int fb_width,
   }
 
   glDepthMask(GL_TRUE);
+  if (r->capture_hit_mask) glDisable(GL_STENCIL_TEST);
 }
 
 void renderer_toggle_shader(Renderer *r) {

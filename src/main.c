@@ -2,11 +2,13 @@
  * VRM Desktop Overlay Viewer - Main Entry Point (GLFW version)
  */
 
+#define _POSIX_C_SOURCE 200809L
 #include <epoxy/gl.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "../deps/cjson/cJSON.h"
 #include "../deps/miniaudio.h"
@@ -17,6 +19,7 @@
 #include "event.h"
 #include "gltf_loader.h"
 #include "ipc.h"
+#include "hit_capture.h"
 #include "platform.h"
 #include "renderer.h"
 #include "settings.h"
@@ -28,6 +31,15 @@
 #endif
 
 typedef struct {
+  char path[4096];
+  struct timespec modified;
+  off_t size;
+  float correction[4];
+  GltfBounds bounds;
+  bool valid;
+} ClipBoundsCache;
+
+typedef struct {
   PlatformWindow *window;
   Renderer renderer;
   OrbitCamera camera;
@@ -36,6 +48,7 @@ typedef struct {
   IpcServer ipc;
   AudioSystem audio;
   VisemeAnalyzer viseme;
+  HitCapture hit_capture;
   GLuint msaa_fbo, msaa_color, msaa_depth;
   int msaa_samples, fb_width, fb_height;
   bool visible, always_on_top, model_loaded, auto_resize, running;
@@ -47,10 +60,19 @@ typedef struct {
   char current_model_path[4096];
   float frame_rate;
   uint32_t chat_request_seq;
+  uint32_t overlay_menu_seq;
+  int overlay_menu_x, overlay_menu_y;
+  ClipBoundsCache bounds_cache[32];
+  unsigned bounds_cache_cursor;
+  double last_load_ms, last_bounds_ms;
+  double frame_ms, peak_frame_ms, peak_ipc_ms, peak_update_ms, peak_render_ms, peak_swap_ms;
+  uint64_t slow_frames, window_resizes;
   char current_anim_path[4096];
   bool has_current_anim;
   bool animation_startup, animation_idle;
   bool audio_stream_open;
+  bool presentation_pending;
+  bool spring_pose_pending; /* Initialize tails from the first animated pose. */
   bool speech_pose_active;
   // Auto-blink state
   bool auto_blink_enabled;
@@ -77,6 +99,9 @@ static void apply_animation_metadata(const AnimConfig *cfg) {
   animator_set_loop_policy(&app.animator, cfg->has_loopable, cfg->loopable);
   app.animation_startup = cfg->has_startup && cfg->startup;
   app.animation_idle = cfg->has_is_idle && cfg->is_idle;
+  bool allowed=!cfg->has_floor_contact || cfg->floor_contact;
+  if (app.animator.foot_lock.clip_allowed!=allowed) foot_lock_reset(&app.animator.foot_lock);
+  app.animator.foot_lock.clip_allowed=allowed;
 }
 
 /* Optional readback diagnostic for clipping regressions; not part of the frame loop. */
@@ -248,11 +273,16 @@ static void fit_overlay_window(bool allow_shrink) {
     if (w < old_w) w = old_w;
     if (h < old_h) h = old_h;
     if (app.fit_zoom > 0 && zoom > app.fit_zoom) zoom = app.fit_zoom;
+    /* Grow in chunks: a few pixels of spring movement must not repeatedly
+     * reallocate MSAA/shadow buffers and ask the compositor for a new surface. */
+    if (w > old_w) w = (int)fminf(max_w, ceilf(w/64.0f)*64);
+    if (h > old_h) h = (int)fminf(max_h, ceilf(h/64.0f)*64);
   }
   app.fit_zoom = zoom;
   app.camera.viewport_height_scale = h / (base_h*zoom);
   app.camera.aspect = (float)w/h;
   if (w != old_w || h != old_h) {
+    app.window_resizes++;
     /* Preserve the screen-space camera centre and pixel density. */
     platform_resize_window(app.window,w,h);
     platform_move_window(app.window,old_x+(old_w-w)/2,old_y+(old_h-h)/2);
@@ -269,8 +299,34 @@ static void update_window_for_zoom(void) { fit_overlay_window(true); }
 
 static void refit_animation_window(void) {
   if (!app.model_loaded) return;
-  gltf_compute_animation_bounds(&app.model,&app.clip_bounds);
-  update_window_for_zoom();
+  struct stat info;
+  bool can_cache = app.has_current_anim && stat(app.current_anim_path,&info) == 0;
+  ClipBoundsCache *entry = NULL;
+  if (can_cache) for (unsigned i=0; i<32; i++) {
+    ClipBoundsCache *candidate = &app.bounds_cache[i];
+    if (candidate->valid && strcmp(candidate->path,app.current_anim_path)==0 &&
+        candidate->size==info.st_size && candidate->modified.tv_sec==info.st_mtim.tv_sec &&
+        candidate->modified.tv_nsec==info.st_mtim.tv_nsec &&
+        memcmp(candidate->correction,app.model.anim_global_correction,sizeof(candidate->correction))==0) {
+      entry = candidate; break;
+    }
+  }
+  app.last_bounds_ms = 0;
+  if (entry) app.clip_bounds = entry->bounds;
+  else {
+    double start = platform_get_time();
+    gltf_compute_animation_bounds(&app.model,&app.clip_bounds);
+    app.last_bounds_ms = (platform_get_time()-start)*1000;
+    if (can_cache) {
+      entry = &app.bounds_cache[app.bounds_cache_cursor++ % 32];
+      snprintf(entry->path,sizeof(entry->path),"%s",app.current_anim_path);
+      entry->modified = info.st_mtim; entry->size = info.st_size;
+      memcpy(entry->correction,app.model.anim_global_correction,sizeof(entry->correction));
+      entry->bounds = app.clip_bounds; entry->valid = true;
+    }
+  }
+  /* Keep the viewport stable between clips; zoom/camera controls can refit it. */
+  fit_overlay_window(false);
 }
 
 static void update_anim_correction_mode(int mode) {
@@ -318,33 +374,6 @@ static void rebuild_ozz_after_correction_change(bool keep_snapshot) {
     animator_rebuild_ozz(&app.animator, keep_snapshot);
   }
 #endif
-}
-
-static void update_input_region(void) {
-  if (!app.model_loaded) {
-    platform_clear_input_region(app.window);
-    return;
-  }
-  /* Project model bounds to screen and set input region */
-  camera_update(&app.camera);
-  float min_x, min_y, max_x, max_y;
-  float view_model[16];
-  build_view_with_model_transform(view_model);
-  gltf_get_screen_bounds_px(&app.model, view_model, (float *)app.camera.proj,
-                            app.fb_width, app.fb_height, &min_x, &min_y, &max_x,
-                            &max_y);
-  int win_w = 0, win_h = 0;
-  platform_get_window_size(app.window, &win_w, &win_h);
-  float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
-  float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
-  int x = (int)(min_x * sx);
-  int y = (int)(min_y * sy);
-  int w = (int)((max_x - min_x) * sx);
-  int h = (int)((max_y - min_y) * sy);
-  if (w > 0 && h > 0)
-    platform_set_input_region(app.window, x, y, w, h);
-  else
-    platform_clear_input_region(app.window);
 }
 
 /* Base64 decoder helper */
@@ -518,6 +547,7 @@ static void respond_state(int id) {
   cJSON_AddBoolToObject(properties, "explicit_loopable", app.animator.loop_policy_set);
   cJSON_AddBoolToObject(properties, "startup", app.has_current_anim && app.animation_startup);
   cJSON_AddBoolToObject(properties, "is_idle", app.has_current_anim && app.animation_idle);
+  cJSON_AddBoolToObject(properties,"floor_contact",app.animator.foot_lock.clip_allowed);
   cJSON_AddStringToObject(state, "backend", animator_get_use_ozz(&app.animator) ? "ozz" : "legacy");
 #ifdef VRM_USE_OZZ
   cJSON_AddBoolToObject(state, "ozz_available", true);
@@ -526,7 +556,23 @@ static void respond_state(int id) {
 #endif
   cJSON_AddNumberToObject(state, "frame_rate", app.frame_rate);
   cJSON_AddNumberToObject(state, "chat_request_seq", app.chat_request_seq);
+  cJSON_AddNumberToObject(state, "overlay_menu_seq", app.overlay_menu_seq);
+  cJSON *menu = cJSON_AddObjectToObject(state, "overlay_menu_position");
+  cJSON_AddNumberToObject(menu, "x", app.overlay_menu_x);
+  cJSON_AddNumberToObject(menu, "y", app.overlay_menu_y);
+  cJSON *timing = cJSON_AddObjectToObject(state, "frame_timing");
+  cJSON_AddNumberToObject(timing, "frame_ms", app.frame_ms);
+  cJSON_AddNumberToObject(timing, "peak_frame_ms", app.peak_frame_ms);
+  cJSON_AddNumberToObject(timing, "peak_ipc_ms", app.peak_ipc_ms);
+  cJSON_AddNumberToObject(timing, "peak_update_ms", app.peak_update_ms);
+  cJSON_AddNumberToObject(timing, "peak_render_ms", app.peak_render_ms);
+  cJSON_AddNumberToObject(timing, "peak_swap_ms", app.peak_swap_ms);
+  cJSON_AddNumberToObject(timing, "slow_frames", (double)app.slow_frames);
+  cJSON_AddNumberToObject(timing, "window_resizes", (double)app.window_resizes);
+  cJSON_AddNumberToObject(timing, "last_load_ms", app.last_load_ms);
+  cJSON_AddNumberToObject(timing, "last_bounds_ms", app.last_bounds_ms);
   cJSON_AddBoolToObject(state, "visible", app.visible);
+  cJSON_AddBoolToObject(state, "presentation_pending", app.presentation_pending);
   cJSON_AddBoolToObject(state, "always_on_top", app.always_on_top);
   cJSON_AddBoolToObject(state, "auto_resize", app.auto_resize);
   cJSON_AddNumberToObject(state, "scale", app.model_scale);
@@ -582,6 +628,7 @@ static void respond_state(int id) {
   cJSON_AddNumberToObject(physics, "dropped_time", stats.dropped_time);
   cJSON *planting = cJSON_AddObjectToObject(state, "foot_lock");
   cJSON_AddBoolToObject(planting, "enabled", app.animator.foot_lock.enabled);
+  cJSON_AddBoolToObject(planting,"clip_allowed",app.animator.foot_lock.clip_allowed);
   cJSON_AddNumberToObject(planting, "pelvis_offset", app.animator.foot_lock.pelvis_offset);
   cJSON_AddNumberToObject(planting, "floor_offset", app.animator.foot_lock.floor_offset);
   int supported = 0;
@@ -645,6 +692,11 @@ static void on_ipc_command(const char *action, void *params, int id,
     respond_state(id);
   } else if (strcmp(action, "get_frame_bounds") == 0) {
     respond_frame_bounds(id);
+  } else if (strcmp(action, "reset_frame_timing") == 0) {
+    app.peak_frame_ms = app.peak_ipc_ms = app.peak_update_ms = 0;
+    app.peak_render_ms = app.peak_swap_ms = 0;
+    app.slow_frames = app.window_resizes = 0;
+    ipc_respond(&app.ipc,id,true,NULL);
   } else if (strcmp(action, "set_foot_lock") == 0) {
     cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
     if (!cJSON_IsBool(enabled)) {
@@ -742,6 +794,12 @@ static void on_ipc_command(const char *action, void *params, int id,
       ipc_respond(&app.ipc, id, false, "Missing path");
       return;
     }
+    cJSON *defer=cJSON_GetObjectItem(json,"defer_show");
+    if (defer && !cJSON_IsBool(defer)) {
+      ipc_respond(&app.ipc,id,false,"defer_show must be boolean"); return;
+    }
+    app.presentation_pending=cJSON_IsTrue(defer);
+    hit_capture_reset(&app.hit_capture);
     if (app.model_loaded) {
       gltf_unload(&app.model);
       app.model_loaded = false;
@@ -752,7 +810,10 @@ static void on_ipc_command(const char *action, void *params, int id,
       animator_set_model(&app.animator, NULL);
     }
     if (gltf_load(&app.model, path->valuestring)) {
+      memset(app.bounds_cache,0,sizeof(app.bounds_cache));
+      app.bounds_cache_cursor = 0;
       app.model_loaded = true;
+      app.spring_pose_pending = true;
       snprintf(app.current_model_path, sizeof(app.current_model_path), "%s", path->valuestring);
       app.has_current_anim = false;
       app.current_anim_path[0] = '\0';
@@ -772,6 +833,8 @@ static void on_ipc_command(const char *action, void *params, int id,
       ipc_respond(&app.ipc, id, false, "Failed to load VRM");
     }
   } else if (strcmp(action, "unload") == 0) {
+    hit_capture_reset(&app.hit_capture);
+    app.presentation_pending=false;
     if (app.model_loaded) {
       gltf_unload(&app.model);
       app.model_loaded = false;
@@ -786,6 +849,7 @@ static void on_ipc_command(const char *action, void *params, int id,
     cJSON *vis = cJSON_GetObjectItem(json, "visible");
     if (vis) {
       app.visible = cJSON_IsTrue(vis);
+      if (!app.visible) hit_capture_reset(&app.hit_capture);
       if (app.visible)
         platform_show_window(app.window);
       else
@@ -830,8 +894,11 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "play") == 0) {
     cJSON *speed = cJSON_GetObjectItem(json, "speed");
     animator_play(&app.animator, speed ? (float)speed->valuedouble : 1.0f);
+    if (app.model_loaded && app.animator.current_animation>=0)
+      app.presentation_pending=false;
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "load_animation") == 0) {
+    double load_started = platform_get_time();
     cJSON *path = cJSON_GetObjectItem(json, "path");
     if (!path || !path->valuestring) {
       ipc_respond(&app.ipc, id, false, "Missing path");
@@ -915,6 +982,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       }
 #endif
       app.last_time = platform_get_time();
+      app.last_load_ms = (app.last_time-load_started)*1000;
       ipc_respond(&app.ipc, id, true, NULL);
     } else {
       ipc_respond(&app.ipc, id, false, "Failed to load animation");
@@ -1292,6 +1360,7 @@ static void on_resize(int w, int h, void *user) {
   (void)user;
   glViewport(0, 0, w, h);
   if (w <= 0 || h <= 0) return;
+  hit_capture_reset(&app.hit_capture);
   app.camera.aspect = (float)w / (float)h;
   if (app.auto_resize) {
     int ww, wh;
@@ -1349,14 +1418,18 @@ static void on_mouse_button(int button, int action, void *user) {
       is_window_dragging = false;
     }
   } else if (button == PLATFORM_MOUSE_MIDDLE) {
-    is_dragging = action;
+    is_dragging = action && model_hit_test(model_mouse_x,model_mouse_y);
     if (action) {
       drag_start_x = model_mouse_x;
       drag_start_y = model_mouse_y;
     }
   } else if (button == PLATFORM_MOUSE_RIGHT && action &&
              model_hit_test(model_mouse_x, model_mouse_y)) {
-    app.chat_request_seq++;
+    int wx, wy;
+    platform_get_window_pos(win,&wx,&wy);
+    app.overlay_menu_x = wx+model_mouse_x;
+    app.overlay_menu_y = wy+model_mouse_y;
+    app.overlay_menu_seq++;
   }
 }
 
@@ -1442,24 +1515,8 @@ static void build_view_with_model_transform(float out_view[16]) {
 }
 
 static bool model_hit_test(int x, int y) {
-  if (!app.model_loaded || app.fb_width <= 0 || app.fb_height <= 0)
-    return false;
-  float min_x, min_y, max_x, max_y;
-  camera_update(&app.camera);
-  float view_model[16];
-  build_view_with_model_transform(view_model);
-  gltf_get_screen_bounds_px(&app.model, view_model, (float *)app.camera.proj,
-                            app.fb_width, app.fb_height, &min_x, &min_y, &max_x,
-                            &max_y);
-  int win_w = 0, win_h = 0;
-  platform_get_window_size(app.window, &win_w, &win_h);
-  float sx = app.fb_width > 0 ? (float)win_w / (float)app.fb_width : 1.0f;
-  float sy = app.fb_height > 0 ? (float)win_h / (float)app.fb_height : 1.0f;
-  int bx0 = (int)(min_x * sx);
-  int by0 = (int)(min_y * sy);
-  int bx1 = (int)(max_x * sx);
-  int by1 = (int)(max_y * sy);
-  return x >= bx0 && x <= bx1 && y >= by0 && y <= by1;
+  return app.model_loaded && !app.presentation_pending && app.visible &&
+         input_mask_contains(&app.hit_capture.mask,x,y);
 }
 
 int main(int argc, char *argv[]) {
@@ -1510,6 +1567,9 @@ int main(int argc, char *argv[]) {
   msaa_resize(&app, w, h);
   app.fb_width = w;
   app.fb_height = h;
+
+  hit_capture_init(&app.hit_capture,app.window);
+  app.renderer.capture_hit_mask=true;
 
   camera_init(&app.camera);
   app.camera.distance = 3.0f;
@@ -1601,9 +1661,12 @@ int main(int argc, char *argv[]) {
   fflush(stdout);
 
   while (app.running && !platform_should_close(app.window)) {
+    double frame_started = platform_get_time();
     platform_make_context_current(app.window);
+    hit_capture_poll(&app.hit_capture);
     platform_poll_events();
     ipc_poll(&app.ipc);
+    double ipc_finished = platform_get_time();
 
     // Event system updates
     event_drain_commands();
@@ -1624,6 +1687,13 @@ int main(int argc, char *argv[]) {
     animator_update(&app.animator, dt);
     if (app.model_loaded) {
       gltf_update_transforms(&app.model);
+      if (app.spring_pose_pending && !app.presentation_pending &&
+          app.animator.current_animation>=0) {
+        /* An entrance can begin metres from bind pose. Its initial placement
+         * is not physical motion and must not kick the skirt/hair sideways. */
+        spring_bones_reset(&app.model);
+        app.spring_pose_pending=false;
+      }
       spring_bones_update(&app.model, dt);
       gltf_update_transforms(&app.model);
 
@@ -1654,7 +1724,7 @@ int main(int argc, char *argv[]) {
     }
 
     fit_overlay_window(false);
-    update_input_region();
+    double update_finished = platform_get_time();
 
     platform_make_context_current(app.window);
     if (app.msaa_fbo)
@@ -1673,7 +1743,13 @@ int main(int argc, char *argv[]) {
     glCullFace(GL_BACK);
 
     camera_update(&app.camera);
-    renderer_draw(&app.renderer, &app.camera, app.fb_width, app.fb_height);
+    if (!app.presentation_pending) {
+      renderer_draw(&app.renderer, &app.camera, app.fb_width, app.fb_height);
+    }
+    if (app.model_loaded && !app.presentation_pending && app.visible)
+      hit_capture_submit(&app.hit_capture,app.msaa_fbo,app.fb_width,app.fb_height,platform_get_time());
+    else
+      hit_capture_reset(&app.hit_capture);
 
     if (app.msaa_fbo) {
       glBindFramebuffer(GL_READ_FRAMEBUFFER, app.msaa_fbo);
@@ -1683,7 +1759,18 @@ int main(int argc, char *argv[]) {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
+    double render_finished = platform_get_time();
     platform_swap_buffers(app.window);
+    double frame_finished = platform_get_time();
+    app.frame_ms = (frame_finished-frame_started)*1000;
+    if (app.frame_ms > 50) app.slow_frames++;
+    if (app.frame_ms > app.peak_frame_ms) {
+      app.peak_frame_ms = app.frame_ms;
+      app.peak_ipc_ms = (ipc_finished-frame_started)*1000;
+      app.peak_update_ms = (update_finished-ipc_finished)*1000;
+      app.peak_render_ms = (render_finished-update_finished)*1000;
+      app.peak_swap_ms = (frame_finished-render_finished)*1000;
+    }
 
   }
 
@@ -1710,6 +1797,7 @@ int main(int argc, char *argv[]) {
   settings_save(SETTINGS_PATH, &settings);
 
   gltf_unload(&app.model);
+  hit_capture_cleanup(&app.hit_capture);
   renderer_cleanup(&app.renderer);
   viseme_free(&app.viseme);
   audio_free(&app.audio);

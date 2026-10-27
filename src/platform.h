@@ -44,6 +44,8 @@ void platform_hide_window(PlatformWindow *win);
 /* Input region (click-through) */
 void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h);
 void platform_clear_input_region(PlatformWindow *win);
+/* NULL/empty mask makes the entire overlay click-through. */
+void platform_set_input_mask(PlatformWindow *win, const unsigned char *bits, int width, int height);
 
 typedef struct {
     int x;

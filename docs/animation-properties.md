@@ -30,7 +30,9 @@ Flags use exactly `0` or `1`; invalid values are disabled and reported by Studio
 | --- | --- |
 | `loopable` | Whether the clip may repeat. `0` forbids repeats, including forced API loops/counts. `1` allows looping, with the existing seam treatment. |
 | `startup` | Eligible as the initial entrance when Studio loads an avatar. The startup role always plays once, regardless of loopability. |
-| `is_idle` | Eligible for local idle selection between automatically owned actions. A looping idle repeats; a one-shot idle advances to another idle. |
+| `is_idle` | Eligible for the automatic idle chain between character actions. Each idle gets a pass before the next is selected. |
+| `entry_pose`, `exit_pose` | `standing`, `sitting`, `lying` or `crouching`; default `standing`. Describe pose compatibility for automatic actions. |
+| `floor_contact` | `0` releases flat-floor IK for this clip; `1` permits it when the user's global foot locking is enabled. Defaults to `1`. |
 
 For old files without flags, Studio recognizes `Enter_from_left` as a one-shot
 startup and `Relax` as a looping idle. `Thinking` remains loopable but is not an
@@ -49,11 +51,22 @@ When Studio starts its renderer and loads an avatar, or you explicitly load a ne
 avatar, it chooses the first valid startup clip by library filename order, plays
 it once, then transitions to an idle. If several startup clips are marked, only
 the first is selected. If no startup is available, it starts an idle directly.
+With a startup configured, the model stays invisible and non-interactive during
+loading and clip setup. Its first presentation uses the startup pose directly,
+without blending from the model's bind pose. Playback reveals it; a failed load
+keeps it hidden until a valid animation is played (or the model is loaded again
+without deferred presentation). Standalone model loads retain immediate display.
 Attaching to a running renderer preserves its existing model and animation.
 
-Idles form a pool selected in library order, moving to the next entry each time
-an automatic return is needed. Looping idles remain until another action takes
-over; they are not randomly interrupted. A one-shot idle advances when complete.
+Idles form a pool selected in library order, skipping an immediate repeat when
+another idle is available. With several idles, every clip plays once, including
+clips marked loopable, then blends into the next idle when it completes. A lone
+loopable idle loops without repeatedly loading the same file; a lone one-shot
+idle is replayed through a transition. Startup always plays once before this chain.
+Idle changes wait while chat or speech is active, and character gestures take
+priority. The pool uses every valid `is_idle` clip regardless of LLM access.
+Selection first uses stable idles in the current pose, so lying/sitting characters
+do not jump into a standing idle. A lone idle in that pose stays resident.
 With no idle configured, Studio leaves playback alone: a one-shot holds its
 final pose and a looping clip continues.
 
@@ -67,6 +80,26 @@ Manual library playback, play/pause, seek, clip selection and playback edits can
 automatic motion ownership. This keeps testing, scrubbing and deliberate pauses
 under user control. Switching libraries and editing properties also release that
 ownership. Startup is not replayed on a simple reconnect/attach to a loaded avatar.
+Use **Resume idle** in Studio to hand control back to the idle chain after testing.
+
+## Pose transitions and floor contact
+
+Automatic actions find a shortest route through valid one-shot clips with different
+entry/exit poses. For example, a walk requested from a lying idle runs `get_up`
+before starting the walk. Internal transition clips may be unchecked for LLM access;
+they are local coordination like startup/idle fallback, not advertised agent cues.
+A transition requested while already in its destination pose is a no-op. No route,
+invalid metadata or an unfinished pose change refuses the automatic cue. Cancellation,
+manual pause and metadata edits invalidate queued route steps.
+
+Manual library playback stays direct for inspecting clips. **Resume idle** uses
+the current pose and any available return route. The [starter pack](../assets/starter/README.md)
+includes seated/lying idles and their transitions. Its reverse-derived lie-down
+is a preview; walking/climbing are in place and do not move desktop windows.
+
+`floor_contact=0` is useful for climbing, getting up, lying, sitting and authored
+locomotion. It never changes the global foot-lock preference. Changing the policy
+releases previous anchors; future allowed clips can plant normally.
 
 ## Live edits and runtime API
 
@@ -76,12 +109,14 @@ its metadata without reloading the clip, seeking or resetting physics. Changing
 `1` permits repetition but does not force a paused/current one-shot to start looping.
 
 `get_state.data.animation_properties` reports `loopable`, `explicit_loopable`,
-`startup` and `is_idle`. `explicit_loopable` distinguishes a configured policy from
+`startup`, `is_idle` and `floor_contact`. `foot_lock.clip_allowed` exposes the
+per-clip policy independently of `foot_lock.enabled`. `explicit_loopable` distinguishes a configured policy from
 the renderer's legacy fallback. `reload_animation_metadata` rereads the current
 sidecar. External file edits are reflected in Studio after library Refresh and in
 the renderer after a metadata reload or animation load.
 
-Startup/idle coordination currently belongs to Studio. The standalone renderer
+Startup/idle coordination belongs to Studio's background controller and continues
+when its windows are hidden. The standalone renderer
 has no animation-library directory to select from; independent IPC clients must
 coordinate those behaviours themselves. See the [IPC reference](api.md).
 

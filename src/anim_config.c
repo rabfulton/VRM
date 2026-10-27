@@ -79,11 +79,12 @@ bool anim_config_load(const char *anim_path, AnimConfig *out_cfg) {
         char *comment = strchr(val, '#');
         if (comment) *comment = '\0';
         trim_spaces(val);
-        if (strcmp(key, "loopable") == 0 || strcmp(key, "startup") == 0 || strcmp(key, "is_idle") == 0) {
+        if (strcmp(key, "loopable") == 0 || strcmp(key, "startup") == 0 || strcmp(key, "is_idle") == 0 || strcmp(key,"floor_contact")==0) {
             bool enabled = strcmp(val, "1") == 0;
             if (strcmp(key, "loopable") == 0) { out_cfg->loopable = enabled; out_cfg->has_loopable = true; }
             if (strcmp(key, "startup") == 0) { out_cfg->startup = enabled; out_cfg->has_startup = true; }
             if (strcmp(key, "is_idle") == 0) { out_cfg->is_idle = enabled; out_cfg->has_is_idle = true; }
+            if (strcmp(key,"floor_contact")==0) { out_cfg->floor_contact=enabled; out_cfg->has_floor_contact=true; }
             continue;
         }
         char *end = NULL;
@@ -135,7 +136,7 @@ bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
     char cfg_path[PATH_MAX], temp_path[PATH_MAX];
     if (!anim_config_build_path(anim_path, cfg_path, sizeof(cfg_path))) return false;
     if (snprintf(temp_path, sizeof(temp_path), "%s.tmp.XXXXXX", cfg_path) >= (int)sizeof(temp_path)) return false;
-    KvPair updates[14];
+    KvPair updates[15];
     int count = 0;
     const struct { const char *key; float value; bool present; } numbers[] = {
         {"spring.stiffness", cfg->spring_stiffness, cfg->has_spring_stiffness},
@@ -161,6 +162,7 @@ bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
         {"loopable", cfg->loopable, cfg->has_loopable},
         {"startup", cfg->startup, cfg->has_startup},
         {"is_idle", cfg->is_idle, cfg->has_is_idle},
+        {"floor_contact",cfg->floor_contact,cfg->has_floor_contact},
     };
     for (unsigned i = 0; i < sizeof(flags)/sizeof(flags[0]); i++) {
         if (!flags[i].present) continue;
@@ -181,7 +183,7 @@ bool anim_config_save(const char *anim_path, const AnimConfig *cfg) {
     }
     FILE *output = fdopen(fd, "w");
     if (!output) { close(fd); if (input) fclose(input); unlink(temp_path); return false; }
-    bool seen[14] = {0}, ok = true, newline = true;
+    bool seen[15] = {0}, ok = true, newline = true;
     char *line = NULL;
     size_t capacity = 0;
     ssize_t length;

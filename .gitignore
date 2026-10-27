@@ -31,6 +31,11 @@ __pycache__/
 *.onnx
 *.onnx.json
 *.safetensors
+# Audited redistributable starter assets; user-owned libraries stay ignored.
+!/assets/starter/models/anime.vrm
+!/assets/starter/models/fox.glb
+!/assets/starter/animations/humanoid/*.vrma
+!/assets/starter/animations/fox/*.glb
 /animation/*
 !/animation/README.md
 /VRMA_MotionPack/

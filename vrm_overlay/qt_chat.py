@@ -110,6 +110,7 @@ class ChatController(QObject):
     def open(self):
         self.windowRequested.emit()
 
+    @Slot()
     def openNearCursor(self):
         from PySide6.QtGui import QCursor, QGuiApplication
         point = QCursor.pos()

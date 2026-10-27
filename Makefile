@@ -25,7 +25,7 @@ ifeq ($(USE_OZZ),1)
   LDFLAGS += $(OZZ_LIBS)
 endif
 
-C_SRC = src/main.c src/platform.c src/renderer.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/platform.c src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp src/foot_lock.cpp
 ifeq ($(USE_OZZ),1)
   CXX_SRC += src/ozz_bridge.cpp
@@ -37,7 +37,7 @@ OBJ = $(C_OBJ) $(CXX_OBJ)
 
 TARGET = vrm-overlay
 
-.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit studio
+.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs studio
 
 all: $(TARGET)
 
@@ -102,6 +102,9 @@ $(TEST_BUILD_DIR)/anim-config-test: tests/anim_config_test.c src/anim_config.c s
 $(TEST_BUILD_DIR)/bounds-test: tests/bounds_test.c src/bounds.c src/camera.c src/camera.h src/pose.c src/gltf_loader.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) -Ideps/cglm/include tests/bounds_test.c src/bounds.c src/camera.c src/pose.c -o $@ -lm
 
+$(TEST_BUILD_DIR)/input-mask-test: tests/input_mask_test.c src/input_mask.c src/input_mask.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/input_mask_test.c src/input_mask.c -o $@
+
 ifeq ($(USE_OZZ),1)
 $(TEST_BUILD_DIR)/animator.o: src/animator.c src/animator.h src/ozz_bridge.h src/foot_lock.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) -DVRM_USE_OZZ=1 -c src/animator.c -o $@
@@ -122,7 +125,7 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
@@ -132,6 +135,7 @@ test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR
 	$(TEST_BUILD_DIR)/expression-test
 	$(TEST_BUILD_DIR)/anim-config-test
 	$(TEST_BUILD_DIR)/bounds-test
+	$(TEST_BUILD_DIR)/input-mask-test
 	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) python3 -m unittest discover -s tests -v
 
 test-sanitize:
@@ -155,3 +159,39 @@ test-chat: all
 
 test-fit: all
 	python3 tests/push_fit_smoke.py
+
+test-desktop: all
+	python3 tests/desktop_smoke.py
+
+test-assets: all
+	python3 tests/starter_assets_smoke.py
+
+$(TEST_BUILD_DIR)/render-target-test.o: tests/render_target_test.c src/renderer.h src/platform.h src/camera.h src/gltf_loader.h | $(TEST_BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
+
+$(TEST_BUILD_DIR)/render-target-test: $(TEST_BUILD_DIR)/render-target-test.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/render-target-test.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+
+# Needs an OpenGL/X11 display, but no avatar, speech engine or network.
+test-render: $(TEST_BUILD_DIR)/render-target-test
+	$(TEST_BUILD_DIR)/render-target-test
+
+$(TEST_BUILD_DIR)/asset-preview.o: tests/asset_preview.c src/renderer.h src/animator.h src/camera.h src/spring_bones.h | $(TEST_BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
+
+$(TEST_BUILD_DIR)/asset-preview: $(TEST_BUILD_DIR)/asset-preview.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/asset-preview.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+
+$(TEST_BUILD_DIR)/spring-asset-test.o: tests/spring_asset_test.c src/spring_bones.h src/animator.h | $(TEST_BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
+
+$(TEST_BUILD_DIR)/spring-asset-test: $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
+	$(CXX) $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+
+# Optional real-avatar check: ten seconds of settling in bind and animated poses.
+SPRING_MODEL ?= assets/starter/models/anime.vrm
+SPRING_ANIMATION ?= assets/starter/animations/humanoid/idle.vrma
+SPRING_TIME ?= 1
+test-springs: $(TEST_BUILD_DIR)/spring-asset-test
+	$(TEST_BUILD_DIR)/spring-asset-test "$(SPRING_MODEL)"
+	$(TEST_BUILD_DIR)/spring-asset-test "$(SPRING_MODEL)" "$(SPRING_ANIMATION)" "$(SPRING_TIME)"

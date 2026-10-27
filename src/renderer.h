@@ -109,6 +109,7 @@ typedef struct {
 
   RendererShaderMode shader_mode;
   bool initialized;
+  bool capture_hit_mask; /* Mark avatar fragments in stencil, excluding its shadow. */
 } Renderer;
 
 bool renderer_init(Renderer *r);

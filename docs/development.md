@@ -15,8 +15,10 @@ need GLFW/libepoxy development packages even when running only headless tests.
 - `animation/`: local animation library; only its setup README belongs in Git.
 - `build/`, `deps/_build/`: generated tests, dependency builds and speech downloads.
 
-Avatars, animation packs, model weights, generated binaries/objects and local
-settings are excluded from source changes. Keep asset notices with your local
+The audited [CC0 starter pack](../assets/starter/README.md) is versioned separately
+from user assets, with a reproducible build recipe and licence/provenance records.
+Additional user avatars, animation packs, model weights, generated binaries/objects
+and local settings are excluded from source changes. Keep asset notices with your local
 copies and check redistribution permissions before publishing assets. Removing an
 already tracked asset does not remove it from existing Git history.
 
@@ -46,7 +48,8 @@ make test-sanitize
 These exercise IPC transport/ownership, concurrent audio and cancellation,
 springs, transitions and synthetic humanoid IK. Python tests cover client
 framing, speech configuration/installers, HTTP fixtures and cancellation.
-No avatar, animation pack, voice download, display or AI service is required.
+No extra user-supplied avatar/animation pack, voice download, display or AI service
+is required. The versioned starter assets are checked against their manifest.
 Unix sockets and local loopback HTTP sockets must be available. Chat tests use
 local SSE fixtures, fake voices and fake keyrings; they never access real credentials. The ozz dependency is needed for IK/transition
 coverage in the default build. Sanitizer builds use `build/tests/sanitize`.
@@ -67,9 +70,32 @@ so objects from another build cannot be reused.
 make test-ui
 make test-speech
 make test-chat
+make test-render
+make test-desktop
+make test-springs
+make test-assets
 ```
 
-These start a real renderer with an isolated socket and temporary controller
+`test-render` requires X11/OpenGL but no local assets: it checks that shadow
+reallocation preserves the MSAA target and all 24 synthetic frames contain the
+test triangle. `test-desktop` additionally requires PySide6, `xdotool`, `xprop`, a
+local avatar and two VRMA clips. It uses a temporary library/settings/socket and
+renderer, exercises idle rotation and bounds reuse, checks X11 window hints,
+right-clicks the avatar, opens/closes Chat and Studio, then chooses Quit. It restores
+the pointer afterward. Asset paths can be supplied to `tests/desktop_smoke.py`.
+The GL check also verifies that figure coverage excludes shadow/fully transparent
+fragments. Desktop checks verify blank startup setup frames, clicks reaching a
+test window through background/interior gaps, and exact Qt cursor menu placement.
+Run with `QT_SCALE_FACTOR=2 make test-desktop` to exercise another Qt scale.
+
+`test-assets` needs X11/audio and uses only bundled assets, an isolated socket and
+temporary renderer settings. It samples every starter motion, checks visible
+unclipped pixels, and verifies that each clip's floor-contact policy is applied.
+The manifest test verifies source/output hashes and embedded texture references.
+To regenerate assets, use `python3 scripts/build_starter_assets.py --download`.
+See the starter README for supported source rigs and visual-preview commands.
+
+The UI/speech/chat checks start a real renderer with an isolated socket and temporary controller
 settings. They require X11, audio output, PySide6, a local humanoid avatar with
 expressions and an animation library. The controller window renders offscreen;
 the avatar window opens on the desktop. The default paths are `test.vrm` and

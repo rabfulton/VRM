@@ -10,7 +10,8 @@ ApplicationWindow {
     height: 840
     minimumWidth: 940
     minimumHeight: 680
-    visible: true
+    visible: bridge.studioVisible
+    onClosing: function(close) { close.accepted = false; bridge.hideStudio() }
     title: "VRM Studio"
     color: "#111822"
     palette.window: "#111822"
@@ -44,6 +45,11 @@ ApplicationWindow {
     function seconds(value) { return Number(value).toFixed(2) + "s" }
 
     ChatWindow { id: chatWindow; chat: bridge.chat; palette: window.palette; font: window.font }
+    OverlayMenu { controller: bridge; palette: window.palette; font: window.font }
+    Connections {
+        target: bridge
+        function onStudioRequested() { window.show(); window.raise(); window.requestActivate() }
+    }
     AnimationProperties { id: animationProperties; controller: bridge; parent: Overlay.overlay }
     Shortcut {
         sequence: "Ctrl+Return"
@@ -82,6 +88,7 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             Button { objectName: "openChatButton"; text: "Chat…"; onClicked: bridge.chat.open(); ToolTip.visible: hovered; ToolTip.text: "Chat with your companion (Ctrl+Enter)" }
+            Button { objectName: "resumeIdleButton"; text: "Resume idle"; enabled: window.canControl; onClicked: bridge.resumeIdle() }
             BusyIndicator { running: bridge.busy; visible: running; Layout.preferredWidth: 30; Layout.preferredHeight: 30 }
             Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
             Label { text: bridge.status; Layout.maximumWidth: 240; elide: Text.ElideRight }
@@ -124,6 +131,16 @@ ApplicationWindow {
                         text: "Load avatar…"; Layout.fillWidth: true
                         enabled: bridge.connected && !bridge.busy
                         onClicked: modelDialog.open()
+                    }
+                    ComboBox {
+                        objectName: "starterAvatarPicker"
+                        Layout.fillWidth: true
+                        model: bridge.starterAvatars
+                        textRole: "name"
+                        currentIndex: -1
+                        displayText: "Starter avatars…"
+                        enabled: bridge.connected && !bridge.busy
+                        onActivated: index => bridge.loadModel(bridge.starterAvatars[index].path)
                     }
                     Rectangle { Layout.fillWidth: true; height: 1; color: "#304055" }
                     RowLayout {
@@ -378,6 +395,7 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     Switch { objectName: "footLockSwitch"; text: "Foot planting"; checked: window.planting.enabled; enabled: window.runtime.foot_lock !== undefined && window.planting.supported > 0; onToggled: bridge.command("set_foot_lock", {enabled: checked}) }
                                     Label { text: window.planting.supported > 0 ? "Left: " + window.footStatus(window.planting.left) + " · Right: " + window.footStatus(window.planting.right) : "No supported humanoid leg chains"; color: "#9eacc0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    Label { visible: window.planting.clip_allowed === false; text: "Floor locking is released for this animation by its properties."; color: "#9eacc0"; wrapMode: Text.Wrap; Layout.fillWidth: true }
                                     Label { text: "Plant error L/R: " + (window.planting.left.planted ? (window.planting.left.error * 1000).toFixed(1) : "—") + " / " + (window.planting.right.planted ? (window.planting.right.error * 1000).toFixed(1) : "—") + " mm"; color: "#9eacc0" }
                                     ComboBox { model: window.runtime.ozz_available ? ["ozz", "legacy"] : ["legacy"]; currentIndex: window.runtime.ozz_available && window.runtime.backend === "legacy" ? 1 : 0; onActivated: bridge.command("set_anim_backend", {backend: currentText}) }
                                     TuningSlider { Layout.fillWidth: true; label: "Transition duration (s)"; value: window.runtime.blend.duration; maximum: 3; onEdited: value => bridge.tune("set_blend", "duration", value) }
@@ -420,6 +438,14 @@ ApplicationWindow {
                                     TuningSlider { Layout.fillWidth: true; label: "Camera orbit"; value: window.runtime.camera.azimuth; maximum: 6.28; onEdited: value => bridge.tune("set_camera", "azimuth", value) }
                                     TuningSlider { Layout.fillWidth: true; label: "Camera elevation"; value: window.runtime.camera.polar; minimum: 0.1; maximum: 3; onEdited: value => bridge.tune("set_camera", "polar", value) }
                                     Label { text: "Drag the avatar to move it. Middle-drag rotates the camera; scroll changes its scale."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#9eacc0" }
+                                    Label {
+                                        property var timing: window.runtime.frame_timing || ({})
+                                        text: "Frame " + Number(timing.frame_ms || 0).toFixed(1) + " ms · peak " + Number(timing.peak_frame_ms || 0).toFixed(1) + " ms · frames over 50 ms: " + (timing.slow_frames || 0) +
+                                              "\nSlowest frame: IPC " + Number(timing.peak_ipc_ms || 0).toFixed(1) + " / update " + Number(timing.peak_update_ms || 0).toFixed(1) + " / render " + Number(timing.peak_render_ms || 0).toFixed(1) + " / swap " + Number(timing.peak_swap_ms || 0).toFixed(1) + " ms" +
+                                              "\nLast clip load " + Number(timing.last_load_ms || 0).toFixed(1) + " ms (bounds " + Number(timing.last_bounds_ms || 0).toFixed(1) + " ms) · window resizes: " + (timing.window_resizes || 0)
+                                        wrapMode: Text.Wrap; Layout.fillWidth: true; color: "#9eacc0"
+                                    }
+                                    Button { text: "Reset frame timings"; enabled: bridge.connected; onClicked: bridge.command("reset_frame_timing", {}) }
                                 }
                             }
                         }
@@ -436,7 +462,7 @@ ApplicationWindow {
             Label { text: bridge.socketPath; color: "#9eacc0"; font.pixelSize: 12 }
             Item { Layout.fillWidth: true }
             Label { text: bridge.connected ? Math.round(window.runtime.frame_rate) + " fps · " + window.runtime.backend : "Ready to connect"; color: "#9eacc0"; font.pixelSize: 12 }
-            Label { text: bridge.ownsServer ? "Renderer closes with Studio" : "Attached renderer stays running"; color: "#9eacc0"; font.pixelSize: 12 }
+            Label { text: "Close to hide · Right-click avatar to reopen"; color: "#9eacc0"; font.pixelSize: 12 }
         }
     }
 }

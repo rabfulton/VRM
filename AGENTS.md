@@ -12,9 +12,12 @@ separate Python/PySide6 Qt Quick controller. Read [README.md](README.md) for set
 - `tests/`: maintained native/Python/QML regressions; `scripts/`: speech setup.
 - `examples/chat_tts/`: independent typed-chat and sentence-speech prototype.
 - `docs/`: current guides; `animation/README.md`: local asset setup.
+- `assets/starter/`: audited CC0 starter avatars, motions, notices and hashes;
+  `scripts/build_starter_assets.py`: pinned, dependency-free source conversion.
 - `build/`, `deps/_build/`: generated output, tests and optional speech downloads.
 
-Avatars, animations, model weights and local settings are ignored. Preserve users'
+Additional user avatars/animations, model weights and local settings are ignored.
+The versioned starter pack is the explicit asset exception. Preserve users'
 local copies and third-party notices. Do not add generated binaries or objects.
 
 ## Runtime modules
@@ -25,11 +28,17 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/bounds.c`: skinned geometry envelopes, in-memory full-clip bounds and
   pixel-stable transparent viewport expansion. Legacy 2D bounds caches are ignored.
 - `src/renderer.c/.h`: live embedded shaders, skinning, GPU morphs and draw path.
+- `src/input_mask.c/.h`, `hit_capture.c/.h`: avatar-only stencil coverage,
+  nonblocking fenced GPU transfers and X11 bitmap input shape. Keep shadow-only
+  pixels/transparent gaps click-through; share the mask with mouse hit testing.
 - `src/expressions.c`: logical expression weights, additive bounded composition
   and smooth speech-aware emotion attenuation; preserve vowel and blink inputs.
 - `src/anim_config.c/.h`, `vrm_overlay/animation_config.py`: shared per-animation
   behaviour flags; preserve unrelated tuning/cache data when saving. Studio owns
   startup/idle selection; native animation code enforces explicit loop restrictions.
+  Pose metadata routes automatic actions through one-shot bridges; per-clip
+  floor-contact policy must preserve the global user foot-lock preference.
+  `avatar_catalog.py` selects each starter avatar's matching animation library.
 - `src/animator.c/.h`, `ozz_bridge.cpp/.h`, `transition.c/.h`: animation sampling
   and inertial transition corrections; record pose history before contact IK.
 - `src/foot_lock.cpp/.h`: flat-floor IK, raw-target classification and smooth release.
@@ -38,6 +47,11 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/audio.c/.h`, `viseme.c/.h`: miniaudio playback, PCM ring and default lip sync.
 - `src/event.c/.h`: continuous `EventStream` data and discrete multi-clock scheduler.
 - `vrm_overlay/qt_controller.py`, `qml/`: asynchronous IPC and Studio lifecycle.
+  Studio starts hidden; closing a window keeps the background controller alive.
+  Overlay right-click requests open the independent QML menu; explicit Quit stops
+  the companion. Automatically owned idles rotate; manual playback/pause cancels
+  ownership until Resume idle. Preserve that distinction for behaviour tests.
+  Startup loads use deferred presentation until play, with no bind-pose blend.
 - `vrm_overlay/qt_chat.py`, `qt_chat_network.py`, `chat.py`, `credentials.py`: streamed
   API conversation, OS-only keyring storage and a validated cue catalogue.
   `animation_library.py` assigns safe cue IDs; library checkboxes persist LLM access

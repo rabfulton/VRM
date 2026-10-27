@@ -1829,7 +1829,16 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model,
       for (const auto &key : hbones.Keys()) {
         if (hbones.Get(key).Has("node")) {
           int anim_node = hbones.Get(key).Get("node").GetNumberAsInt();
-          auto it = model_humanoid_map.find(key);
+          /* VRMA uses VRM 1 thumb names; VRM 0 used Proximal/Intermediate. */
+          std::string target_key=key;
+          for (const char *side : {"left", "right"}) {
+            std::string prefix=std::string(side)+"Thumb";
+            if (model_humanoid_map.count(prefix+"Intermediate") && hbones.Has(prefix+"Metacarpal")) {
+              if (key==prefix+"Metacarpal") target_key=prefix+"Proximal";
+              else if (key==prefix+"Proximal") target_key=prefix+"Intermediate";
+            }
+          }
+          auto it = model_humanoid_map.find(target_key);
           if (it != model_humanoid_map.end()) {
             anim_to_model_node[anim_node] = it->second;
             /* Store rest rotation for normalization */
@@ -2333,6 +2342,26 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model,
         c->path = GLTF_PATH_SCALE;
       else if (channel.target_path == "weights")
         c->path = GLTF_PATH_WEIGHTS;
+
+      /* Starter VRMA clips use a canonical hips height of one metre. Adapt
+       * pose displacement to the target VRM's hips, preserving target offsets.
+       * This marker deliberately leaves existing unmarked clips unchanged. */
+      if (c->path==GLTF_PATH_TRANSLATION && c->target_node>=0 && sampler_valid &&
+          anim_gltf.extras.IsObject() && anim_gltf.extras.Has("vrmOverlay")) {
+        const auto &extra=anim_gltf.extras.Get("vrmOverlay");
+        auto hips=model_humanoid_map.find("hips");
+        if (extra.IsObject() && extra.Has("normalizedHips") && extra.Get("normalizedHips").IsBool() &&
+            extra.Get("normalizedHips").Get<bool>() && hips!=model_humanoid_map.end() && c->target_node==hips->second) {
+          const auto &src=anim_gltf.nodes[anim_node_idx];
+          auto &sampler=a->samplers[c->sampler_index];
+          const auto &target=model->nodes[c->target_node];
+          if (src.translation.size()==3 && src.translation[1]>0.1 && sampler.output_stride==3 && target.base_translation[1]>0) {
+            float scale=target.base_translation[1]/(float)src.translation[1];
+            for(int k=0;k<sampler.keyframe_count;k++) for(int axis=0;axis<3;axis++)
+              sampler.output[k*3+axis]=target.base_translation[axis]+(sampler.output[k*3+axis]-(float)src.translation[axis])*scale;
+          }
+        }
+      }
 
       if (sampler_valid) {
         int expected = 0;

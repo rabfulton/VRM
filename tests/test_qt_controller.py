@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import patch
 import base64
 import struct
+import subprocess
+import sys
 import threading
 import wave
 
@@ -122,6 +124,7 @@ class QtControllerTests(unittest.TestCase):
             self.peer.write(data[9:])
 
     def load_qml(self):
+        self.bridge.showStudio()
         self.engine = QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("bridge", self.bridge)
         self.engine.load(QUrl.fromLocalFile(str(ROOT / "vrm_overlay/qml/Main.qml")))
@@ -219,6 +222,91 @@ class QtControllerTests(unittest.TestCase):
         self.wait_for(lambda: not self.bridge.busy)
         self.assertEqual(len(requests), 1)
         self.assertIn("left", requests[0])
+
+    def test_overlay_menu_hides_and_reopens_studio_without_disconnect_and_quits_explicitly(self):
+        self.assertFalse(self.bridge.studioVisible)
+        self.load_qml()
+        menu = self.window.findChild(QObject, "overlayMenu")
+        requests, quits = [], []
+        self.bridge.overlayMenuRequested.connect(requests.append)
+        self.bridge.quitRequested.connect(lambda: quits.append(True))
+        self.state.update(overlay_menu_seq=7, overlay_menu_position=dict(x=40,y=50))
+        self.bridge.refresh()
+        self.wait_for(lambda: self.bridge._menu_request_seq == 7)
+        self.assertFalse(requests)  # Do not replay an old click on attach.
+        self.window.close()
+        self.wait_for(lambda: not self.window.isVisible())
+        self.assertTrue(self.bridge.connected)
+        self.assertFalse(any(c['action'] == 'shutdown' for c in self.commands))
+        self.state['overlay_menu_seq'] += 1
+        self.bridge.refresh()
+        self.wait_for(lambda: menu.isVisible())
+        QTest.qWait(40)  # Let the newly exposed popup polish its layout.
+        self.assertEqual(len(requests),1)
+        from PySide6.QtGui import QCursor
+        self.assertEqual((requests[0]['x'],requests[0]['y']),(QCursor.pos().x(),QCursor.pos().y()))
+        self.click('overlayStudioButton',menu)
+        self.wait_for(lambda: self.window.isVisible() and not menu.isVisible())
+        self.bridge.overlayMenuRequested.emit(dict(x=40,y=50))
+        self.wait_for(lambda: menu.isVisible())
+        QTest.qWait(40)
+        self.click('overlayChatButton',menu)
+        chat = self.window.findChild(QObject,'chatWindow')
+        self.wait_for(lambda: chat.isVisible() and not menu.isVisible())
+        chat.close()
+        self.window.close()
+        self.bridge.overlayMenuRequested.emit(dict(x=40,y=50))
+        self.wait_for(lambda: menu.isVisible())
+        QTest.qWait(40)
+        self.click('overlayQuitButton',menu)
+        self.wait_for(lambda: bool(quits))
+        self.assertTrue(any(c['action'] == 'shutdown' for c in self.commands))
+
+    def test_closing_chat_and_studio_keeps_companion_connected(self):
+        self.load_qml()
+        self.bridge.chat.open()
+        chat = self.window.findChild(QObject,'chatWindow')
+        self.wait_for(lambda: chat.isVisible())
+        self.window.close()
+        self.assertFalse(self.bridge.studioVisible)
+        chat.close()
+        self.assertTrue(self.bridge.connected)
+        self.bridge.showStudio()
+        self.wait_for(lambda: self.window.isVisible())
+
+    def test_expected_socket_close_during_quit_does_not_open_error_window(self):
+        quits=[]
+        self.bridge.quitRequested.connect(lambda:quits.append(True))
+        self.bridge._quitting=True
+        self.peer.abort()
+        self.wait_for(lambda:bool(quits))
+        self.assertFalse(self.bridge.lastError)
+        self.assertFalse(self.bridge.studioVisible)
+
+    def test_explicit_quit_exits_real_gui_event_loop_and_runs_cleanup(self):
+        # Observing quitRequested alone misses QGuiApplication.quit() being
+        # vetoed by the QML window's hide-on-close handler. Use the production
+        # launcher in a child so a stuck real event loop cannot hang the suite.
+        script = '''
+import sys
+from vrm_overlay.qt_controller import Controller
+from vrm_overlay import gui
+Controller.connectRuntime = lambda self: self.quitApplication()
+original_shutdown = Controller.shutdown
+def shutdown(self):
+    original_shutdown(self)
+    print("Studio cleanup completed", flush=True)
+Controller.shutdown = shutdown
+sys.argv = ["control.py"] + sys.argv[1:]
+raise SystemExit(gui.main())
+'''
+        for flags in ([], ["--studio"]):
+            with self.subTest(flags=flags):
+                result = subprocess.run([sys.executable,"-c",script,*flags],cwd=ROOT,
+                    env=dict(os.environ,QT_QPA_PLATFORM="offscreen",QT_QUICK_BACKEND="software"),
+                    capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn("Studio cleanup completed",result.stdout)
 
     def test_next_previous_buttons_and_blink_switch(self):
         self.load_qml()
@@ -381,6 +469,10 @@ class QtControllerTests(unittest.TestCase):
         self.wait_for(lambda: self.state["animation_path"] == str(entrance) and not self.bridge.busy)
         self.assertFalse(self.state["loop"])
         self.assertTrue(self.state["blink"]["enabled"])
+        load=next(c for c in self.commands if c['action']=='load')
+        self.assertTrue(load['defer_show'])
+        blend=next(c for c in self.commands if c['action']=='blend_to')
+        self.assertEqual(blend['duration'],0)
         self.finish_current_motion()
         self.wait_for(lambda: self.state["animation_path"] == str(idle) and not self.bridge.busy)
         self.assertTrue(self.state["loop"])
@@ -410,7 +502,94 @@ class QtControllerTests(unittest.TestCase):
         self.assertFalse(self.state['loop'])
         self.finish_current_motion()
         self.wait_for(lambda:self.state['animation_path']==str(second) and not self.bridge.busy)
+        self.assertFalse(self.state['loop'])
+        self.finish_current_motion()
+        self.wait_for(lambda:self.state['animation_path']==str(idle) and not self.bridge.busy)
+
+    def test_loopable_idle_pool_rotates_and_waits_for_speech_then_manual_pause_wins(self):
+        from vrm_overlay.animation_config import save_properties
+        _, idle = self.motion_library()
+        second = Path(self.directory.name) / 'Rest.vrma'
+        second.touch()
+        save_properties(second,dict(loopable=True,startup=False,is_idle=True))
+        self.bridge.scanAnimations()
+        self.bridge.resumeIdle()
+        self.wait_for(lambda:self.state['animation_path']==str(idle) and not self.bridge.busy)
+        self.assertFalse(self.state['loop'])
+        with patch.object(type(self.bridge._speech),'busy',property(lambda self:True)):
+            self.finish_current_motion()
+            QTest.qWait(100)
+            self.assertEqual(self.state['animation_path'],str(idle))
+        self.bridge._maybe_idle()
+        self.wait_for(lambda:self.state['animation_path']==str(second) and not self.bridge.busy)
+        self.assertFalse(self.state['loop'])
+        self.bridge.command('pause',{})
+        self.wait_for(lambda:not self.state['playing'] and not self.bridge.busy)
+        self.finish_current_motion()
+        QTest.qWait(80)
+        self.assertEqual(self.state['animation_path'],str(second))
+        self.bridge.resumeIdle()
+        self.wait_for(lambda:self.state['animation_path']==str(idle) and not self.bridge.busy)
+
+    def test_single_loopable_idle_stays_resident(self):
+        _, idle = self.motion_library()
+        self.bridge.resumeIdle()
+        self.wait_for(lambda:self.state['animation_path']==str(idle) and not self.bridge.busy)
         self.assertTrue(self.state['loop'])
+        loaded = sum(c['action']=='load_animation' for c in self.commands)
+        self.state['time'] = 1.5
+        self.bridge.refresh()
+        QTest.qWait(100)
+        self.assertEqual(sum(c['action']=='load_animation' for c in self.commands),loaded)
+
+    def test_character_walk_waits_for_get_up_and_cancellation_stops_the_route(self):
+        from vrm_overlay.animation_config import save_properties
+        root=Path(self.directory.name)
+        lying,getup,walk=[root/(name+'.vrma') for name in ('Lying','GetUp','Walk')]
+        for path,start,end in ((lying,'lying','lying'),(getup,'lying','standing'),(walk,'standing','standing')):
+            path.touch()
+            save_properties(path,dict(loopable=path!=getup,startup=False,is_idle=path==lying,
+                                       entry_pose=start,exit_pose=end,floor_contact=False))
+        self.bridge.scanAnimations()
+        self.state.update(animation_path=str(lying),playing=True,time=1,duration=1,loop=True)
+        self.bridge.refresh()
+        self.wait_for(lambda:self.bridge.state['animation_path']==str(lying))
+        done=[]
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(walk)),'Walk',done=lambda reply:done.append(True))
+        self.wait_for(lambda:self.bridge.state['animation_path']==str(getup) and not self.bridge.busy)
+        self.assertFalse(done)
+        self.finish_current_motion()
+        self.wait_for(lambda:self.bridge.state['animation_path']==str(walk) and bool(done) and not self.bridge.busy)
+        count=len(self.commands);already=[]
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(getup)),'Already up',done=already.append)
+        self.assertEqual(len(self.commands),count)
+        self.assertEqual(already[0]['data']['already_in_pose'],'standing')
+        self.state.update(animation_path=str(lying),playing=True,time=1,duration=1,loop=True)
+        self.bridge.refresh()
+        self.wait_for(lambda:self.bridge.state['animation_path']==str(lying))
+        self.bridge.queueCharacterAnimation(self.bridge._animation_commands(str(walk)),'Walk')
+        self.wait_for(lambda:self.bridge.state['animation_path']==str(getup) and not self.bridge.busy)
+        self.bridge.command('pause',{})
+        self.wait_for(lambda:not self.state['playing'] and not self.bridge.busy)
+        self.state.update(playing=True,time=2)
+        self.bridge.refresh();QTest.qWait(100)
+        self.assertEqual(self.state['animation_path'],str(getup))
+
+    def test_pose_matching_idle_pool_and_starter_model_library_selection(self):
+        from vrm_overlay.animation_config import save_properties
+        _,standing=self.motion_library()
+        lying=Path(self.directory.name)/'Lying.vrma';lying.touch()
+        save_properties(lying,dict(loopable=True,startup=False,is_idle=True,
+                                   entry_pose='lying',exit_pose='lying',floor_contact=False))
+        self.bridge.scanAnimations()
+        self.state.update(animation_path=str(lying),time=1,duration=1,playing=True,loop=True)
+        self.bridge.refresh();self.wait_for(lambda:self.bridge.state['animation_path']==str(lying))
+        self.assertEqual(self.bridge._choose_idle()['path'],str(lying))
+        avatar=next(e for e in self.bridge.starterAvatars if e['rig']=='generic')
+        self.bridge.loadModel(avatar['path'])
+        self.wait_for(lambda:self.bridge.state['model_path']==avatar['path'] and self.bridge.state['animation_path'].endswith('/fox/idle.glb') and not self.bridge.busy)
+        self.assertEqual(self.bridge.animationFolder,avatar['animations'])
+        self.assertFalse(any(e['llm_enabled'] for e in self.bridge.animationFiles))
 
     def test_motion_owner_waits_for_post_play_state_before_matching_paths(self):
         with patch.object(self.bridge, 'refresh'):

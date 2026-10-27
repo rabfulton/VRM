@@ -17,22 +17,30 @@ make -j4
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements-gui.txt
-python3 control.py --model /path/to/avatar.vrm --animation-dir /path/to/animations
+python3 control.py --studio
 ```
 
 For an existing clone, initialize dependencies with
 `git submodule update --init --recursive` before building. The retained submodule
 is ozz-animation; other runtime libraries are vendored under `deps/`.
 
-Supply your own avatars and animations. These assets, speech downloads and local
-settings are ignored by Git. See [asset setup](animation/README.md).
+The [CC0 starter pack](assets/starter/README.md) includes an anime avatar, a fox,
+14 humanoid motions and seven fox animations. Open **Starter avatars…** in Studio
+to select a model and its matching library. A fresh clone can run with
+`python3 control.py --studio`; existing saved/local avatars are preserved.
+Additional user avatars, animations, speech downloads and local settings stay
+ignored by Git. See [asset setup](animation/README.md).
 Studio remembers the selected model and animation folder. On a new session it
 enables blinking, plays a configured startup once, then moves to an idle.
-Use **⋯** beside an animation to edit `loopable`, `startup` and `is_idle` in its
+Use **⋯** beside an animation to edit looping, startup, idle, pose and floor-contact properties in its
 `.cfg` file; see [animation properties](docs/animation-properties.md).
 
-Studio starts a renderer when needed. Closing the last Studio/chat window closes
-only a renderer this application started.
+The companion starts with Studio hidden. Right-click the avatar for **Chat**,
+**Studio** and **Quit**. Closing Studio or chat keeps the companion running;
+**Quit** stops it. Pass `--studio` to open the controls immediately. Missing assets
+or errors open Studio for setup and recovery. The avatar requests exclusion from
+X11 taskbars and window lists. Animations marked `is_idle` take turns while the
+companion is free; use **Resume idle** after manual playback or testing.
 To manage the renderer separately:
 
 ```sh
@@ -57,7 +65,7 @@ connecting another client. Use a separate socket for each independent instance.
 
 In Studio's **Speech** tab, select **Prepare voice**, then try a preview. Native
 engines and models download separately; no Python ML stack is required.
-See [speech setup and limits](docs/tts.md). Open **Chat…**, right-click the avatar,
+See [speech setup and limits](docs/tts.md). Open **Chat…**, choose **Chat** from the avatar's right-click menu,
 or press Ctrl+Enter while the app has focus to start a conversation. Chat Settings
 select the API endpoint/model and save its key to your system keyring. Replies
 speak sentence by sentence as they stream; see the [chat guide](docs/chat.md).

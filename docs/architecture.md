@@ -86,3 +86,9 @@ sidecars. `animation_config.py` handles Studio edits; native `anim_config.c`
 preserves them during tuning/cache writes. The renderer enforces loop permission,
 while Studio owns startup/idle selection. Ownership requires a state snapshot
 after each play transaction, and manual controls invalidate pending handoffs.
+`pose_routes.py` finds one-shot posture transitions before owned actions;
+idles are selected in the resulting pose. Native per-clip floor-contact policy
+preserves the user's global IK preference. `avatar_catalog.py` pairs versioned
+starter models with their own library, preventing humanoid motions being loaded
+onto the generic fox. Source archives and derived hashes are recorded beside the
+assets; build-time conversion uses `asset_build.py` and the starter build script.

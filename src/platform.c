@@ -12,6 +12,7 @@
 #define GLFW_EXPOSE_NATIVE_X11
 #include <GLFW/glfw3native.h>
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/extensions/shape.h>
 
 struct PlatformWindow {
@@ -20,6 +21,8 @@ struct PlatformWindow {
 #ifdef GLFW_EXPOSE_NATIVE_X11
     Display *x_display;
     Window x_window;
+    bool input_rect_valid;
+    int input_rect[4];
 #endif
 };
 
@@ -68,6 +71,9 @@ PlatformWindow *platform_create_window(int width, int height, const char *title,
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_DECORATED, decorated ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, transparent ? GLFW_TRUE : GLFW_FALSE);
+    /* Set desktop-companion hints before the WM first manages this window. */
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
 
     GLFWwindow *glfw = glfwCreateWindow(width, height, title, NULL, NULL);
     if (!glfw) return NULL;
@@ -86,6 +92,22 @@ PlatformWindow *platform_create_window(int width, int height, const char *title,
 
     win->x_display = glfwGetX11Display();
     win->x_window = glfwGetX11Window(glfw);
+
+    if (transparent && !decorated) {
+        Atom state = XInternAtom(win->x_display, "_NET_WM_STATE", False);
+        Atom states[] = {
+            XInternAtom(win->x_display, "_NET_WM_STATE_SKIP_TASKBAR", False),
+            XInternAtom(win->x_display, "_NET_WM_STATE_SKIP_PAGER", False)
+        };
+        XChangeProperty(win->x_display, win->x_window, state, XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *)states, 2);
+        Atom type = XInternAtom(win->x_display, "_NET_WM_WINDOW_TYPE", False);
+        Atom utility = XInternAtom(win->x_display, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+        XChangeProperty(win->x_display, win->x_window, type, XA_ATOM, 32,
+                        PropModeReplace, (unsigned char *)&utility, 1);
+        platform_set_input_mask(win,NULL,0,0);
+    }
+    glfwShowWindow(glfw);
 
     return win;
 }
@@ -193,6 +215,11 @@ double platform_get_time(void) {
 /* X11 input region for click-through */
 void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h) {
     if (!win->x_display || !win->x_window) return;
+    if (win->input_rect_valid && win->input_rect[0] == x && win->input_rect[1] == y &&
+        win->input_rect[2] == w && win->input_rect[3] == h) return;
+    win->input_rect_valid = true;
+    win->input_rect[0] = x; win->input_rect[1] = y;
+    win->input_rect[2] = w; win->input_rect[3] = h;
     XRectangle rect = { (short)x, (short)y, (unsigned short)w, (unsigned short)h };
     Region region = XCreateRegion();
     XUnionRectWithRegion(&rect, region, region);
@@ -203,6 +230,18 @@ void platform_set_input_region(PlatformWindow *win, int x, int y, int w, int h) 
 void platform_clear_input_region(PlatformWindow *win) {
     if (!win->x_display || !win->x_window) return;
     XShapeCombineMask(win->x_display, win->x_window, ShapeInput, 0, 0, None, ShapeSet);
+    win->input_rect_valid = false;
+}
+
+void platform_set_input_mask(PlatformWindow *win, const unsigned char *bits, int width, int height) {
+    if (!win->x_display || !win->x_window) return;
+    static const unsigned char empty=0;
+    if (!bits || width<=0 || height<=0) { bits=&empty; width=height=1; }
+    Pixmap mask=XCreateBitmapFromData(win->x_display,win->x_window,(const char *)bits,width,height);
+    if (!mask) return;
+    XShapeCombineMask(win->x_display,win->x_window,ShapeInput,0,0,mask,ShapeSet);
+    XFreePixmap(win->x_display,mask);
+    win->input_rect_valid=false;
 }
 
 void platform_set_input_regions(PlatformWindow *win, const PlatformRect *rects, int rect_count) {
@@ -211,6 +250,7 @@ void platform_set_input_regions(PlatformWindow *win, const PlatformRect *rects, 
         platform_clear_input_region(win);
         return;
     }
+    win->input_rect_valid = false;
     Region region = XCreateRegion();
     for (int i = 0; i < rect_count; i++) {
         XRectangle rect = {

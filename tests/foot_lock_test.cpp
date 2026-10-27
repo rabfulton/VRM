@@ -151,6 +151,16 @@ int main() {
         foot_lock_observe(&lock,&rig.model,1.0f/60);foot_lock_apply(&lock,&rig.model,1.0f/60);
         assert(!lock.feet[0].planted && !lock.feet[1].planted);
     }
+    /* Clip contact policy leaves user preference intact and releases the pose. */
+    {
+        Rig rig;FootLock lock;foot_lock_init(&lock);foot_lock_set_model(&lock,&rig.model);
+        lock.clip_allowed=false;
+        for(int i=0;i<60;i++)rig.step(lock,1.0f/60);
+        assert(lock.enabled && !lock.feet[0].planted && !lock.feet[1].planted);
+        near(lock.pelvis_offset,0);
+        lock.clip_allowed=true;idle(rig,lock);
+        assert(lock.feet[0].planted && lock.feet[1].planted);
+    }
     /* Missing mappings and nonuniform limb scale gracefully preserve animation. */
     Rig rig;FootLock lock;foot_lock_init(&lock);rig.model.humanoid_bone_count=0;
     foot_lock_set_model(&lock,&rig.model);assert(!lock.feet[0].supported);rig.step(lock,1.0f/60);

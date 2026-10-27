@@ -444,10 +444,14 @@ static float segment_distance(const float *p1, const float *q1, const float *p2,
     return v3_len(delta);
 }
 
+static const float garment_bend_cosine=0.8191520443f;
+static const float garment_bend_sine=0.5735764364f; /* 35 degrees */
+
 /* Project contact onto the bone-length sphere, rather than undoing separation
  * with a subsequent length projection. Contacts at a fixed root can be infeasible. */
 static int separate_contact(const float *root, float *tail, float length,
-                            float fraction, const float *center, float radius) {
+                            float fraction, const float *center, float radius,
+                            const float *garment_rest) {
     float distance_vector[3], direction[3], axis[3], tangent[3];
     v3_sub(center,root,distance_vector);
     float d=v3_len(distance_vector), contact_length=length*fraction;
@@ -464,7 +468,42 @@ static int separate_contact(const float *root, float *tail, float length,
     }
     v3_normalize(tangent);
     float lateral=sqrtf(fmaxf(0,1-k*k));
-    for (int i=0;i<3;i++) tail[i]=root[i]+length*(axis[i]*k+tangent[i]*lateral);
+    float result[3];
+    for (int i=0;i<3;i++) result[i]=axis[i]*k+tangent[i]*lateral;
+    if (garment_rest && v3_dot(result,garment_rest)<garment_bend_cosine) {
+        /* Solve the contact circle and bend cone together. Alternating two
+         * independent projections can leave a feasible contact penetrating
+         * at the cone rim and cause jitter when a thigh moves across it. */
+        float alignment=v3_dot(axis,garment_rest);
+        float denominator=1-alignment*alignment;
+        float cross[3]={axis[1]*garment_rest[2]-axis[2]*garment_rest[1],
+                        axis[2]*garment_rest[0]-axis[0]*garment_rest[2],
+                        axis[0]*garment_rest[1]-axis[1]*garment_rest[0]};
+        float remaining=-1;
+        if (denominator>1e-6f) {
+            float a=(k-alignment*garment_bend_cosine)/denominator;
+            float b=(garment_bend_cosine-alignment*k)/denominator;
+            for(int i=0;i<3;i++)result[i]=a*axis[i]+b*garment_rest[i];
+            remaining=1-v3_dot(result,result);
+        }
+        if (remaining>=-1e-6f) {
+            v3_normalize(cross);
+            float side=v3_dot(cross,direction)<0 ? -1 : 1;
+            for(int i=0;i<3;i++)result[i]+=side*sqrtf(fmaxf(0,remaining))*cross[i];
+        } else {
+            /* No direction satisfies both constraints. Keep the garment's
+             * shape and maximize separation within its permitted bend cone. */
+            for(int i=0;i<3;i++)tangent[i]=alignment*garment_rest[i]-axis[i];
+            if(v3_len(tangent)<1e-6f) {
+                int coordinate=fabsf(garment_rest[0])<0.8f ? 0 : 1;
+                for(int i=0;i<3;i++)tangent[i]=(i==coordinate ? 1.0f : 0)-garment_rest[i]*garment_rest[coordinate];
+            }
+            v3_normalize(tangent);
+            for(int i=0;i<3;i++)result[i]=garment_bend_cosine*garment_rest[i]+garment_bend_sine*tangent[i];
+        }
+        v3_normalize(result);
+    }
+    for (int i=0;i<3;i++) tail[i]=root[i]+length*result[i];
     return 1;
 }
 
@@ -474,10 +513,32 @@ static int collider_applies(const SpringBoneGroup *group, const RuntimeCollider 
     return 0;
 }
 
+/* Garment chains model connected fabric, rather than independently hinged
+ * strands. Bound each segment against its unsimulated attachment-space rest
+ * direction so successive joints cannot accumulate into an inside-out fold.
+ * This reference follows the animated hips/attachment, including lying poses. */
+static int limit_garment_bend(const float *root, float *tail, float length,
+                              const float *rest_direction) {
+    if (!rest_direction) return 0;
+    float direction[3],tangent[3];
+    v3_sub(tail,root,direction);v3_normalize(direction);
+    float dot=v3_dot(direction,rest_direction);
+    if (dot>=garment_bend_cosine) return 0;
+    for(int k=0;k<3;k++)tangent[k]=direction[k]-dot*rest_direction[k];
+    if(v3_len(tangent)<1e-6f) {
+        int axis=fabsf(rest_direction[0])<0.8f ? 0 : 1;
+        for(int k=0;k<3;k++)tangent[k]=(k==axis ? 1.0f : 0)-rest_direction[k]*rest_direction[axis];
+    }
+    v3_normalize(tangent);
+    for(int k=0;k<3;k++)tail[k]=root[k]+length*(garment_bend_cosine*rest_direction[k]+garment_bend_sine*tangent[k]);
+    return 1;
+}
+
 static int solve_contacts(GltfModel *model, SpringBoneGroup *group, SpringJoint *joint,
-                          const float *root, float *tail, int garment, float alpha) {
+                          const float *root, float *tail, int garment, float alpha,
+                          const float *garment_rest_direction) {
     struct SpringRuntime *rt=model->spring_runtime;
-    int contacts=0;
+    int contacts=limit_garment_bend(root,tail,joint->bone_length,garment_rest_direction);
     float hit=joint->hit_radius*maximum_scale(model->nodes[joint->node].world_matrix);
     for (int iteration=0;iteration<12;iteration++) {
         int corrected=0;
@@ -490,12 +551,30 @@ static int solve_contacts(GltfModel *model, SpringBoneGroup *group, SpringJoint 
                 b[i]=col->previous_tail[i]+alpha*(col->tail[i]-col->previous_tail[i]);
             }
             float radius=hit+col->previous_radius+alpha*(col->radius-col->previous_radius);
-            float distance=garment ? segment_distance(root,tail,a,b,&fraction,on_body) :
-                                    segment_distance(tail,tail,a,b,&fraction,on_body);
-            if (!garment) fraction=1;
+            /* Garments need coverage between particles for thighs as well as
+             * arms. Keep anchored-root overlaps feasible with the tip fallback
+             * below; hair retains the authored tail-particle convention. */
+            int shaft=garment;
+            float distance=shaft ? segment_distance(root,tail,a,b,&fraction,on_body) :
+                                  segment_distance(tail,tail,a,b,&fraction,on_body);
+            if (!shaft) fraction=1;
             if (distance+1e-5f >= radius) continue;
+            /* An anchored shaft cannot escape a volume containing its root.
+             * Projecting a point farther along it just flips the bone between
+             * incompatible directions as the closest point changes. Fall back
+             * to the movable tip and keep the shaft overlap in diagnostics. */
+            if (shaft) {
+                float root_fraction,root_body[3];
+                if (segment_distance(root,root,a,b,&root_fraction,root_body)<radius) {
+                    distance=segment_distance(tail,tail,a,b,&fraction,on_body);
+                    fraction=1;
+                    if (distance+1e-5f >= radius) continue;
+                }
+            }
             if (iteration == 0) contacts++;
-            corrected |= separate_contact(root,tail,joint->bone_length,fraction,on_body,radius+1e-5f);
+            corrected |= separate_contact(root,tail,joint->bone_length,fraction,on_body,radius+1e-5f,
+                                           garment_rest_direction);
+            corrected |= limit_garment_bend(root,tail,joint->bone_length,garment_rest_direction);
         }
         if (!corrected) break;
     }
@@ -648,6 +727,12 @@ static void spring_step(GltfModel *model, float dt, float alpha) {
         if (!group->joints || group->joint_count == 0) continue;
 
         int cloth_chain = model->spring_runtime->garments[g];
+        float attachment_rest_rotation[4]={0,0,0,1};
+        if (cloth_chain) {
+            int parent=model->nodes[group->bones[0]].parent_index;
+            if(parent>=0 && parent<model->node_count)
+                mat4_to_quat(model->nodes[parent].world_matrix,attachment_rest_rotation);
+        }
 
         /* Process joints root to tip (spec: calculation order) */
         for (int i = 0; i < group->joint_count; i++) {
@@ -655,6 +740,14 @@ static void spring_step(GltfModel *model, float dt, float alpha) {
             if (joint->node < 0 || joint->node >= model->node_count) continue;
 
             GltfNode *node = &model->nodes[joint->node];
+            float garment_rest_direction[3];
+            if(cloth_chain) {
+                float rotation[4];
+                quat_mul(attachment_rest_rotation,joint->initial_local_rotation,rotation);
+                memcpy(attachment_rest_rotation,rotation,sizeof(rotation));
+                quat_rotate_vec3(rotation,joint->bone_axis,garment_rest_direction);
+                v3_normalize(garment_rest_direction);
+            }
 
             /* Get parameters */
             float drag = joint->drag_force;
@@ -746,7 +839,8 @@ static void spring_step(GltfModel *model, float dt, float alpha) {
 
             float free_tail[3];
             memcpy(free_tail,next_tail,sizeof(free_tail));
-            int contacts=solve_contacts(model,group,joint,world_pos,next_tail,cloth_chain,alpha);
+            int contacts=solve_contacts(model,group,joint,world_pos,next_tail,cloth_chain,alpha,
+                                        cloth_chain ? garment_rest_direction : NULL);
             float velocity[3],normal[3];
             v3_sub(free_tail,joint->current_tail,velocity);
             v3_sub(next_tail,free_tail,normal);

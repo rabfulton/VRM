@@ -97,7 +97,7 @@ static void smooth_pelvis(FootLock *lock,float target,float dt) {
 #endif
 
 void foot_lock_init(FootLock *lock) {
-    memset(lock,0,sizeof(*lock));lock->enabled=true;lock->calibrate_floor=true;lock->pelvis=-1;
+    memset(lock,0,sizeof(*lock));lock->enabled=true;lock->clip_allowed=true;lock->calibrate_floor=true;lock->pelvis=-1;
     for(auto &foot:lock->feet) foot.hip=foot.knee=foot.ankle=foot.toes=-1;
 }
 void foot_lock_reset(FootLock *lock) {
@@ -148,7 +148,7 @@ void foot_lock_new_clip(FootLock *lock) {
 }
 
 void foot_lock_observe(FootLock *lock,GltfModel *model,float dt) {
-    if(!lock->enabled || !model || model->nodes!=lock->nodes) return;
+    if(!lock->enabled || !lock->clip_allowed || !model || model->nodes!=lock->nodes) return;
     if(!std::isfinite(dt)||dt<=0 || dt>0.1f) { foot_lock_reset(lock); return; }
     if(lock->calibrate_floor) {
         float lowest=INFINITY, length=0;
@@ -186,7 +186,7 @@ void foot_lock_observe(FootLock *lock,GltfModel *model,float dt) {
 }
 
 void foot_lock_apply(FootLock *lock,GltfModel *model,float dt) {
-    if(!lock->enabled || !model || model->nodes!=lock->nodes || dt<=0 || dt>0.1f) return;
+    if(!lock->enabled || !lock->clip_allowed || !model || model->nodes!=lock->nodes || dt<=0 || dt>0.1f) return;
 #ifdef VRM_USE_OZZ
     float targets[2][3]{};
     float pelvis_drop=0,maximum_drop=0;

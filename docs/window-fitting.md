@@ -16,8 +16,10 @@ includes the outline and the renderer's offset/blurred silhouette shadow.
 Expansion preserves the screen-space camera centre and pixel density; enlarging
 an ordinary viewport's height alone would magnify the avatar. The projection
 compensates for that height change. The viewport can grow during playback but
-only shrinks on explicit refitting, such as a clip or camera change, to avoid
-breathing with each gesture. Window dimensions are limited by the monitor workarea
+only shrinks on explicit refitting, such as a camera or zoom change, to avoid
+breathing with each gesture. Clip switches preserve the viewport; live expansion
+uses 64-pixel steps to avoid reallocating render surfaces for small spring changes.
+Window dimensions are limited by the monitor workarea
 and a 4096 logical-pixel cap; exceptionally large projected motion is reduced to
 fit those limits. Geometry crossing the camera's near plane cannot be fixed by
 resizing the window.
@@ -25,12 +27,23 @@ resizing the window.
 Legacy `bounds.world_w` / `bounds.world_h` sidecar entries are retained when editing
 configs but are no longer used for fitting. They were bone-only, lost the envelope's
 position/depth and were incorrectly shared across avatar models and correction
-settings. Bounds are recomputed in memory on animation load. Pose transforms are
+settings. An in-memory cache holds up to 32 clip envelopes for the current avatar,
+keyed by path, file size/nanosecond mtime and correction quaternion. Avatar reloads
+clear it. Revisiting an unchanged clip avoids sampling its envelope again. Pose transforms are
 restored after sampling. Live fitting follows the current camera and model transform.
 
-Turning auto-fit off keeps manual viewport sizing available. Input hit testing
-still uses the avatar's compact interaction region, rather than making the whole
-expanded transparent window capture clicks.
+Turning auto-fit off keeps manual viewport sizing available. Input follows the
+rendered avatar's silhouette, independently of the expanded viewport. The existing
+skinning/morph/material passes write a stencil coverage mask after the shadow
+pass. Fully transparent fragments are discarded; shadow-only pixels, background
+and gaps between limbs do not capture clicks. Outlines remain interactive.
+The stencil is resolved and transferred through two fenced pixel buffers at up
+to 60 Hz. Only completed transfers are mapped, avoiding a synchronous GPU wait.
+The resulting bitmap sets the X11 input shape and supplies mouse hit testing.
+It can trail the visible pose by a frame or two. Resizing, hiding, unloading and
+pending startup clear old coverage immediately; an empty figure is click-through.
+Framebuffer/window scaling, fractional scaling and the bottom-left OpenGL origin
+are accounted for when producing the top-left X11 bitmap.
 
 ## Create a mirrored push
 
@@ -72,6 +85,18 @@ transitions and live springs. The read-only `get_frame_bounds` IPC diagnostic
 resolves the last rendered MSAA frame and reports visible alpha extents and edge
 pixels, so checks do not depend on desktop window occlusion. A short wait handles
 an empty buffer immediately after a resize.
+
+`make test-render` checks 24 actual MSAA frames at changing viewport sizes using
+a synthetic triangle, with no avatar assets. Shadow-target allocation must restore
+the caller's framebuffer; otherwise a resize renders to the default target and the
+subsequent MSAA resolve overwrites it with a blank frame. This caused resize flicker.
+
+Studio's View tab exposes frame/load timings and a counter reset. The slowest
+frame's IPC/update/render/swap breakdown helps distinguish synchronous clip
+loading from steady rendering stalls. Render timings measure CPU submission;
+swap time can include GPU completion and v-sync/compositor waits. Cold clip loading
+and ozz conversion still run on the render thread and may briefly stall playback;
+the bounds cache reduces repeated work but does not make loading asynchronous.
 
 ```sh
 python3 tests/push_fit_smoke.py --model /path/to/avatar.vrm --animation-dir /path/to/animations

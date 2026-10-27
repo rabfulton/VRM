@@ -18,25 +18,35 @@ python3 control.py --model /path/to/avatar.vrm --animation-dir /path/to/animatio
 ```
 
 Studio connects to the default socket, starting a renderer if none is listening.
-Supply your own assets; the legacy local default `test.vrm` is not distributed.
+The versioned [starter pack](../assets/starter/README.md) provides two selectable
+avatars and matching libraries. The legacy local `test.vrm` is still preferred
+when present; it is not distributed. A fresh installation can use the starter anime avatar.
 A new renderer loads the selected model, plays a configured startup once,
-then transitions to an idle and enables blinking. Closing the last Studio/chat window stops
-only a renderer this application started. `--attach` never starts or stops a renderer. Disconnect Studio before
+then transitions to an idle and enables blinking. Studio starts hidden; pass
+`--studio` to show it immediately. Missing assets/errors open it automatically.
+Closing Studio or chat hides that window while the controller keeps running.
+Right-click the avatar to reopen **Chat** or **Studio**, or choose **Quit** to stop
+the companion and controller. The overlay sets X11 utility/skip-taskbar/skip-pager
+hints; the window manager controls their presentation. `--attach` never starts a
+renderer; explicit **Quit** still shuts down the attached companion. Disconnect Studio before
 using a different controller; the runtime currently services one connection.
 
-Options: `--attach`, `--socket PATH`, `--model PATH`, `--animation-dir PATH`.
+Options: `--studio`, `--attach`, `--socket PATH`, `--model PATH`, `--animation-dir PATH`.
 Model/library/audio choices are remembered with QSettings. Attaching to an existing
 runtime preserves its current model, playback and behaviour state.
 
 ## Controls
 
-- Avatar: load a VRM/GLB/glTF file through the file picker.
+- Avatar: load a VRM/GLB/glTF file through the file picker, or choose **Starter avatars…**
+  for the anime avatar/fox with matching motions and camera framing. Explicit
+  `--animation-dir` takes precedence over a profile at initial startup.
 - Library: choose a folder, search its VRMA/GLB files, click a name to play, or use
   Previous/Next. Check each animation the LLM may use; selections persist per folder
   and update the chat prompt. Boxes work while disconnected and do not start playback.
   Changing access stops the active chat turn. Selection follows the animation actually
   loaded; the list scrolls to that row. **⋯** edits per-animation looping, startup
-  and idle flags; see [animation properties](animation-properties.md).
+  and idle flags, start/end poses and floor foot locking; see [animation properties](animation-properties.md).
+  **Resume idle** returns control to the automatic idle chain after manual testing.
 - Playback: play/pause, seek, speed, loop and internal clip selection for multi-clip files.
 - Behaviours: automatic blink switch/rate/duration, automatic lip sync, audio playback/cancel,
   expression name/weight/application and clearing all expressions.
@@ -49,19 +59,28 @@ runtime preserves its current model, playback and behaviour state.
 - View: visibility, floating window, [geometry-based animation fitting](window-fitting.md),
   shader, scale and camera. The viewport expands for wide/displaced poses while
   preserving the figure's pixel size.
+  Frame timings show the last frame, slowest frame's stage breakdown, frames over
+  50 ms, last clip load/bounds cost and viewport resizes. **Reset frame timings**
+  clears peaks/counters after startup to help investigate later stutters.
 - Speech: provider/model profiles, CPU/Vulkan processing, preparation, voice preview and cancellation.
 - Chat: a compact separate conversation window with API settings, keyring credentials,
   streamed speech and character cues. See [chat](chat.md).
 - Log: bounded renderer output and controller errors.
 
-Dragging the avatar moves its overlay window. Middle-drag orbits the camera;
-scroll scales the figure. Right-click opens chat near the pointer. **Chat…** in
+Dragging the avatar moves its overlay window. Transparent areas, including gaps
+between limbs and the shadow, pass clicks to the window underneath. The hit mask
+follows the rendered mesh rather than a bounding rectangle. Middle-drag orbits the camera;
+scroll scales the figure. Right-click opens the **Chat / Studio / Quit** menu. **Chat** opens chat near the pointer. **Chat…** in
 Studio or Ctrl+Enter while this app has focus also opens chat; Escape hides it.
+The menu uses Qt cursor/workarea coordinates so native X11 pixels do not displace
+it on scaled displays; it only shifts when necessary to stay inside the workarea.
+When a startup animation is set, nothing is shown before that animation begins.
 
 ## Structure and ownership
 
 - `control.py` / `vrm_overlay/gui.py`: entry point and QML engine lifecycle.
 - `vrm_overlay/qml/Main.qml`: layout and control presentation.
+- `vrm_overlay/qml/OverlayMenu.qml`: independent popup usable with Studio hidden.
 - `vrm_overlay/qml/TuningSlider.qml`: reusable slider with confirmed-state binding.
 - `vrm_overlay/qt_controller.py`: QObject properties/slots, QLocalSocket framing,
   ordered command transactions, timeouts, QProcess ownership and state polling.

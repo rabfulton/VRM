@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "avatars": [
+    {
+      "name": "VRoid \u00b7 Sendagaya Shibu",
+      "model": "models/anime.vrm",
+      "animations": "animations/humanoid",
+      "rig": "humanoid",
+      "camera": {
+        "dist": 3,
+        "target": [
+          0,
+          0.8,
+          0
+        ],
+        "azimuth": 3.14,
+        "polar": 1.57
+      }
+    },
+    {
+      "name": "Fox \u00b7 Kenney",
+      "model": "models/fox.glb",
+      "animations": "animations/fox",
+      "rig": "generic",
+      "camera": {
+        "dist": 3,
+        "target": [
+          0,
+          0.55,
+          0
+        ],
+        "azimuth": 3.14,
+        "polar": 1.45
+      }
+    }
+  ]
+}

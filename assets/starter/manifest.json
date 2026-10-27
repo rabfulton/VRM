@@ -1,0 +1,324 @@
+{
+  "version": 1,
+  "sources": {
+    "UAL1": {
+      "url": "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "sha256": "18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2",
+      "license": "CC0-1.0"
+    },
+    "UAL2": {
+      "url": "https://opengameart.org/sites/default/files/universal_animation_library_2standard.zip",
+      "sha256": "ec0e40d6d78fe9aaad59e322f40865a8675c22f0745e291622e54520391a9217",
+      "license": "CC0-1.0"
+    },
+    "CubePets": {
+      "url": "https://kenney.nl/media/pages/assets/cube-pets/44e58e945f-1774520254/kenney_cube-pets_1.0.zip",
+      "sha256": "b3bdc99a2ec92c687b875718c5d01e9231d2711ed0e2845f295b474bb42a1283",
+      "license": "CC0-1.0"
+    },
+    "Anime": {
+      "url": "https://opengameart.org/sites/default/files/avatarsample_d_0.zip",
+      "sha256": "311a383b0b63b55102c82efa5ab2afec0dfcccc1cc6fa2db10fd5583981b3167",
+      "license": "CC0-1.0"
+    }
+  },
+  "artifacts": {
+    "animations/humanoid/idle.vrma": {
+      "source": "UAL1",
+      "sha256": "204d4264254a28214ff16564de2723f708dfeedda7b9af3cb958ab46819f3253",
+      "bytes": 93836,
+      "clip": "Idle_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/idle.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9c7792763c30d5cb129d7462b62e2343846dcb25c182c1a5457bbb5e4da21675",
+      "bytes": 86
+    },
+    "animations/humanoid/idle_talking.vrma": {
+      "source": "UAL1",
+      "sha256": "0009a6b9fda47b4dd6a63035231c1b15063aa7ddd8f01995bbd106319a41a135",
+      "bytes": 105792,
+      "clip": "Idle_Talking_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/idle_talking.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9c7792763c30d5cb129d7462b62e2343846dcb25c182c1a5457bbb5e4da21675",
+      "bytes": 86
+    },
+    "animations/humanoid/walk.vrma": {
+      "source": "UAL1",
+      "sha256": "ec51c55bdf23a82deb0bf536da5254389ded5293296bd4f8dcec4512a44295ae",
+      "bytes": 64956,
+      "clip": "Walk_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/walk.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/humanoid/walk_formal.vrma": {
+      "source": "UAL1",
+      "sha256": "1f73f2417493a349b33773a06282c892efe08c81fe4b2b8cbfe0f21f072049c5",
+      "bytes": 64992,
+      "clip": "Walk_Formal_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/walk_formal.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/humanoid/jog.vrma": {
+      "source": "UAL1",
+      "sha256": "8fa1d27edc632e0c17db917644310c7082220b7652e6417a8399f41963827df5",
+      "bytes": 54780,
+      "clip": "Jog_Fwd_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/jog.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/humanoid/push.vrma": {
+      "source": "UAL1",
+      "sha256": "b04bd383d5ae605224007716814d070e3cb6831f3b04320635756dff05f2eaf4",
+      "bytes": 99080,
+      "clip": "Push_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/push.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "d6bc7de9abaed37c18286e6ec1737f59b57c0755a219b6d28bcc4ecc9f4d70e9",
+      "bytes": 86
+    },
+    "animations/humanoid/sit_down.vrma": {
+      "source": "UAL1",
+      "sha256": "cf3c6aecd2c6809f0b02cd6abf4572bd10acc8a3cfada7a1034bd2b3e3a0d980",
+      "bytes": 63248,
+      "clip": "Sitting_Enter",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/sit_down.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "a7dda44315b73449a3c584358f85fe43e140a5709207f9e4ba8e0f5e4773bebd",
+      "bytes": 85
+    },
+    "animations/humanoid/sitting_idle.vrma": {
+      "source": "UAL1",
+      "sha256": "f1be6c472db66b3d0215515253ed63364c18439eb59e633c2f62a308a318a728",
+      "bytes": 72480,
+      "clip": "Sitting_Idle_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/sitting_idle.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "e79eda8e1c5e201048a529cb3320187bdd650dd8488b7c7e5f2d6a71833f5be9",
+      "bytes": 84
+    },
+    "animations/humanoid/stand_up.vrma": {
+      "source": "UAL1",
+      "sha256": "ea8f7841e900cba3787be8348eb0984204288718aa6dd2d4551c0dde83940ad4",
+      "bytes": 56424,
+      "clip": "Sitting_Exit",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/stand_up.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "d22d34d43bc5942861df26062ce209dcd644fd76c3f9a7fba41f26a7176f721d",
+      "bytes": 85
+    },
+    "animations/humanoid/idle_folded_arms.vrma": {
+      "source": "UAL2",
+      "sha256": "76a2b12d30f3b4a509092b3a17ba25edf5bf70291c395d37dfd03162cf7a3023",
+      "bytes": 93856,
+      "clip": "Idle_FoldArms_Loop",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/idle_folded_arms.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9c7792763c30d5cb129d7462b62e2343846dcb25c182c1a5457bbb5e4da21675",
+      "bytes": 86
+    },
+    "animations/humanoid/get_up.vrma": {
+      "source": "UAL2",
+      "sha256": "8d8eaea88e7d853974420cab1de6a5fcfa02dc2f1e517aa321849e87b1cab2a0",
+      "bytes": 69248,
+      "clip": "LayToIdle",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/get_up.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "1fbeac1cab6806fed685811eb8b55a45c1e3c41d88f03a7b80bb355b204f55b9",
+      "bytes": 83
+    },
+    "animations/humanoid/lie_down.vrma": {
+      "source": "UAL2",
+      "sha256": "2681a4651a63446420614a6378702ad8643c52edbf8680b51ed223a4052caf66",
+      "bytes": 69252,
+      "clip": "LayToIdle",
+      "reverse": true,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/lie_down.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "d6ddacffa3f1204044640f1abab4b382175f9b125bfb1c4ebef985427445f63f",
+      "bytes": 83
+    },
+    "animations/humanoid/lying_idle.vrma": {
+      "source": "UAL2",
+      "sha256": "fe5fc135661897113e906452cb08083c2ddf014f134face0d01ba40e6bf15df1",
+      "bytes": 55548,
+      "clip": "LayToIdle",
+      "reverse": false,
+      "hold": true,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/lying_idle.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "652d4e52191f23dcd1285c521b3413a02fabda2e1a543b7b4774ce61f79054a9",
+      "bytes": 80
+    },
+    "animations/humanoid/climb_up.vrma": {
+      "source": "UAL2",
+      "sha256": "1e964214d388842336726e5ee87e0c45355f1c43b811e151258d41352bb48f57",
+      "bytes": 48020,
+      "clip": "ClimbUp_1m_RM",
+      "reverse": false,
+      "hold": false,
+      "root_motion": "in_place"
+    },
+    "animations/humanoid/climb_up.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "44c117144eb0a1efc7d2179f98c21c73cd8bb51c209ab8c7d86e032c6aaff5bf",
+      "bytes": 86
+    },
+    "models/fox.glb": {
+      "source": "CubePets",
+      "sha256": "a2614ec6705f30efb14eae2d9f4c5fbc4c9600f11c47c93d6ed018cad2cac7ee",
+      "bytes": 152780,
+      "member": "Models/GLB format/animal-fox.glb",
+      "changes": "Palette PNG embedded; container turned 180 degrees and scaled to 0.65; original rig and animations retained."
+    },
+    "animations/fox/idle.glb": {
+      "source": "CubePets",
+      "sha256": "c81637532a1defdf77822887f1944afbebe450ba3bebdf552bd209156a40866e",
+      "bytes": 11320,
+      "clip": "idle"
+    },
+    "animations/fox/idle.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "1b07775880b84c4bbddf154d800dc9be3432bdc146befc6435c4abfc27f5c41a",
+      "bytes": 86
+    },
+    "animations/fox/walk.glb": {
+      "source": "CubePets",
+      "sha256": "f769e8171252ea001b2b939f964cc871acb4d8c307c21107cbe30ce860448ee9",
+      "bytes": 12292,
+      "clip": "walk"
+    },
+    "animations/fox/walk.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/fox/run.glb": {
+      "source": "CubePets",
+      "sha256": "345336eca191d809e017d9adf8a100bdbc5f93ea984c645ad87d3e8be11e8bf5",
+      "bytes": 11208,
+      "clip": "run"
+    },
+    "animations/fox/run.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/fox/eat.glb": {
+      "source": "CubePets",
+      "sha256": "9bf357b9997c13f271b054b92324d51c0804e9a1654ca5890236a115582dc29d",
+      "bytes": 10568,
+      "clip": "eat"
+    },
+    "animations/fox/eat.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/fox/dance.glb": {
+      "source": "CubePets",
+      "sha256": "852a97452921713787aee6ccaa82a1651ce7fcd1ca57c983b79668fe50ec6a56",
+      "bytes": 10928,
+      "clip": "dance"
+    },
+    "animations/fox/dance.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "9abe8d6f05b94c6868e4dcb9d5ed05592ac8c8a9cf0fffd97858fe39d38a7e76",
+      "bytes": 86
+    },
+    "animations/fox/gesture-positive.glb": {
+      "source": "CubePets",
+      "sha256": "515b6cbfc85116a941b6d2c905e774f0bed145ced783ff24eeb965a28498205d",
+      "bytes": 10332,
+      "clip": "gesture-positive"
+    },
+    "animations/fox/gesture-positive.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "44c117144eb0a1efc7d2179f98c21c73cd8bb51c209ab8c7d86e032c6aaff5bf",
+      "bytes": 86
+    },
+    "animations/fox/gesture-negative.glb": {
+      "source": "CubePets",
+      "sha256": "1c0096b6969ce750179fd20becc80639f9ed4bbca12b2c8cd23b2423da0df0d7",
+      "bytes": 10340,
+      "clip": "gesture-negative"
+    },
+    "animations/fox/gesture-negative.cfg": {
+      "source": "vrm-overlay",
+      "sha256": "44c117144eb0a1efc7d2179f98c21c73cd8bb51c209ab8c7d86e032c6aaff5bf",
+      "bytes": 86
+    },
+    "models/anime.vrm": {
+      "source": "Anime",
+      "sha256": "9adf1b44e959d2688d62c2dd558e74315d6aa40e3bf8d281390b7a85dc0df9b7",
+      "bytes": 16851352,
+      "member": "AvatarSample_D.vrm",
+      "changes": "Unmodified source VRM; original metadata retained."
+    },
+    "KENNEY-LICENSE.txt": {
+      "source": "CubePets",
+      "sha256": "73ac1d7002d33d6ec517fd1070ed99c0b58b58b7a41e92e42225cccab6a7c216",
+      "bytes": 698
+    },
+    "catalog.json": {
+      "source": "vrm-overlay",
+      "sha256": "be353283d8240c84f55facf5b21e712d98125e47a6637adbbfcb006cef546af9",
+      "bytes": 670
+    }
+  }
+}

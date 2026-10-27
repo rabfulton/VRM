@@ -18,7 +18,7 @@ typedef struct {
 typedef struct {
     GltfNode *nodes;
     int node_count, pelvis;
-    bool enabled, calibrate_floor;
+    bool enabled, calibrate_floor, clip_allowed;
     float pelvis_offset, pelvis_velocity, floor_offset;
     FootPlant feet[2];
 } FootLock;

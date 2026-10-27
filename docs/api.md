@@ -48,6 +48,13 @@ Load a VRM model file.
 {"action": "load", "path": "/path/to/model.vrm"}
 ```
 
+Optional `defer_show: true` keeps the loaded figure invisible and click-through
+while the controller configures its startup clip. `get_state.presentation_pending`
+reports this state. A successful `play` with a valid clip releases presentation;
+use a zero-duration initial `blend_to` to avoid blending from the bind pose.
+An animation-load failure keeps it hidden until valid playback or another model
+load. The default is immediate presentation, preserving standalone clients.
+
 #### load_animation
 Load an animation file (VRMA or GLB).
 ```json
@@ -372,14 +379,28 @@ ingest require no preceding enable command. The GUI has no lip-sync toggle.
 `lip_sync_enable` is retained as an advanced compatibility/debug command; explicit
 callers can still disable the analyzer. A new stream enables it as before.
 
-### Chat open request
+### Overlay menu request
 
-`get_state.data.chat_request_seq` is an optional unsigned 32-bit sequence counter.
-A right-button press on the avatar increments it; Studio notices a changed value
-and opens chat near the pointer. Controllers should establish a baseline on
-connect and not replay a previous session's request. Older runtimes omit the
-field. Chat API credentials and conversation handling live in Studio, not in
-the renderer IPC server.
+`get_state.data.overlay_menu_seq` is an unsigned 32-bit counter incremented by a
+right-button press on the avatar. `overlay_menu_position` records its global X11
+`x`/`y` coordinates. The background controller opens its QML **Chat / Studio / Quit**
+menu even with Studio hidden. Establish a baseline on connect; do not replay old
+clicks. Qt uses its own current cursor and available-screen geometry to place the
+menu, since X11 native pixels differ from Qt logical coordinates on scaled displays.
+The legacy `chat_request_seq` field remains for older runtimes/controllers;
+new right-clicks update only the menu sequence. Chat credentials and conversation
+handling live in the controller, not the renderer IPC server.
+
+### Frame timing diagnostics
+
+`get_state.data.frame_timing` reports `frame_ms`, `peak_frame_ms`, `slow_frames`
+(frames above 50 ms), `window_resizes`, `last_load_ms` and `last_bounds_ms`.
+`peak_ipc_ms`, `peak_update_ms`, `peak_render_ms` and `peak_swap_ms` describe stages
+of the **same slowest frame**, not independent stage maxima. IPC includes event
+polling and synchronous loads; render is CPU submission, while swap may include
+GPU completion and compositor/v-sync waits. Bounds time is zero for a cache hit.
+`reset_frame_timing` clears peaks and slow-frame/resize counters without changing
+playback. A measured startup/load pause is not evidence of a steady GPU bottleneck.
 
 ### Animation behaviour metadata
 
@@ -389,7 +410,7 @@ When `loopable=0`, requests to repeat through `set_playback.loop=true`,
 geometric loop heuristic for automatic choices when the flag is absent.
 
 `get_state.data.animation_properties` contains the booleans `loopable`,
-`explicit_loopable`, `startup` and `is_idle`. `loopable` reports repeat permission;
+`explicit_loopable`, `startup`, `is_idle` and `floor_contact`. `loopable` reports repeat permission;
 `loop` in the surrounding state still reports the current playback choice.
 
 ```json
@@ -400,6 +421,13 @@ Reloads the current animation's flags from disk without seeking, resetting sprin
 or reloading the asset. Returns an error if no animation is loaded or its config
 cannot be read. Disallowing repeats stops further loops after the current pass.
 Studio coordinates startup/idle behaviours; see [animation properties](animation-properties.md).
+
+`floor_contact=0|1` permits/releases flat-floor foot locking per clip, independently
+of the user's global switch. `foot_lock.clip_allowed` reports this policy while
+`foot_lock.enabled` remains the user preference. Contact-policy changes release old
+anchors. Studio also reads `entry_pose`/`exit_pose` (`standing`, `sitting`, `lying`,
+`crouching`) and routes automatic cues through available one-shot transitions.
+These pose fields remain controller metadata, preserved by native config writes.
 
 ### Rendered frame bounds
 

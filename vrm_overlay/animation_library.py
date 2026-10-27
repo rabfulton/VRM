@@ -40,6 +40,8 @@ def describe_animations(files, choices=None):
         description += "; " + ("loopable" if properties["loopable"] else "one-shot")
         if properties["is_idle"]: description += "; idle/resting animation"
         if properties["startup"]: description += "; startup/entrance animation"
+        if entry.get('entry_pose','standing')!='standing' or entry.get('exit_pose','standing')!='standing':
+            description+='; '+entry.get('entry_pose','standing')+' to '+entry.get('exit_pose','standing')
         rows.append(dict(entry, **properties, file=filename, llm_id=identifier,
                          llm_enabled=enabled is True,
                          llm_description=description,
