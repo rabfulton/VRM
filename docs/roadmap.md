@@ -6,7 +6,9 @@ Studio controls the standalone renderer through asynchronous IPC. Animation
 playback, inertial ozz transitions, automatic blinking/lip sync, flat-floor leg
 IK, fixed-step springs and garment/arm proxy collisions have regression coverage.
 Local speech defaults to Nano/CrispASR on Vulkan, with saved alternative profiles,
-verified downloads, preview and cancellation.
+verified downloads, preview and cancellation. QML chat now streams API replies,
+stores endpoint-scoped keys in the OS keyring, speaks sentences as they arrive,
+and executes user-selected library animations and supported expressions. See [chat](chat.md).
 
 These features still need visual review across varied avatars. Clear skeleton
 proxies do not guarantee clear clothing meshes, and flat-floor IK does not provide
@@ -19,20 +21,19 @@ reference-recording support where the engine provides it. Expose model-specific
 controls only when supported; voice cloning, exaggeration and guidance parameters
 are not universal across backends.
 
-Reuse the chat example's bounded sentence pipeline in Studio: split at sentence,
-newline and paragraph boundaries, start playback before an entire long passage
-is synthesized, and maintain cancellation/backpressure. The current Studio
-preview accepts at most 4096 characters and waits for a complete WAV. Test long
-input, abbreviations, multilingual punctuation and interruption between chunks.
+Chat now splits streamed replies at sentence/newline boundaries with bounded
+chunks and cancellation. Add one-sentence synthesis prefetch to reduce gaps, and
+reuse the coordinator for longer text entered directly in the Speech tab. Its
+current preview accepts at most 4096 characters and waits for a complete WAV.
 
 ## 2. Behaviour and conversation in Studio
 
-Move the useful chat prototype into QML and introduce a behaviour coordinator
-for speech, gaze, expression, gestures and idle motion. Keep typed input first;
-add microphone/ASR as an optional adapter. Agent output should request bounded,
-validated actions through the same runtime API. Establish reproducible behaviour
-scenarios so every control and cancellation path can be reviewed without an AI
-service.
+Build on the QML chat and speech/gesture coordinator with gaze, smoother emotion
+ramps and richer gesture timing. Startup-to-idle handoff and automatic motion
+ownership now use [per-animation flags](animation-properties.md). Review a few reliable clips, give them stable
+semantic names, and curate the animation library before expanding the catalogue.
+Add microphone/ASR as an optional adapter and an optional current-sentence bubble.
+Broaden fixture-driven behaviour scenarios as capabilities grow.
 
 ## 3. Better body and clothing contacts
 

@@ -22,7 +22,14 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/main.c`: integration, keyboard controls, IPC request handlers and state.
 - `src/ipc.c/.h`: NDJSON server; default `/tmp/vrm-overlay.sock`, one controller.
 - `src/gltf_loader.c/.h`, `gltf_loader_impl.cpp`: VRM/glTF loading and expressions.
+- `src/bounds.c`: skinned geometry envelopes, in-memory full-clip bounds and
+  pixel-stable transparent viewport expansion. Legacy 2D bounds caches are ignored.
 - `src/renderer.c/.h`: live embedded shaders, skinning, GPU morphs and draw path.
+- `src/expressions.c`: logical expression weights, additive bounded composition
+  and smooth speech-aware emotion attenuation; preserve vowel and blink inputs.
+- `src/anim_config.c/.h`, `vrm_overlay/animation_config.py`: shared per-animation
+  behaviour flags; preserve unrelated tuning/cache data when saving. Studio owns
+  startup/idle selection; native animation code enforces explicit loop restrictions.
 - `src/animator.c/.h`, `ozz_bridge.cpp/.h`, `transition.c/.h`: animation sampling
   and inertial transition corrections; record pose history before contact IK.
 - `src/foot_lock.cpp/.h`: flat-floor IK, raw-target classification and smooth release.
@@ -31,6 +38,11 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/audio.c/.h`, `viseme.c/.h`: miniaudio playback, PCM ring and default lip sync.
 - `src/event.c/.h`: continuous `EventStream` data and discrete multi-clock scheduler.
 - `vrm_overlay/qt_controller.py`, `qml/`: asynchronous IPC and Studio lifecycle.
+- `vrm_overlay/qt_chat.py`, `qt_chat_network.py`, `chat.py`, `credentials.py`: streamed
+  API conversation, OS-only keyring storage and a validated cue catalogue.
+  `animation_library.py` assigns safe cue IDs; library checkboxes persist LLM access
+  per folder. Access changes must invalidate pending chat actions.
+  Keep secrets out of settings/logs/prompts; advertise only implemented capabilities.
 - `vrm_overlay/tts.py`, `tts_install.py`, `tts_models.py`, `qt_speech.py`: selectable
   local speech, verified installation and asynchronous playback. Nano/CrispASR on
   Vulkan is the default; CPU is explicitly selectable.
@@ -42,8 +54,8 @@ wall-time actions. The scheduler updates with `event_update_seconds(now_ns)` and
 `event_update_audio(now_samples)`. Despite its name, `EVENT_DOMAIN_SECONDS` stores
 integer nanoseconds. Springs use a bounded fixed-step accumulator.
 
-VRM expression metadata maps to morph binds. `gltf_set_expression()` updates
-weights; packed GPU morph deltas are sampled by the vertex shader. If expressions
+VRM expression metadata maps to morph binds. `gltf_set_expression()` records
+logical inputs and composes weights; packed GPU morph deltas are sampled by the vertex shader. If expressions
 do not move, check packing limits, `GL_MAX_TEXTURE_SIZE` and uniform wiring.
 
 Do not call `audio_read()` from another analysis consumer: it advances playback.
@@ -52,8 +64,13 @@ Analyze at ingest or use a non-destructive tap/FIFO.
 ## Documentation
 
 - [API](docs/api.md): current IPC reference.
-- [Studio](docs/studio.md), [speech](docs/tts.md): user controls and provider setup.
+- [Studio](docs/studio.md), [speech](docs/tts.md), [chat](docs/chat.md): user controls,
+  API setup, keyring storage and character cues.
 - [Architecture](docs/architecture.md): ownership, pipeline and event clocks.
+- [Fitting/mirroring](docs/window-fitting.md): viewport policy, derivative VRMA
+  creation and optional `make test-fit` rendered-pixel checks.
+- [Animation properties](docs/animation-properties.md): loopability, startup, idle
+  roles and manual/automatic motion ownership.
 - [Motion](docs/motion.md), [foot planting](docs/foot-planting.md): algorithms/limits.
 - [Development](docs/development.md): build variants, assets and tests.
 - [Roadmap](docs/roadmap.md): outstanding product work.
@@ -68,5 +85,7 @@ this feature flag. There is no Jolt dependency.
 Use `make test` for headless native/Python regressions and `make test-sanitize`
 for ASan/UBSan. PySide6 enables optional offscreen QML interaction coverage.
 `make test-ui` needs X11/audio and local assets; `make test-speech` also needs a
-prepared real voice or download access. Paths and reference-fixture checks are
-documented in the development guide. Keep synthetic tests asset-independent.
+prepared real voice or download access. `make test-chat` uses a local streamed
+LLM fixture with the real renderer/Nano; no API credentials or paid call is needed.
+Paths and reference-fixture checks are documented in the development guide.
+Keep synthetic tests asset-independent.

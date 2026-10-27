@@ -47,7 +47,8 @@ These exercise IPC transport/ownership, concurrent audio and cancellation,
 springs, transitions and synthetic humanoid IK. Python tests cover client
 framing, speech configuration/installers, HTTP fixtures and cancellation.
 No avatar, animation pack, voice download, display or AI service is required.
-Unix sockets must be available. The ozz dependency is needed for IK/transition
+Unix sockets and local loopback HTTP sockets must be available. Chat tests use
+local SSE fixtures, fake voices and fake keyrings; they never access real credentials. The ozz dependency is needed for IK/transition
 coverage in the default build. Sanitizer builds use `build/tests/sanitize`.
 
 Install `requirements-gui.txt` to include offscreen QML interaction tests;
@@ -65,6 +66,7 @@ so objects from another build cannot be reused.
 ```sh
 make test-ui
 make test-speech
+make test-chat
 ```
 
 These start a real renderer with an isolated socket and temporary controller
@@ -100,3 +102,12 @@ with `git status --short`; `.gitignore` deliberately allows Markdown, text notic
 and source images. Runtime downloads and your avatars should stay ignored. No
 project-wide license is supplied here; choose one before presenting the project
 as licensed for redistribution, and preserve third-party notices separately.
+
+`make test-chat` uses the same local assets with a streamed HTTP fixture, real
+Nano speech and QML chat controls. It verifies expression and thinking/idle cues
+without an API key or paid LLM request. The local animation folder must include
+`Thinking.vrma` and `Relax.vrma` for that gesture scenario.
+
+`make test-fit` checks actual alpha edges for wide push poses and their mirrored
+variant. See [window fitting and mirroring](window-fitting.md) for local asset
+requirements and the dependency-free mirroring script.

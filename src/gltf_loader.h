@@ -26,6 +26,11 @@
 
 /* Morph target (per primitive) */
 typedef struct {
+  float min[3], max[3];
+  bool valid;
+} GltfBounds;
+
+typedef struct {
   float *position_deltas; /* 3 floats per vertex */
   float *normal_deltas;   /* 3 floats per vertex, optional */
   bool has_normals;
@@ -62,6 +67,7 @@ typedef struct {
   int morph_gpu_count; /* Capped count for shader (max MAX_MORPH_TARGETS) */
   int morph_tex_verts_per_row;
   int morph_tex_rows_per_morph;
+  GltfBounds local_bounds;
 } GltfPrimitive;
 
 /* Mesh */
@@ -130,6 +136,7 @@ typedef struct {
   int *joints;
   int joint_count;
   float *inverse_bind_matrices; /* 16 * joint_count floats */
+  GltfBounds *joint_bounds; /* Conservative skinned/morphed geometry in joint space. */
   int skeleton_root;
 } GltfSkin;
 
@@ -292,9 +299,15 @@ void gltf_get_screen_bounds_px(const GltfModel *model, const float *view,
                                float *out_min_x, float *out_min_y,
                                float *out_max_x, float *out_max_y);
 
-/* Compute max bounds over entire animation, with caching */
-void gltf_compute_animation_bounds(GltfModel *model, const char *anim_path,
-                                   float *out_world_w, float *out_world_h);
+/* Conservative geometry bounds, animation envelopes and viewport fitting. */
+void gltf_bounds_include(GltfBounds *bounds, const float point[3]);
+void gltf_bounds_merge(GltfBounds *bounds, const GltfBounds *other);
+void gltf_bounds_transform(GltfBounds *out, const GltfBounds *bounds, const float matrix[16]);
+void gltf_get_world_bounds(const GltfModel *model, GltfBounds *bounds);
+void gltf_compute_animation_bounds(GltfModel *model, GltfBounds *bounds);
+bool gltf_fit_viewport(const GltfBounds *bounds, const float view_model[16],
+                       float fov, int base_w, int base_h, int max_w, int max_h,
+                       int *width, int *height, float *zoom);
 
 /* VRM expression bind (morph target reference within an expression) */
 typedef struct {
@@ -311,17 +324,25 @@ typedef struct {
   VrmExpressionBind *binds;
   int bind_count;
   bool is_binary; /* If true, weight should be 0 or 1 */
+  float requested_weight; /* Logical input, kept independently of speech ducking. */
+  bool has_input; /* Untouched authored defaults remain intact until controlled. */
 } VrmExpression;
 
 /* VRM expression map (all expressions for a model) */
 typedef struct VrmExpressionMap {
   VrmExpression *expressions;
   int expression_count;
+  float emotion_scale;
+  bool balance_initialized;
 } VrmExpressionMap;
 
 /* Set a VRM expression weight by name (uses expressions or fallback to morph
  * names) */
 void gltf_set_expression(GltfModel *model, const char *name, float weight);
+
+/* Smoothly make room for visemes while an utterance is playing. Only emotion
+ * presets are attenuated; vowel and blink inputs retain their full strength. */
+void gltf_update_expression_balance(GltfModel *model, bool speaking, float dt);
 
 /* Get list of available expression names */
 int gltf_get_expression_names(const GltfModel *model,

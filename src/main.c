@@ -39,14 +39,17 @@ typedef struct {
   GLuint msaa_fbo, msaa_color, msaa_depth;
   int msaa_samples, fb_width, fb_height;
   bool visible, always_on_top, model_loaded, auto_resize, running;
-  float cached_world_w, cached_world_h;
+  GltfBounds clip_bounds;
+  float fit_zoom;
   double last_time;
   float model_position[3], model_rotation[3];
   float model_scale;
   char current_model_path[4096];
   float frame_rate;
+  uint32_t chat_request_seq;
   char current_anim_path[4096];
   bool has_current_anim;
+  bool animation_startup, animation_idle;
   bool audio_stream_open;
   bool speech_pose_active;
   // Auto-blink state
@@ -69,6 +72,85 @@ extern float g_anim_seam_blend_time_default;
 static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
 static bool save_springs_to_config(void);
+
+static void apply_animation_metadata(const AnimConfig *cfg) {
+  animator_set_loop_policy(&app.animator, cfg->has_loopable, cfg->loopable);
+  app.animation_startup = cfg->has_startup && cfg->startup;
+  app.animation_idle = cfg->has_is_idle && cfg->is_idle;
+}
+
+/* Optional readback diagnostic for clipping regressions; not part of the frame loop. */
+static void respond_frame_bounds(int id) {
+  int w = app.fb_width, h = app.fb_height;
+  if (w <= 0 || h <= 0 || (size_t)w*h > 16777216) {
+    ipc_respond(&app.ipc,id,false,"Framebuffer is unavailable or too large to inspect"); return;
+  }
+  unsigned char *pixels = malloc((size_t)w*h*4);
+  if (!pixels) { ipc_respond(&app.ipc,id,false,"Out of memory"); return; }
+  GLint framebuffer, draw_framebuffer, renderbuffer, buffer, alignment;
+  GLuint capture_fbo=0, capture_color=0;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&framebuffer);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_framebuffer);
+  glGetIntegerv(GL_RENDERBUFFER_BINDING,&renderbuffer);
+  glGetIntegerv(GL_READ_BUFFER,&buffer);
+  glGetIntegerv(GL_PACK_ALIGNMENT,&alignment);
+  if (app.msaa_fbo) {
+    /* Resolve offscreen: front-buffer ownership is undefined under another
+     * desktop window, which would make a readback test report a blank avatar. */
+    glGenFramebuffers(1,&capture_fbo);
+    glGenRenderbuffers(1,&capture_color);
+    glBindRenderbuffer(GL_RENDERBUFFER,capture_color);
+    glRenderbufferStorage(GL_RENDERBUFFER,GL_RGBA8,w,h);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,capture_fbo);
+    glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_RENDERBUFFER,capture_color);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,app.msaa_fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBlitFramebuffer(0,0,w,h,0,0,w,h,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,capture_fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+  } else {
+    glBindFramebuffer(GL_READ_FRAMEBUFFER,0);
+    glReadBuffer(GL_FRONT);
+  }
+  glPixelStorei(GL_PACK_ALIGNMENT,1);
+  glReadPixels(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+  glPixelStorei(GL_PACK_ALIGNMENT,alignment);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)framebuffer);
+  glReadBuffer((GLenum)buffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)draw_framebuffer);
+  glBindRenderbuffer(GL_RENDERBUFFER,(GLuint)renderbuffer);
+  if(capture_fbo) glDeleteFramebuffers(1,&capture_fbo);
+  if(capture_color) glDeleteRenderbuffers(1,&capture_color);
+  int min_x=w,min_y=h,max_x=-1,max_y=-1,count=0,edges=0;
+  for (int y=0;y<h;y++) for(int x=0;x<w;x++) {
+    if (pixels[((size_t)y*w+x)*4+3] <= 2) continue;
+    count++;
+    if(x<min_x) min_x=x;
+    if(x>max_x) max_x=x;
+    if(y<min_y) min_y=y;
+    if(y>max_y) max_y=y;
+    if(x==0 || y==0 || x==w-1 || y==h-1) edges++;
+  }
+  free(pixels);
+  cJSON *data=cJSON_CreateObject();
+  cJSON_AddNumberToObject(data,"width",w); cJSON_AddNumberToObject(data,"height",h);
+  GLint viewport[4]; glGetIntegerv(GL_VIEWPORT,viewport);
+  cJSON_AddNumberToObject(data,"viewport_width",viewport[2]);
+  cJSON_AddNumberToObject(data,"viewport_height",viewport[3]);
+  cJSON_AddNumberToObject(data,"projection_height_scale",app.camera.viewport_height_scale);
+  cJSON_AddNumberToObject(data,"aspect",app.camera.aspect);
+  cJSON_AddNumberToObject(data,"fit_zoom",app.fit_zoom);
+  GltfBounds live; gltf_get_world_bounds(&app.model,&live);
+  for(int k=0;k<3;k++) {
+    char key[16]; snprintf(key,sizeof(key),"world_min_%d",k); cJSON_AddNumberToObject(data,key,live.min[k]);
+    snprintf(key,sizeof(key),"world_max_%d",k); cJSON_AddNumberToObject(data,key,live.max[k]);
+  }
+  cJSON_AddNumberToObject(data,"visible_pixels",count); cJSON_AddNumberToObject(data,"edge_pixels",edges);
+  cJSON_AddNumberToObject(data,"min_x",count?min_x:-1); cJSON_AddNumberToObject(data,"max_x",max_x);
+  cJSON_AddNumberToObject(data,"min_y",count?h-1-max_y:-1); cJSON_AddNumberToObject(data,"max_y",count?h-1-min_y:-1);
+  char *json=cJSON_PrintUnformatted(data); ipc_respond_data(&app.ipc,id,json);
+  free(json); cJSON_Delete(data);
+}
 
 static bool save_springs_to_config(void) {
   if (!app.has_current_anim)
@@ -139,38 +221,55 @@ static void msaa_resize(VrmApp *s, int w, int h) {
   s->fb_height = h;
 }
 
-static void update_window_for_zoom(void) {
-  if (!app.auto_resize || !app.model_loaded)
-    return;
-
-  /* Get current window position and size */
-  int old_x = 0, old_y = 0, old_w = 0, old_h = 0;
+static void fit_overlay_window(bool allow_shrink) {
+  if (!app.auto_resize || !app.model_loaded) return;
+  int old_x, old_y, old_w, old_h;
   platform_get_window_pos(app.window, &old_x, &old_y);
   platform_get_window_size(app.window, &old_w, &old_h);
-
-  /* Calculate new size */
-  int base_w = 300;
-  int base_h = 550;
-  int w = (int)(base_w * app.model_scale);
-  int h = (int)(base_h * app.model_scale);
-  if (w < 100)
-    w = 100;
-  if (h < 100)
-    h = 100;
-
-  /* Keep window centered on same point */
-  int new_x = old_x + (old_w - w) / 2;
-  int new_y = old_y + (old_h - h) / 2;
-
-  platform_resize_window(app.window, w, h);
-  platform_move_window(app.window, new_x, new_y);
+  int base_w = (int)fmaxf(100,300*app.model_scale);
+  int base_h = (int)fmaxf(100,550*app.model_scale);
+  int work_x, work_y, max_w, max_h;
+  platform_get_window_workarea(app.window,&work_x,&work_y,&max_w,&max_h);
+  (void)work_x; (void)work_y;
+  if (max_w < 100 || max_h < 100) { max_w = 1920; max_h = 1080; }
+  /* Bound allocation even on very large multi-monitor workareas. */
+  if (max_w > 4096) max_w = 4096;
+  if (max_h > 4096) max_h = 4096;
+  GltfBounds bounds = app.clip_bounds, live;
+  gltf_get_world_bounds(&app.model,&live);
+  gltf_bounds_merge(&bounds,&live);
+  camera_update(&app.camera);
+  float view_model[16];
+  build_view_with_model_transform(view_model);
+  int w = base_w, h = base_h;
+  float zoom = 1;
+  if (!gltf_fit_viewport(&bounds,view_model,app.camera.fov,base_w,base_h,max_w,max_h,&w,&h,&zoom)) return;
+  if (!allow_shrink) {
+    if (w < old_w) w = old_w;
+    if (h < old_h) h = old_h;
+    if (app.fit_zoom > 0 && zoom > app.fit_zoom) zoom = app.fit_zoom;
+  }
+  app.fit_zoom = zoom;
+  app.camera.viewport_height_scale = h / (base_h*zoom);
+  app.camera.aspect = (float)w/h;
+  if (w != old_w || h != old_h) {
+    /* Preserve the screen-space camera centre and pixel density. */
+    platform_resize_window(app.window,w,h);
+    platform_move_window(app.window,old_x+(old_w-w)/2,old_y+(old_h-h)/2);
+    int fw,fh;
+    platform_get_framebuffer_size(app.window,&fw,&fh);
+    if (fw > 0 && fh > 0 && (fw != app.fb_width || fh != app.fb_height)) {
+      glViewport(0,0,fw,fh);
+      msaa_resize(&app,fw,fh);
+    }
+  }
 }
 
-static void compute_and_cache_bounds(const char *anim_path) {
-  if (!app.model_loaded)
-    return;
-  gltf_compute_animation_bounds(&app.model, anim_path, &app.cached_world_w,
-                                &app.cached_world_h);
+static void update_window_for_zoom(void) { fit_overlay_window(true); }
+
+static void refit_animation_window(void) {
+  if (!app.model_loaded) return;
+  gltf_compute_animation_bounds(&app.model,&app.clip_bounds);
   update_window_for_zoom();
 }
 
@@ -414,6 +513,11 @@ static void respond_state(int id) {
   cJSON_AddNumberToObject(state, "time", app.animator.time);
   cJSON_AddNumberToObject(state, "speed", app.animator.speed);
   cJSON_AddBoolToObject(state, "loop", app.animator.loop_remaining < 0);
+  cJSON *properties = cJSON_AddObjectToObject(state, "animation_properties");
+  cJSON_AddBoolToObject(properties, "loopable", !app.animator.loop_policy_set || app.animator.loop_allowed);
+  cJSON_AddBoolToObject(properties, "explicit_loopable", app.animator.loop_policy_set);
+  cJSON_AddBoolToObject(properties, "startup", app.has_current_anim && app.animation_startup);
+  cJSON_AddBoolToObject(properties, "is_idle", app.has_current_anim && app.animation_idle);
   cJSON_AddStringToObject(state, "backend", animator_get_use_ozz(&app.animator) ? "ozz" : "legacy");
 #ifdef VRM_USE_OZZ
   cJSON_AddBoolToObject(state, "ozz_available", true);
@@ -421,6 +525,7 @@ static void respond_state(int id) {
   cJSON_AddBoolToObject(state, "ozz_available", false);
 #endif
   cJSON_AddNumberToObject(state, "frame_rate", app.frame_rate);
+  cJSON_AddNumberToObject(state, "chat_request_seq", app.chat_request_seq);
   cJSON_AddBoolToObject(state, "visible", app.visible);
   cJSON_AddBoolToObject(state, "always_on_top", app.always_on_top);
   cJSON_AddBoolToObject(state, "auto_resize", app.auto_resize);
@@ -428,6 +533,12 @@ static void respond_state(int id) {
   cJSON_AddStringToObject(state, "shader", app.renderer.shader_mode == RENDERER_SHADER_ANIME ? "anime" :
                           app.renderer.shader_mode == RENDERER_SHADER_TOON ? "toon" : "pbr");
   cJSON_AddBoolToObject(state, "lip_sync", app.viseme.enabled);
+  cJSON *face = cJSON_AddObjectToObject(state, "face");
+  VrmExpressionMap *expressions_map = app.model.vrm_expressions;
+  cJSON_AddNumberToObject(face, "emotion_scale",
+      expressions_map && expressions_map->balance_initialized ? expressions_map->emotion_scale : 1.0f);
+  cJSON_AddBoolToObject(face, "speech_active",
+      app.viseme.enabled && (app.audio_stream_open || audio_available(&app.audio) > 0));
   cJSON_AddNumberToObject(state, "correction", app.model_loaded ? app.model.anim_correction_mode : 0);
   cJSON *clips = cJSON_AddArrayToObject(state, "clips");
   float duration = 0.0f;
@@ -532,6 +643,8 @@ static void on_ipc_command(const char *action, void *params, int id,
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "get_state") == 0) {
     respond_state(id);
+  } else if (strcmp(action, "get_frame_bounds") == 0) {
+    respond_frame_bounds(id);
   } else if (strcmp(action, "set_foot_lock") == 0) {
     cJSON *enabled = cJSON_GetObjectItem(json, "enabled");
     if (!cJSON_IsBool(enabled)) {
@@ -544,12 +657,25 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "save_tuning") == 0) {
     bool saved = save_springs_to_config();
     ipc_respond(&app.ipc, id, saved, "No animation loaded or tuning file could not be saved");
+  } else if (strcmp(action, "reload_animation_metadata") == 0) {
+    if (!app.has_current_anim) {
+      ipc_respond(&app.ipc, id, false, "No animation loaded"); return;
+    }
+    AnimConfig cfg = {0};
+    if (!anim_config_load(app.current_anim_path, &cfg)) {
+      ipc_respond(&app.ipc, id, false, "Could not read animation config"); return;
+    }
+    apply_animation_metadata(&cfg);
+    ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "set_playback") == 0) {
     cJSON *speed = cJSON_GetObjectItem(json, "speed");
     cJSON *loop = cJSON_GetObjectItem(json, "loop");
     if ((speed && !valid_number(speed, 0.1f, 3.0f)) || (loop && !cJSON_IsBool(loop))) {
       ipc_respond(&app.ipc, id, false, "Expected speed in [0.1, 3] and boolean loop");
       return;
+    }
+    if (cJSON_IsTrue(loop) && app.animator.loop_policy_set && !app.animator.loop_allowed) {
+      ipc_respond(&app.ipc, id, false, "Animation is marked loopable=0"); return;
     }
     if (speed) app.animator.speed = (float)speed->valuedouble;
     if (loop) app.animator.loop_remaining = cJSON_IsTrue(loop) ? -1 : 0;
@@ -633,6 +759,9 @@ static void on_ipc_command(const char *action, void *params, int id,
       gltf_update_transforms(&app.model);
       spring_bones_init(&app.model);
       renderer_set_model(&app.renderer, &app.model);
+      memset(&app.clip_bounds,0,sizeof(app.clip_bounds));
+      app.fit_zoom = 1.0f;
+      update_window_for_zoom();
       update_anim_correction_mode(app.model.anim_correction_mode);
       animator_set_model(&app.animator, &app.model);
       app.last_time = platform_get_time();
@@ -694,6 +823,8 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "set_auto_resize") == 0) {
     cJSON *en = cJSON_GetObjectItem(json, "enabled");
     app.auto_resize = en ? cJSON_IsTrue(en) : true;
+    if (!app.auto_resize) app.camera.viewport_height_scale = 1;
+    else if (app.has_current_anim) refit_animation_window();
     update_window_for_zoom();
     ipc_respond(&app.ipc, id, true, NULL);
   } else if (strcmp(action, "play") == 0) {
@@ -759,8 +890,9 @@ static void on_ipc_command(const char *action, void *params, int id,
         if (cfg.has_anim_seam_blend_time)
           g_anim_seam_blend_time_default = cfg.anim_seam_blend_time;
       }
+      apply_animation_metadata(&cfg);
       if (app.auto_resize)
-        compute_and_cache_bounds(path->valuestring);
+        refit_animation_window();
 #ifdef VRM_USE_OZZ
       // Prevent one-frame "snap" to the new clip before the client sends
       // blend_to: keep the current node TRS until play/blend commands arrive.
@@ -843,6 +975,9 @@ static void on_ipc_command(const char *action, void *params, int id,
     if (loop && cJSON_IsBool(loop)) {
       loop_specified = true;
       loop_remaining = cJSON_IsTrue(loop) ? -1 : 0;
+    }
+    if (loop_remaining != 0 && app.animator.loop_policy_set && !app.animator.loop_allowed) {
+      ipc_respond(&app.ipc, id, false, "Animation is marked loopable=0"); return;
     }
 
     if (idx) {
@@ -1156,8 +1291,14 @@ static int window_drag_start_pos[2] = {0, 0};
 static void on_resize(int w, int h, void *user) {
   (void)user;
   glViewport(0, 0, w, h);
+  if (w <= 0 || h <= 0) return;
   app.camera.aspect = (float)w / (float)h;
-  msaa_resize(&app, w, h);
+  if (app.auto_resize) {
+    int ww, wh;
+    platform_get_window_size(app.window,&ww,&wh);
+    app.camera.viewport_height_scale = wh / (fmaxf(100,550*app.model_scale)*fmaxf(app.fit_zoom,0.01f));
+  }
+  if (w != app.fb_width || h != app.fb_height) msaa_resize(&app, w, h);
   app.fb_width = w;
   app.fb_height = h;
 
@@ -1213,6 +1354,9 @@ static void on_mouse_button(int button, int action, void *user) {
       drag_start_x = model_mouse_x;
       drag_start_y = model_mouse_y;
     }
+  } else if (button == PLATFORM_MOUSE_RIGHT && action &&
+             model_hit_test(model_mouse_x, model_mouse_y)) {
+    app.chat_request_seq++;
   }
 }
 
@@ -1483,6 +1627,11 @@ int main(int argc, char *argv[]) {
       spring_bones_update(&app.model, dt);
       gltf_update_transforms(&app.model);
 
+      /* Balance against utterance activity, not individual phoneme amplitude,
+       * so pauses and packet gaps cannot make the emotion pump up and down. */
+      gltf_update_expression_balance(&app.model,
+          app.viseme.enabled && (app.audio_stream_open || audio_available(&app.audio) > 0), dt);
+
       /* Apply lip sync viseme weights to expressions */
       VisemeFrame vf;
       bool has_viseme = false;
@@ -1504,6 +1653,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    fit_overlay_window(false);
     update_input_region();
 
     platform_make_context_current(app.window);

@@ -16,6 +16,7 @@ void camera_init(OrbitCamera *cam) {
   cam->aspect = 1.0f;
   cam->near_clip = 0.1f;
   cam->far_clip = 100.0f;
+  cam->viewport_height_scale = 1.0f;
 
   glm_mat4_identity(cam->view);
   glm_mat4_identity(cam->proj);
@@ -47,4 +48,8 @@ void camera_update(OrbitCamera *cam) {
   /* Build projection matrix */
   glm_perspective(cam->fov, cam->aspect, cam->near_clip, cam->far_clip,
                   cam->proj);
+  if (cam->viewport_height_scale > 0) {
+    cam->proj[0][0] /= cam->viewport_height_scale;
+    cam->proj[1][1] /= cam->viewport_height_scale;
+  }
 }

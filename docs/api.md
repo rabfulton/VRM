@@ -371,3 +371,45 @@ Lip sync now starts enabled and is automatic in Studio. `play_audio_file` and PC
 ingest require no preceding enable command. The GUI has no lip-sync toggle.
 `lip_sync_enable` is retained as an advanced compatibility/debug command; explicit
 callers can still disable the analyzer. A new stream enables it as before.
+
+### Chat open request
+
+`get_state.data.chat_request_seq` is an optional unsigned 32-bit sequence counter.
+A right-button press on the avatar increments it; Studio notices a changed value
+and opens chat near the pointer. Controllers should establish a baseline on
+connect and not replay a previous session's request. Older runtimes omit the
+field. Chat API credentials and conversation handling live in Studio, not in
+the renderer IPC server.
+
+### Animation behaviour metadata
+
+Sibling `.cfg` files may set `loopable=0|1`, `startup=0|1` and `is_idle=0|1`.
+When `loopable=0`, requests to repeat through `set_playback.loop=true`,
+`blend_to.loop=true` or `blend_to.count>1` are rejected. The renderer keeps its
+geometric loop heuristic for automatic choices when the flag is absent.
+
+`get_state.data.animation_properties` contains the booleans `loopable`,
+`explicit_loopable`, `startup` and `is_idle`. `loopable` reports repeat permission;
+`loop` in the surrounding state still reports the current playback choice.
+
+```json
+{"action":"reload_animation_metadata"}
+```
+
+Reloads the current animation's flags from disk without seeking, resetting springs
+or reloading the asset. Returns an error if no animation is loaded or its config
+cannot be read. Disallowing repeats stops further loops after the current pass.
+Studio coordinates startup/idle behaviours; see [animation properties](animation-properties.md).
+
+### Rendered frame bounds
+
+```json
+{"action":"get_frame_bounds"}
+```
+
+Optional, synchronous readback diagnostic for clipping checks. Reports framebuffer
+`width`, `height`, `visible_pixels`, `edge_pixels`, and alpha-bound `min_x`, `max_x`,
+`min_y`, `max_y` in top-left pixel coordinates. Pixels with alpha greater than 2/255
+count as visible. Empty frames use -1 bounds. MSAA is resolved offscreen for stable
+readback under desktop occlusion. Avoid polling this every frame; it allocates a
+readback buffer and synchronizes with the GPU. See [fitting tests](window-fitting.md).

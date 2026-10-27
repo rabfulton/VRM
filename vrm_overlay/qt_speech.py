@@ -55,6 +55,11 @@ class SpeechController(QObject):
     error = Property(str, lambda self: self._error, notify=changed)
     busy = Property(bool, lambda self: self._busy, notify=changed)
 
+    @property
+    def generation(self):
+        """Session identity for coordinators; changes on cancellation/profile edits."""
+        return self._generation
+
     def _persist(self):
         self._error = ""
         self._settings.setValue("speech/profiles", json.dumps(self._preferences.to_dict()))

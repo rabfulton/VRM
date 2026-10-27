@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from vrm_overlay import IpcClient
 from vrm_overlay.speech import TtsAudioWorker
 from vrm_overlay.tts import SpeechConfig, create_tts
+from vrm_overlay.credentials import CredentialError, SystemCredentials
 
 DEFAULT_VRM_PATH = str((REPO_ROOT / "test.vrm").resolve())
 DEFAULT_ANIM_PATH = str((REPO_ROOT / "animation" / "Relax.vrma").resolve())
@@ -82,7 +83,7 @@ def setup_logger() -> logging.Logger:
 @dataclass
 class Settings:
     endpoint: str = DEFAULT_ENDPOINT
-    api_key: str = ""
+    api_key: str = field(default="", repr=False)
     model: str = DEFAULT_MODEL
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     overlay_socket_path: str = DEFAULT_SOCKET_PATH
@@ -107,15 +108,26 @@ class Settings:
                 merged["tts"] = asdict(SpeechConfig(provider="piper", model="piper",
                                                    executable=merged["piper_bin"], model_path=merged["piper_model"]))
             merged["tts"] = asdict(SpeechConfig.from_dict(merged["tts"]))
-            return cls(**merged)
+            settings = cls(**merged)
+            if settings.api_key:
+                # Migrate the old prototype's plaintext key only after the OS
+                # confirms storage. A locked keyring leaves the old file intact.
+                settings.save(path)
+            return settings
         except FileNotFoundError:
             return cls()
+        except CredentialError:
+            raise
         except Exception:
             return cls()
 
     def save(self, path: Path) -> None:
+        if self.api_key:
+            SystemCredentials().set(self.endpoint, self.api_key)
+        values = asdict(self)
+        values.pop("api_key", None)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(values, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 class SentenceSegmenter:
@@ -499,6 +511,11 @@ class App:
         self.config_path = _config_path()
         self.settings = Settings.load(self.config_path)
         if not self.settings.api_key:
+            try:
+                self.settings.api_key = SystemCredentials().get(self.settings.endpoint)
+            except CredentialError:
+                pass  # Settings can still be opened to configure a local API.
+        if not self.settings.api_key:
             self.settings.api_key = os.environ.get("OPENAI_API_KEY", "")
 
         self._colors = apply_theme(self.root, self.settings.theme)
@@ -642,8 +659,12 @@ class App:
         if dlg.result is None:
             return
 
+        try:
+            dlg.result.save(self.config_path)
+        except CredentialError as error:
+            messagebox.showerror("System keyring", str(error))
+            return
         self.settings = dlg.result
-        self.settings.save(self.config_path)
 
         self._colors = apply_theme(self.root, self.settings.theme)
         self.transcript.configure(

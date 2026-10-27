@@ -19,9 +19,9 @@ python3 control.py --model /path/to/avatar.vrm --animation-dir /path/to/animatio
 
 Studio connects to the default socket, starting a renderer if none is listening.
 Supply your own assets; the legacy local default `test.vrm` is not distributed.
-A new renderer loads the selected model, plays `Relax.vrma`
-when available, and enables blinking. Closing Studio stops only a renderer it
-started. `--attach` never starts or stops a renderer. Disconnect Studio before
+A new renderer loads the selected model, plays a configured startup once,
+then transitions to an idle and enables blinking. Closing the last Studio/chat window stops
+only a renderer this application started. `--attach` never starts or stops a renderer. Disconnect Studio before
 using a different controller; the runtime currently services one connection.
 
 Options: `--attach`, `--socket PATH`, `--model PATH`, `--animation-dir PATH`.
@@ -31,8 +31,12 @@ runtime preserves its current model, playback and behaviour state.
 ## Controls
 
 - Avatar: load a VRM/GLB/glTF file through the file picker.
-- Library: choose a folder, search its VRMA/GLB files, click a row, or use Previous/Next.
-  Selection follows the animation actually loaded; the list scrolls to that row.
+- Library: choose a folder, search its VRMA/GLB files, click a name to play, or use
+  Previous/Next. Check each animation the LLM may use; selections persist per folder
+  and update the chat prompt. Boxes work while disconnected and do not start playback.
+  Changing access stops the active chat turn. Selection follows the animation actually
+  loaded; the list scrolls to that row. **⋯** edits per-animation looping, startup
+  and idle flags; see [animation properties](animation-properties.md).
 - Playback: play/pause, seek, speed, loop and internal clip selection for multi-clip files.
 - Behaviours: automatic blink switch/rate/duration, automatic lip sync, audio playback/cancel,
   expression name/weight/application and clearing all expressions.
@@ -42,12 +46,17 @@ runtime preserves its current model, playback and behaviour state.
 - Animation: automatic foot planting with left/right contact diagnostics, ozz/legacy
   backend, coordinate correction, transition/seam times and
   per-joint-group transition time multipliers.
-- View: visibility, floating window, animation bounds fitting, shader, scale and camera.
+- View: visibility, floating window, [geometry-based animation fitting](window-fitting.md),
+  shader, scale and camera. The viewport expands for wide/displaced poses while
+  preserving the figure's pixel size.
 - Speech: provider/model profiles, CPU/Vulkan processing, preparation, voice preview and cancellation.
+- Chat: a compact separate conversation window with API settings, keyring credentials,
+  streamed speech and character cues. See [chat](chat.md).
 - Log: bounded renderer output and controller errors.
 
 Dragging the avatar moves its overlay window. Middle-drag orbits the camera;
-scroll scales the figure.
+scroll scales the figure. Right-click opens chat near the pointer. **Chat…** in
+Studio or Ctrl+Enter while this app has focus also opens chat; Escape hides it.
 
 ## Structure and ownership
 
@@ -56,6 +65,8 @@ scroll scales the figure.
 - `vrm_overlay/qml/TuningSlider.qml`: reusable slider with confirmed-state binding.
 - `vrm_overlay/qt_controller.py`: QObject properties/slots, QLocalSocket framing,
   ordered command transactions, timeouts, QProcess ownership and state polling.
+- `vrm_overlay/qt_chat.py`, `qt_chat_network.py`, `chat.py`, `credentials.py`: streamed
+  API chat, character cues, speech coordination and OS credential storage.
 - `src/main.c`: runtime commands and authoritative `get_state` snapshot.
 
 The GUI never waits synchronously for network replies. Load-animation, blend and
@@ -78,8 +89,10 @@ To check QML loading alone without a display or renderer:
 QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software ./control.py --check
 ```
 
-The chat/TTS Tkinter example remains an independent integration prototype; it is
-not part of Studio. Conversation controls can move into QML in a later milestone.
+The chat window shares Studio's IPC transport and selected speech profile. Its
+settings hold the character description and an automatically generated capability
+prompt. The older Tkinter example remains an independent integration prototype;
+Studio is the maintained chat interface.
 
 Motion diagnostics and interpretation are documented in [motion behaviour](motion.md). Group factors
 now multiply transition time; they no longer mask destination animation influence.

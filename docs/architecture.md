@@ -15,8 +15,10 @@ audio output and model state. Linux/X11 is the supported renderer platform.
 | Animation | `src/animator.c`, `src/ozz_bridge.cpp`, `src/transition.c` | Sampling, retargeting and inertial transition corrections |
 | Contacts | `src/foot_lock.cpp`, `src/pose.c` | Leg IK, contact history and shared world-transform propagation |
 | Secondary motion | `src/spring_bones.c` | Fixed-step hair/clothing simulation and proxy contacts |
+| Face | `src/expressions.c` | Logical expression inputs, bounded morph composition and speech-aware emotion strength |
 | Audio | `src/audio.c`, `src/viseme.c` | Miniaudio playback, PCM ring buffer and mouth analysis |
 | Scheduling | `src/event.c` | Continuous keyframe streams and discrete timed events |
+| Chat | `vrm_overlay/qt_chat.py`, `qt_chat_network.py`, `chat.py`, `credentials.py` | Streamed API conversation, OS keyring and allowlisted character cues |
 | Studio | `vrm_overlay/qt_controller.py`, `vrm_overlay/qml/` | Asynchronous IPC, renderer lifecycle, confirmed state and controls |
 | Speech | `vrm_overlay/tts.py`, `qt_speech.py`, `tts_install.py`, `tts_models.py` | Provider configuration, cancellable synthesis and pinned downloads |
 
@@ -37,7 +39,9 @@ at 120 Hz through a bounded accumulator, independently of render frame rate.
 See [motion](motion.md) and [foot planting](foot-planting.md) for the exact policies.
 
 VRM 0.x and 1.0 expression metadata are parsed into an expression map.
-`gltf_set_expression()` applies its morph binds. Vertex deltas are packed into
+`gltf_set_expression()` records expression inputs and composes their morph binds
+without setter-order dependence. Speech smoothly attenuates emotion presets while
+leaving vowels/blinks unchanged; see [facial balance](face.md). Vertex deltas are packed into
 a texture and consumed by the live shaders embedded in `src/renderer.c`.
 
 ## Clocks and events
@@ -68,3 +72,17 @@ Speech inference runs outside the GUI event loop. CrispASR is an authenticated
 loopback sidecar with resident models. Cancel invalidates pending results, clears
 queued playback and terminates owned inference; a later utterance can restart it.
 Provider changes do not change renderer PCM transport or lip-sync timing.
+
+Chat uses Qt Network SSE and an OS keyring worker. Its generated prompt reflects
+the actual model and checked library entries. `animation_library.py` assigns cue
+IDs; the controller persists per-folder choices and revokes active turns on access
+changes. A bounded parser separates caption text, speech tags
+and gesture/expression cues. The coordinator queues cues between utterances on
+Studio's transport; generation/profile/context guards discard cancelled work.
+Completed conversation context is kept in memory. See [chat](chat.md).
+
+Per-animation `loopable`, `startup` and `is_idle` flags share the native `.cfg`
+sidecars. `animation_config.py` handles Studio edits; native `anim_config.c`
+preserves them during tuning/cache writes. The renderer enforces loop permission,
+while Studio owns startup/idle selection. Ownership requires a state snapshot
+after each play transaction, and manual controls invalidate pending handoffs.

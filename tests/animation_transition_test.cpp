@@ -64,6 +64,17 @@ static void foot_transition_continuity(int fps) {
     animator_blend_to(&anim,0,0.45f,-1);animator_play(&anim,1);
     animator_update(&anim,0.0001f);
     assert(std::fabs(nodes[0].translation[1]-before)<0.0002f);
+    /* Metadata prevents forced repeats without replacing seam compatibility. */
+    animator_set_loop_policy(&anim,true,false);
+    assert(animator_compute_loop_remaining(&anim,0)==0);
+    animator_blend_to(&anim,0,0.2f,-1);
+    assert(anim.loop_remaining==0);
+    animator_set_animation(&anim,0);
+    assert(anim.loop_remaining==0);
+    animator_set_loop_policy(&anim,true,true);
+    assert(animator_compute_loop_remaining(&anim,0)==-1);
+    animator_blend_to(&anim,0,0.2f,0);
+    assert(anim.loop_remaining==0);
     animator_cleanup(&anim);ozz_bridge_snapshot_invalidate();
 }
 

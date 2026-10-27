@@ -23,6 +23,7 @@ typedef struct OrbitCamera {
   float aspect; /* Aspect ratio */
   float near_clip;
   float far_clip;
+  float viewport_height_scale; /* Expand transparent viewport without enlarging the avatar. */
 
   /* Computed matrices */
   mat4 view;

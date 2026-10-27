@@ -618,6 +618,81 @@ static void create_primitive_buffers(GltfPrimitive *prim,
   glBindVertexArray(0);
 }
 
+/* Retain compact per-joint geometry envelopes before source buffers are freed.
+ * Each skinned vertex is a weighted point inside these transformed envelopes. */
+static bool bounds_attribute(const tinygltf::Model &gltf, int index, size_t vertex,
+                             int components, float *values) {
+  if (index < 0 || index >= (int)gltf.accessors.size()) return false;
+  const auto &accessor = gltf.accessors[index];
+  if (accessor.bufferView < 0 || accessor.bufferView >= (int)gltf.bufferViews.size() ||
+      vertex >= accessor.count) return false;
+  const auto &view = gltf.bufferViews[accessor.bufferView];
+  if (view.buffer < 0 || view.buffer >= (int)gltf.buffers.size()) return false;
+  const auto &buffer = gltf.buffers[view.buffer].data;
+  int size = component_type_size(accessor.componentType);
+  int stride = accessor.ByteStride(view);
+  if (size <= 0 || stride < components * size) return false;
+  size_t offset = view.byteOffset + accessor.byteOffset + vertex * (size_t)stride;
+  if (offset > buffer.size() || (size_t)(components * size) > buffer.size()-offset) return false;
+  for (int k = 0; k < components; k++) {
+    const unsigned char *p = buffer.data()+offset+k*size;
+    float value = 0;
+    if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) memcpy(&value,p,4);
+    else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) value = *p / (accessor.normalized ? 255.0f : 1.0f);
+    else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) { uint16_t v; memcpy(&v,p,2); value = v / (accessor.normalized ? 65535.0f : 1.0f); }
+    else if (accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) { uint32_t v; memcpy(&v,p,4); value = (float)v; }
+    else return false;
+    if (!std::isfinite(value)) return false;
+    values[k] = value;
+  }
+  return true;
+}
+
+static void build_geometry_bounds(const tinygltf::Model &gltf, GltfModel *model) {
+  for (int i = 0; i < model->skin_count; i++) {
+    auto &skin = model->skins[i];
+    skin.joint_bounds = (GltfBounds *)calloc(skin.joint_count, sizeof(GltfBounds));
+  }
+  for (int i = 0; i < model->node_count; i++) {
+    const auto &node = model->nodes[i];
+    if (node.mesh_index < 0 || node.mesh_index >= model->mesh_count) continue;
+    auto &mesh = model->meshes[node.mesh_index];
+    const auto &source = gltf.meshes[node.mesh_index];
+    GltfSkin *skin = node.skin_index >= 0 && node.skin_index < model->skin_count ? &model->skins[node.skin_index] : nullptr;
+    for (int j = 0; j < mesh.primitive_count; j++) {
+      auto &primitive = mesh.primitives[j];
+      const auto &attributes = source.primitives[j].attributes;
+      auto position = attributes.find("POSITION"), joints = attributes.find("JOINTS_0"), weights = attributes.find("WEIGHTS_0");
+      if (position == attributes.end()) continue;
+      for (uint32_t v = 0; v < primitive.vertex_count; v++) {
+        float point[3];
+        if (!bounds_attribute(gltf,position->second,v,3,point)) continue;
+        GltfBounds vertex{};
+        gltf_bounds_include(&vertex,point);
+        for (int t = 0; t < primitive.morph_gpu_count; t++) {
+          const float *deltas = primitive.morph_targets[t].position_deltas;
+          if (!deltas) continue;
+          for (int k = 0; k < 3; k++) {
+            vertex.min[k] += fminf(deltas[v*3+k],0);
+            vertex.max[k] += fmaxf(deltas[v*3+k],0);
+          }
+        }
+        gltf_bounds_merge(&primitive.local_bounds,&vertex);
+        if (!primitive.has_skinning || !skin || !skin->joint_bounds || !skin->inverse_bind_matrices ||
+            joints == attributes.end() || weights == attributes.end()) continue;
+        float bone[4], influence[4];
+        if (!bounds_attribute(gltf,joints->second,v,4,bone) || !bounds_attribute(gltf,weights->second,v,4,influence)) continue;
+        for (int k = 0; k < 4; k++) {
+          if (influence[k] > 0 && bone[k] >= 0 && bone[k] < skin->joint_count) {
+            int joint = (int)bone[k];
+            gltf_bounds_transform(&skin->joint_bounds[joint], &vertex, skin->inverse_bind_matrices+joint*16);
+          }
+        }
+      }
+    }
+  }
+}
+
 extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
   tinygltf::TinyGLTF loader;
   tinygltf::Model gltf;
@@ -1451,6 +1526,8 @@ extern "C" bool gltf_load_impl(GltfModel *model, const char *path) {
   model->anim_global_auto_correction[3] = 1.0f;
   gltf_update_transforms(model);
 
+  build_geometry_bounds(gltf, model);
+
   for (auto &img : gltf.images) {
     img.image.clear();
     img.image.shrink_to_fit();
@@ -1527,6 +1604,7 @@ extern "C" void gltf_unload_impl(GltfModel *model) {
   for (int i = 0; i < model->skin_count; i++) {
     free(model->skins[i].joints);
     free(model->skins[i].inverse_bind_matrices);
+    free(model->skins[i].joint_bounds);
   }
   free(model->skins);
 

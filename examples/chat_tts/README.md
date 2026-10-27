@@ -1,7 +1,9 @@
 # Chat and local speech example
 
-A separate Tkinter integration prototype: stream a Chat Completions reply from an
-OpenAI-compatible endpoint, split it into sentences, synthesize local speech and
+Studio now has [integrated QML chat](../../docs/chat.md), which is the recommended
+interface. This separate Tkinter integration prototype shows how to stream a Chat
+Completions reply from an OpenAI-compatible endpoint, split it into sentences,
+synthesize local speech and
 send bounded 24 kHz mono PCM to the renderer with automatic lip sync.
 
 ## Setup
@@ -51,4 +53,8 @@ runtime playback queue drained; device latency can add a small delay.
 The shared client matches every acknowledgement by request ID. See the
 [IPC reference](../../docs/api.md) and [architecture](../../docs/architecture.md).
 Headless transport/audio/cancellation checks run with `make test`, without an AI
-service or voice download. Conversation controls are not yet part of Studio.
+service or voice download.
+
+API keys entered in this example are stored in the OS keyring, not its JSON
+settings. Existing plaintext keys migrate only after confirmed keyring storage.
+An unavailable/locked keyring leaves the original file intact and reports an error.

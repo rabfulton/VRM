@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 import json
+import hashlib
 from pathlib import Path
 import time
 from typing import Callable
@@ -11,6 +12,9 @@ from typing import Callable
 from PySide6.QtCore import QObject, Property, QProcess, QSettings, QTimer, QUrl, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
 from .qt_speech import SpeechController
+from .qt_chat import ChatController
+from .animation_library import describe_animations
+from .animation_config import load_properties, save_properties
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -80,9 +84,14 @@ class Controller(QObject):
         self._starting = False
         self._owns_process = False
         self._initialised = False
+        self._chat_request_seq = None
         self._closing = False
         self._deadline = 0
         self._tuning = {}
+        self._motion = None
+        self._motion_generation = 0
+        self._state_revision = 0
+        self._idle_cursor = 0
         self._socket = QLocalSocket(self)
         self._socket.setReadBufferSize(1024 * 1024)
         self._socket.connected.connect(self._transport_connected)
@@ -108,6 +117,7 @@ class Controller(QObject):
         self._debounce.setInterval(100)
         self._debounce.timeout.connect(self._flush_tuning)
         self._speech = SpeechController(self._settings, self._queue, lambda: self._connected, self)
+        self._chat = ChatController(self, self._settings, self)
         self.scanAnimations()
 
     connected = Property(bool, lambda self: self._connected, notify=changed)
@@ -119,11 +129,13 @@ class Controller(QObject):
     audioPath = Property(str, lambda self: self._audio, notify=changed)
     animationFolder = Property(str, lambda self: self._folder, notify=libraryChanged)
     animationFiles = Property("QVariantList", lambda self: self._files, notify=libraryChanged)
+    llmAnimationCount = Property(int, lambda self: sum(f["llm_enabled"] for f in self._files), notify=libraryChanged)
     selectedAnimation = Property(int, lambda self: self._selected, notify=libraryChanged)
     state = Property("QVariantMap", lambda self: self._state, notify=stateChanged)
     logText = Property(str, lambda self: "\n".join(self._logs), notify=logChanged)
     ownsServer = Property(bool, lambda self: self._owns_process, notify=changed)
     speech = Property(QObject, lambda self: self._speech, constant=True)
+    chat = Property(QObject, lambda self: self._chat, constant=True)
 
     def _log(self, message):
         self._logs.append(message)
@@ -190,6 +202,7 @@ class Controller(QObject):
             self._fail(self._socket.errorString())
 
     def _transport_connected(self):
+        self._chat_request_seq = None
         self._retry.stop()
         self._starting = False
         self._buffer.clear()
@@ -208,17 +221,12 @@ class Controller(QObject):
         if self._owns_process and not self._initialised:
             self._initialised = True
             if not self._state["model_loaded"] and Path(self._model).is_file():
-                commands = [{"action": "load", "path": self._model}]
-                if self._state["ozz_available"]:
-                    commands.append({"action": "set_anim_backend", "backend": "ozz"})
-                relaxed = next((f for f in self._files if f["name"].lower() == "relax"), None)
-                if relaxed:
-                    commands.extend(self._animation_commands(relaxed["path"], loop=True))
-                commands.append({"action": "auto_blink_enable", "enabled": True})
-                self._queue(commands, "Load avatar")
+                self._start_avatar(self._model)
 
     @Slot()
     def disconnectRuntime(self):
+        self._invalidate_motion()
+        self._chat.stop()
         if self._speech.busy and self._socket.state() == QLocalSocket.ConnectedState:
             self._socket.write(b'{"action":"audio_cancel"}\n')
             self._socket.flush()
@@ -353,11 +361,18 @@ class Controller(QObject):
             self._fail("This runtime does not support the Qt controller. Rebuild with make.")
             return False
         self._state = state
+        self._state_revision += 1
         selected = next((i for i, f in enumerate(self._files) if f["path"] == state["animation_path"]), -1)
         if selected != self._selected:
             self._selected = selected
             self.libraryChanged.emit()
         self.stateChanged.emit()
+        QTimer.singleShot(0, self._maybe_idle)
+        sequence = state.get("chat_request_seq")
+        if isinstance(sequence, int):
+            previous, self._chat_request_seq = self._chat_request_seq, sequence
+            if previous is not None and sequence != previous:
+                self._chat.openNearCursor()
         return True
 
     @Slot()
@@ -370,6 +385,9 @@ class Controller(QObject):
         if not self._connected:
             self._fail("Connect to the renderer first.")
             return
+        if action in ("play", "pause", "set_time", "set_playback", "set_animation", "blend_to", "load_animation", "load", "unload"):
+            self._invalidate_motion()
+            self._chat.stop()
         if self._tuning:
             self._flush_tuning()
         self._queue([dict(values, action=action)], action.replace("_", " ").capitalize())
@@ -393,21 +411,66 @@ class Controller(QObject):
             self._fail(f"Model file does not exist: {model}")
             return
         self._model = str(model)
+        self._chat.stop()
         self._settings.setValue("model", self._model)
         self.changed.emit()
-        self.command("load", {"path": self._model})
+        self._start_avatar(self._model)
 
     @Slot()
     def scanAnimations(self):
         folder = Path(self._folder)
+        previous = {(f["llm_id"], f["path"], f["loopable"], f["startup"], f["is_idle"]) for f in self._files if f["llm_enabled"]}
+        key = self._animation_choices_key()
+        saved = self._settings.value(key)
         try:
-            self._files = [dict(name=p.stem, file=p.name, path=str(p.resolve()))
+            choices = json.loads(str(saved)) if saved is not None else None
+            if saved is not None and not isinstance(choices, dict):
+                choices = {}
+        except (ValueError, TypeError):
+            choices = {}
+        try:
+            files = [dict(name=p.stem, file=p.name, path=str(p.resolve()), **load_properties(p))
                            for p in sorted(folder.iterdir(), key=lambda p: p.name.casefold())
                            if p.is_file() and p.suffix.lower() in (".vrma", ".glb")] if folder.is_dir() else []
+            self._files = describe_animations(files, choices)
         except OSError as error:
             self._files = []
             self._fail(f"Cannot read animation folder: {error}")
+        if folder.is_dir():
+            # Remember the first scan too: subsequently added files stay opt-in.
+            choices = dict(choices or {})
+            choices.update({f["file"]: f["llm_enabled"] for f in self._files})
+            self._settings.setValue(key, json.dumps(choices))
+            self._settings.sync()
+        current = {(f["llm_id"], f["path"], f["loopable"], f["startup"], f["is_idle"]) for f in self._files if f["llm_enabled"]}
+        if current != previous:
+            self._chat.stop()
         self._selected = next((i for i, f in enumerate(self._files) if f["path"] == self._state["animation_path"]), -1)
+        self.libraryChanged.emit()
+
+    def _animation_choices_key(self):
+        digest = hashlib.sha256(self._folder.encode()).hexdigest()
+        return "chat/animation_libraries/" + digest
+
+    @Slot(int, bool)
+    def setAnimationLlmEnabled(self, index, enabled):
+        if not 0 <= index < len(self._files):
+            return
+        if self._files[index]["llm_enabled"] == enabled:
+            return
+        self._chat.stop()
+        self._files[index] = dict(self._files[index], llm_enabled=enabled)
+        # Keep choices for temporarily missing files as well.
+        try:
+            choices = json.loads(str(self._settings.value(self._animation_choices_key(), "{}")))
+            if not isinstance(choices, dict):
+                choices = {}
+        except (TypeError, ValueError):
+            choices = {}
+        choices.update({f["file"]: f["llm_enabled"] for f in self._files})
+        self._settings.setValue(self._animation_choices_key(), json.dumps(choices))
+        self._settings.setValue("animations", self._folder)
+        self._settings.sync()
         self.libraryChanged.emit()
 
     @Slot(str)
@@ -417,19 +480,25 @@ class Controller(QObject):
             self._fail(f"Animation folder does not exist: {folder}")
             return
         self._folder = str(folder)
+        self._invalidate_motion()
+        self._chat.stop()
         self._settings.setValue("animations", self._folder)
         self.scanAnimations()
 
     def _animation_commands(self, path, loop=None):
+        entry = next((f for f in self._files if f["path"] == path), None)
+        loopable = entry["loopable"] if entry else True
         return [{"action": "load_animation", "path": path},
                 {"action": "blend_to", "index": 0, "duration": self._state["blend"]["duration"],
-                 "loop": self._state["loop"] if loop is None else loop},
+                 "loop": loopable if loop is None else loop and loopable},
                 {"action": "play", "speed": self._state["speed"]}]
 
     @Slot(int)
     def playAnimation(self, index):
         if not self._connected or not self._state["model_loaded"] or not 0 <= index < len(self._files):
             return
+        self._invalidate_motion()
+        self._chat.stop()
         self._flush_tuning()
         self._queue(self._animation_commands(self._files[index]["path"]), "Play " + self._files[index]["name"])
 
@@ -438,6 +507,105 @@ class Controller(QObject):
         if self._files:
             index = (self._selected + delta) % len(self._files) if self._selected >= 0 else 0
             self.playAnimation(index)
+
+    @Slot(str, "QVariantMap", result=bool)
+    def saveAnimationProperties(self, path, values):
+        entry = next((f for f in self._files if f["path"] == path), None)
+        if entry is None:
+            self._fail("Choose an animation from the current library.")
+            return False
+        try:
+            save_properties(path, values)
+        except (OSError, ValueError, UnicodeError) as error:
+            self._fail("Could not save animation properties: " + str(error))
+            return False
+        self._chat.stop()
+        self._invalidate_motion()
+        self.scanAnimations()
+        if self._connected and self._state["animation_path"] == path:
+            self._queue([{"action": "reload_animation_metadata"}], "Apply animation properties")
+        self._error = ""
+        self.changed.emit()
+        return True
+
+    def _invalidate_motion(self):
+        self._motion_generation += 1
+        self._motion = None
+
+    def _choose_idle(self):
+        entries = [f for f in self._files if f["is_idle"] and not f.get("config_error")]
+        if not entries:
+            return None
+        entry = entries[self._idle_cursor % len(entries)]
+        self._idle_cursor += 1
+        return entry
+
+    def _queue_owned_motion(self, commands, label, path, mode, *, model=None, done=None, failed=None, guard=None):
+        self._invalidate_motion()
+        token = self._motion_generation
+        expected_model = model or self._state["model_path"]
+        current = lambda: token == self._motion_generation and self._connected and (guard is None or guard())
+        def completed(reply):
+            if current():
+                self._motion = dict(path=path, model=expected_model, mode=mode, after_revision=self._state_revision)
+                if done:
+                    done(reply)
+        def rejected(message):
+            if current():
+                self._motion = None
+                (failed or self._fail)(message)
+        self._queue(commands, label, done=completed, failed=rejected, guard=current)
+
+    def _start_avatar(self, path):
+        self._chat.stop()
+        self._invalidate_motion()
+        self._idle_cursor = 0
+        self._settings.setValue("model", path)
+        self._settings.setValue("animations", self._folder)
+        commands = [{"action": "load", "path": path}]
+        if self._state["ozz_available"]:
+            commands.append({"action": "set_anim_backend", "backend": "ozz"})
+        startup = next((f for f in self._files if f["startup"] and not f.get("config_error")), None)
+        entry = startup or self._choose_idle()
+        if entry:
+            commands.extend(self._animation_commands(entry["path"], loop=False if startup else entry["loopable"]))
+        commands.append({"action": "auto_blink_enable", "enabled": True})
+        if entry:
+            self._queue_owned_motion(commands, "Load avatar", entry["path"], "startup" if startup else "idle", model=path)
+        else:
+            token = self._motion_generation
+            self._queue(commands, "Load avatar", guard=lambda: token == self._motion_generation and self._connected)
+
+    def queueCharacterAnimation(self, commands, label, *, done=None, failed=None, guard=None):
+        path = commands[0]["path"]
+        self._queue_owned_motion(commands, label, path, "action", done=done, failed=failed, guard=guard)
+
+    def _maybe_idle(self):
+        owner = self._motion
+        if owner is None or not self._connected or self.busy or self._closing:
+            return
+        if self._state_revision <= owner["after_revision"]:
+            return  # Wait for a state snapshot taken after the play transaction.
+        state = self._state
+        if not state["model_loaded"] or state["model_path"] != owner["model"] or state["animation_path"] != owner["path"]:
+            self._invalidate_motion()
+            return
+        if not state["playing"]:
+            return
+        entry = next((f for f in self._files if f["path"] == owner["path"]), None)
+        if owner["mode"] == "action" and entry and entry["is_idle"] and state["loop"]:
+            owner["mode"] = "idle"
+        finished = not state["loop"] and state["duration"] > 0 and state["time"] >= state["duration"] - 0.0001
+        if owner["mode"] == "action":
+            if self._chat.busy or self._speech.busy or (not finished and not state["loop"]):
+                return
+        elif not finished:
+            return
+        idle = self._choose_idle()
+        if idle:
+            self._queue_owned_motion(self._animation_commands(idle["path"]), "Return to idle", idle["path"], "idle")
+        else:
+            self._invalidate_motion()
 
     @Slot(str)
     def playAudio(self, path):
@@ -454,6 +622,8 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         self._closing = True
+        self._invalidate_motion()
+        self._chat.shutdown()
         if self._speech.busy and self._socket.state() == QLocalSocket.ConnectedState:
             self._socket.write(b'{"action":"audio_cancel"}\n')
             self._socket.flush()

@@ -25,7 +25,7 @@ ifeq ($(USE_OZZ),1)
   LDFLAGS += $(OZZ_LIBS)
 endif
 
-C_SRC = src/main.c src/platform.c src/renderer.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/platform.c src/renderer.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp src/foot_lock.cpp
 ifeq ($(USE_OZZ),1)
   CXX_SRC += src/ozz_bridge.cpp
@@ -37,7 +37,7 @@ OBJ = $(C_OBJ) $(CXX_OBJ)
 
 TARGET = vrm-overlay
 
-.PHONY: all clean debug test test-sanitize test-ui test-speech studio
+.PHONY: all clean debug test test-sanitize test-ui test-speech test-chat test-fit studio
 
 all: $(TARGET)
 
@@ -93,6 +93,15 @@ $(TEST_BUILD_DIR)/spring-test: tests/spring_test.c src/spring_bones.c src/spring
 $(TEST_BUILD_DIR)/viseme-default-test: tests/viseme_default_test.c src/viseme.c src/viseme.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/viseme_default_test.c src/viseme.c -o $@ -lm
 
+$(TEST_BUILD_DIR)/expression-test: tests/expression_test.c src/expressions.c src/gltf_loader.h src/viseme.c src/viseme.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/expression_test.c src/expressions.c src/viseme.c -o $@ -lm
+
+$(TEST_BUILD_DIR)/anim-config-test: tests/anim_config_test.c src/anim_config.c src/anim_config.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/anim_config_test.c src/anim_config.c -o $@ -lm
+
+$(TEST_BUILD_DIR)/bounds-test: tests/bounds_test.c src/bounds.c src/camera.c src/camera.h src/pose.c src/gltf_loader.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) -Ideps/cglm/include tests/bounds_test.c src/bounds.c src/camera.c src/pose.c -o $@ -lm
+
 ifeq ($(USE_OZZ),1)
 $(TEST_BUILD_DIR)/animator.o: src/animator.c src/animator.h src/ozz_bridge.h src/foot_lock.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) -DVRM_USE_OZZ=1 -c src/animator.c -o $@
@@ -113,13 +122,16 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
 	$(TEST_BUILD_DIR)/transition-test
 	$(TEST_BUILD_DIR)/spring-test
 	$(TEST_BUILD_DIR)/viseme-default-test
+	$(TEST_BUILD_DIR)/expression-test
+	$(TEST_BUILD_DIR)/anim-config-test
+	$(TEST_BUILD_DIR)/bounds-test
 	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) python3 -m unittest discover -s tests -v
 
 test-sanitize:
@@ -136,3 +148,10 @@ test-ui: all
 SPEECH_DEVICE ?= vulkan
 test-speech: all
 	python3 tests/qt_smoke.py --speech --speech-device $(SPEECH_DEVICE)
+
+# Streamed local API fixture + real renderer and Nano. No paid LLM request.
+test-chat: all
+	python3 tests/qt_smoke.py --chat --speech-device $(SPEECH_DEVICE)
+
+test-fit: all
+	python3 tests/push_fit_smoke.py

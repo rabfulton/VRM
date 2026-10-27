@@ -29,17 +29,27 @@ ApplicationWindow {
     property var physics: runtime.physics || ({garment_collisions: false, garment_chains: 0, arm_colliders: 0, generated_arm_colliders: 0, contacts: 0, unresolved_contacts: 0, max_penetration: 0, garment_arm_penetration: 0})
     property var planting: runtime.foot_lock || ({enabled: false, supported: 0, pelvis_offset: 0, left: {supported: false, planted: false, weight: 0, error: 0}, right: {supported: false, planted: false, weight: 0, error: 0}})
     property bool canControl: bridge.connected && runtime.model_loaded
+    property var playingEntry: bridge.animationFiles.find(entry => entry.path === runtime.animation_path)
     property var filteredAnimations: {
         let result = []
         let files = bridge.animationFiles
         for (let i = 0; i < files.length; i++) {
             if (files[i].name.toLowerCase().includes(search.text.toLowerCase()))
-                result.push({ name: files[i].name, file: files[i].file, path: files[i].path, sourceIndex: i })
+                result.push({ name: files[i].name, file: files[i].file, path: files[i].path,
+                              llm_enabled: files[i].llm_enabled, llm_id: files[i].llm_id, sourceIndex: i })
         }
         return result
     }
     function footStatus(foot) { return !foot.supported ? "unmapped" : foot.planted ? (foot.weight >= 0.99 ? "planted" : "planting") : foot.weight > 0 ? "releasing" : "free" }
     function seconds(value) { return Number(value).toFixed(2) + "s" }
+
+    ChatWindow { id: chatWindow; chat: bridge.chat; palette: window.palette; font: window.font }
+    AnimationProperties { id: animationProperties; controller: bridge; parent: Overlay.overlay }
+    Shortcut {
+        sequence: "Ctrl+Return"
+        context: Qt.ApplicationShortcut
+        onActivated: chatWindow.visible ? chatWindow.hide() : bridge.chat.open()
+    }
 
     FileDialog {
         id: modelDialog
@@ -71,6 +81,7 @@ ApplicationWindow {
                 Label { text: "Animation & behaviour workspace"; color: "#9eacc0" }
             }
             Item { Layout.fillWidth: true }
+            Button { objectName: "openChatButton"; text: "Chat…"; onClicked: bridge.chat.open(); ToolTip.visible: hovered; ToolTip.text: "Chat with your companion (Ctrl+Enter)" }
             BusyIndicator { running: bridge.busy; visible: running; Layout.preferredWidth: 30; Layout.preferredHeight: 30 }
             Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
             Label { text: bridge.status; Layout.maximumWidth: 240; elide: Text.ElideRight }
@@ -121,7 +132,7 @@ ApplicationWindow {
                         ToolButton { text: "↻"; Accessible.name: "Refresh animation library"; onClicked: bridge.scanAnimations() }
                     }
                     Label { text: bridge.animationFolder; font.pixelSize: 11; color: "#9eacc0"; elide: Text.ElideMiddle; Layout.fillWidth: true }
-                    TextField { id: search; objectName: "animationSearch"; placeholderText: "Search animations"; Layout.fillWidth: true }
+                    TextField { id: search; objectName: "animationSearch"; placeholderText: "Search animations"; placeholderTextColor: "#9eacc0"; Layout.fillWidth: true }
                     ListView {
                         id: animationList
                         objectName: "animationList"
@@ -136,10 +147,42 @@ ApplicationWindow {
                         delegate: ItemDelegate {
                             required property var modelData
                             width: ListView.view.width
-                            text: modelData.name
                             highlighted: bridge.selectedAnimation === modelData.sourceIndex
-                            enabled: window.canControl && !bridge.busy
-                            onClicked: bridge.playAnimation(modelData.sourceIndex)
+                            Accessible.name: "Play " + modelData.name
+                            onClicked: { if (window.canControl && !bridge.busy) bridge.playAnimation(modelData.sourceIndex) }
+                            contentItem: RowLayout {
+                                spacing: 6
+                                CheckBox {
+                                    objectName: "llmAnimationCheck" + modelData.sourceIndex
+                                    checked: modelData.llm_enabled
+                                    indicator: Rectangle {
+                                        implicitWidth: 20; implicitHeight: 20
+                                        x: parent.leftPadding; y: (parent.height - height) / 2
+                                        radius: 4
+                                        color: parent.checked ? "#52cbb4" : "#111822"
+                                        border.color: parent.activeFocus ? "#e5edf6" : "#8793a5"
+                                        Text { anchors.centerIn: parent; text: "✓"; color: "#0e211e"; font.bold: true; visible: parent.parent.checked }
+                                    }
+                                    onToggled: bridge.setAnimationLlmEnabled(modelData.sourceIndex, checked)
+                                    Accessible.name: "Allow " + modelData.name + " for LLM"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Allow LLM to use [[animation:" + modelData.llm_id + "]]"
+                                }
+                                Label {
+                                    text: modelData.name
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    enabled: window.canControl && !bridge.busy
+                                }
+                                ToolButton {
+                                    objectName: "animationPropertiesButton" + modelData.sourceIndex
+                                    text: "⋯"
+                                    Accessible.name: "Properties for " + modelData.name
+                                    onClicked: animationProperties.edit(bridge.animationFiles[modelData.sourceIndex])
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "Looping, startup and idle properties"
+                                }
+                            }
                             ToolTip.visible: hovered
                             ToolTip.text: modelData.file
                         }
@@ -151,7 +194,8 @@ ApplicationWindow {
                             color: "#9eacc0"; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                         }
                     }
-                    Label { text: animationList.count + " animations · click to play"; color: "#9eacc0"; font.pixelSize: 12 }
+                    Label { text: animationList.count + " animations · " + bridge.llmAnimationCount + " enabled for LLM"; color: "#9eacc0"; font.pixelSize: 12 }
+                    Label { text: "Click a name to play · check to allow LLM"; color: "#9eacc0"; font.pixelSize: 11 }
                     RowLayout {
                         Layout.fillWidth: true
                         Button {
@@ -221,7 +265,7 @@ ApplicationWindow {
                             }
                             Switch {
                                 objectName: "loopSwitch"
-                                text: "Loop"; checked: window.runtime.loop; enabled: window.canControl
+                                text: "Loop"; checked: window.runtime.loop; enabled: window.canControl && (!window.playingEntry || window.playingEntry.loopable)
                                 onToggled: bridge.command("set_playback", {loop: checked})
                             }
                         }

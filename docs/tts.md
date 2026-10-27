@@ -69,15 +69,17 @@ CrispASR runs as an owned, authenticated loopback sidecar, loading the selected
 model once and reusing it through `/v1/audio/speech`. A worker converts WAV output
 to 24 kHz mono signed 16-bit PCM. Studio uses its existing asynchronous IPC
 connection, buffers roughly half a second, and waits for drain before Ready.
-The chat example retains its bounded sentence queue and one-second audio window.
+Studio chat coordinates a bounded queue of speech and character cues over the
+same transport. The older chat example retains a one-second audio window.
 
 Cancelling native inference terminates our sidecar because an HTTP disconnect
 alone does not guarantee computation stops. The next utterance reloads it. Idle
 models remain resident until a profile change or exit. Studio preview receives a
 complete WAV before playback; it does not claim token-level audio streaming.
-The chat example synthesizes sentence by sentence. Studio preview has a 4096-character
-limit; longer-form chunked speech and a managed voice library remain planned work
-in the [roadmap](roadmap.md).
+Studio chat synthesizes sentence by sentence as API text streams, with cues and
+cancellation managed by the [chat controller](chat.md). Voice preview retains its
+4096-character limit. True audio-token streaming, sentence prefetch and a managed
+voice library remain planned work in the [roadmap](roadmap.md).
 
 The default uses the baked voice. Custom voice packs are passed to the engine;
 reference-recording cloning has additional engine-specific requirements. Runtime

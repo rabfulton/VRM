@@ -5,6 +5,12 @@
 #include <stddef.h>
 
 typedef struct {
+    bool loopable;
+    bool startup;
+    bool is_idle;
+    bool has_loopable;
+    bool has_startup;
+    bool has_is_idle;
     float spring_stiffness;
     float spring_drag;
     float spring_gravity;

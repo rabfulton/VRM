@@ -30,6 +30,7 @@ from vrm_overlay.qt_controller import Controller, ROOT
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--speech", action="store_true", help="Also synthesize Nano through the real CrispASR sidecar")
+    parser.add_argument("--chat", action="store_true", help="Exercise a streamed local LLM fixture with real Nano speech and avatar cues")
     parser.add_argument("--speech-device", choices=["cpu", "vulkan"], default="vulkan")
     parser.add_argument("--model", type=Path, default=Path(os.environ.get("VRM_SMOKE_MODEL", ROOT / "test.vrm")))
     parser.add_argument("--animation-dir", type=Path, default=Path(os.environ.get("VRM_SMOKE_ANIMATIONS", ROOT / "animation")))
@@ -75,6 +76,12 @@ def main():
         try:
             bridge.connectRuntime()
             wait(lambda: bridge.connected and bridge.state["model_loaded"] and not bridge.busy)
+            startup = next((f for f in bridge.animationFiles if f["startup"]), None)
+            if startup and any(f["is_idle"] for f in bridge.animationFiles):
+                assert bridge._motion and bridge._motion["mode"] == "startup", bridge._motion
+                assert not bridge.state["loop"], "Startup must play once"
+                wait(lambda: bridge._motion and bridge._motion["mode"] == "idle", timeout=60)
+                print("Startup check: entrance completed once, then transitioned to configured idle", flush=True)
             assert bridge.state["lip_sync"], "Lip sync should be enabled before any audio command"
             physics=bridge.state["physics"]
             if args.reference_fixture:
@@ -179,19 +186,75 @@ def main():
                 assert "Speaking" in statuses, statuses
                 assert bridge.state["lip_sync"]
                 print(f"Speech check: real Nano/{args.speech_device}, synthesized PCM playback and drain passed", flush=True)
+            if args.chat:
+                from chat_http_fixture import ChatServer
+                server = ChatServer(["[[expression:happy]][gasp] Hello! ", "[[animation:thinking]]I am your desktop companion. [[animation:idle]]"])
+                try:
+                    speech = bridge.speech
+                    speech.selectModel("chatterbox-nano")
+                    speech.setOption("device", args.speech_device)
+                    statuses = []
+                    speech.changed.connect(lambda: statuses.append(speech.status))
+                    face_scales = []
+                    def record_face():
+                        face = bridge.state.get("face", {})
+                        if face.get("speech_active"):
+                            face_scales.append(face["emotion_scale"])
+                    bridge.stateChanged.connect(record_face)
+                    chat = bridge.chat
+                    assert chat.saveSettings({**chat.config, "endpoint": server.endpoint, "model": "local-fixture", "no_key": True})
+                    click("openChatButton")
+                    from PySide6.QtCore import QObject
+                    chat_window = window.findChild(QObject, "chatWindow")
+                    chat_window.findChild(QQuickItem, "chatInput").setProperty("text", "Say hello and show a thinking pose.")
+                    item = chat_window.findChild(QQuickItem, "sendChatButton")
+                    point = item.mapToScene(item.boundingRect().center())
+                    QTest.mouseClick(chat_window, Qt.LeftButton, Qt.NoModifier, QPoint(round(point.x()), round(point.y())))
+                    wait(lambda: bool(server.requests) and not chat.busy, timeout=900)
+                    assert not chat.error, chat.error
+                    assert "Speaking" in statuses, statuses
+                    assert face_scales and min(face_scales) < 0.6, face_scales
+                    assert "[[" not in chat.messages[-1]["text"], chat.messages
+                    assert bridge.state["lip_sync"]
+                    wait(lambda: bridge.state["animation_path"].endswith("Relax.vrma"))
+                    wait(lambda: bridge.state.get("face", {}).get("emotion_scale", 0) > 0.99)
+                    bridge.stateChanged.disconnect(record_face)
+                    chat_window.grabWindow().save("/tmp/vrm-chat-connected.png")
+                    chat_window.close()
+                    print(f"Chat check: streamed API fixture, real Nano/{args.speech_device}, QML send, expressions, thinking/idle gestures and playback drain passed", flush=True)
+                finally:
+                    server.close()
             window.grabWindow().save("/tmp/vrm-studio-connected.png")
             # Verify persistence without changing a source animation's tuning file.
             copied = root / "tuning.vrma"
             shutil.copyfile(bridge.animationFiles[0]["path"], copied)
+            from vrm_overlay.animation_config import save_properties
+            save_properties(copied, dict(loopable=False, startup=False, is_idle=False))
             bridge.setAnimationFolder(str(root))
             bridge.playAnimation(0)
             wait(lambda: bridge.state["animation_path"] == str(copied) and not bridge.busy)
+            assert not bridge.state["animation_properties"]["loopable"]
+            for values in ({"action": "set_playback", "loop": True},
+                           {"action": "blend_to", "index": 0, "loop": True},
+                           {"action": "blend_to", "index": 0, "count": 2}):
+                rejected = []
+                bridge._queue([values], "Check one-shot restriction", failed=rejected.append)
+                wait(lambda: bool(rejected))
+                assert "loopable=0" in rejected[0], rejected
             command("set_spring", {"stiffness": 1.25})
             command("set_blend", {"seam": 0.2})
             command("save_tuning", {})
             saved = copied.with_suffix(".cfg").read_text()
             assert "spring.stiffness=1.250" in saved, saved
             assert "anim.seam_blend_time=0.200" in saved, saved
+            assert "loopable=0" in saved and "startup=0" in saved and "is_idle=0" in saved, saved
+            command("pause", {})
+            paused_time = bridge.state["time"]
+            assert bridge.saveAnimationProperties(str(copied), dict(loopable=True, startup=False, is_idle=False))
+            wait(lambda: not bridge.busy and bridge.state["animation_properties"]["loopable"])
+            assert abs(bridge.state["time"] - paused_time) < 0.02, bridge.state["time"]
+            command("set_playback", {"loop": True}, lambda: bridge.state["loop"])
+            print("Animation metadata check: loop restrictions, config preservation and live reload without seeking passed", flush=True)
             print("Qt Quick smoke passed: all animations, next/previous, pause/seek/speed, blinking, expressions, springs, shaders and audio.")
         finally:
             bridge.shutdown()

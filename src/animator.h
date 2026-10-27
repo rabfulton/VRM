@@ -19,6 +19,8 @@ typedef struct {
     /* Looping control */
     int loop_remaining;       /* -1 = infinite, 0 = no loop, >0 = repeats left */
     bool current_animation_loopable;
+    bool loop_policy_set;
+    bool loop_allowed;
     FootLock foot_lock;
 } Animator;
 
@@ -49,6 +51,7 @@ void animator_set_animation(Animator *anim, int index);
 void animator_blend_to(Animator *anim, int index, float duration, int loop_remaining);
 float animator_compute_auto_blend_time(Animator *anim, int to_anim);
 int animator_compute_loop_remaining(Animator *anim, int index);
+void animator_set_loop_policy(Animator *anim, bool specified, bool allowed);
 void animator_cleanup(Animator *anim);
 void animator_sample_frame(GltfModel *model, int anim_idx, float time);
 

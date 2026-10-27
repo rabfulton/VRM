@@ -56,6 +56,8 @@ void animator_set_model(Animator *anim, GltfModel *model) {
   foot_lock_set_model(&anim->foot_lock, model);
   foot_lock_new_clip(&anim->foot_lock);
   anim->model = model;
+  anim->loop_policy_set = false;
+  anim->loop_allowed = true;
   anim->time = 0;
   anim->current_animation = (model && model->animation_count > 0) ? 0 : -1;
   anim->current_animation_loopable =
@@ -539,7 +541,7 @@ void animator_set_animation(Animator *anim, int index) {
     anim->current_animation = index;
     anim->time = 0;
     anim->current_animation_loopable = animation_is_loopable(anim, index);
-    anim->loop_remaining = anim->current_animation_loopable ? -1 : 0;
+    anim->loop_remaining = animator_compute_loop_remaining(anim, index);
     GltfAnimation *animation =
         &anim->model->animations[anim->current_animation];
 #ifdef VRM_USE_OZZ
@@ -663,6 +665,7 @@ void animator_blend_to(Animator *anim, int index, float duration,
     return;
   if (index < 0 || index >= anim->model->animation_count)
     return;
+  if (anim->loop_policy_set && !anim->loop_allowed) loop_remaining = 0;
 
 #ifdef VRM_USE_OZZ
   if (g_ozz_ready && g_ozz_enabled && duration > 0.001f) {
@@ -699,7 +702,14 @@ void animator_blend_to(Animator *anim, int index, float duration,
 }
 
 int animator_compute_loop_remaining(Animator *anim, int index) {
+  if (anim->loop_policy_set) return anim->loop_allowed ? -1 : 0;
   return animation_is_loopable(anim, index) ? -1 : 0;
+}
+
+void animator_set_loop_policy(Animator *anim, bool specified, bool allowed) {
+  anim->loop_policy_set = specified;
+  anim->loop_allowed = allowed;
+  if (specified && !allowed) anim->loop_remaining = 0;
 }
 
 void animator_sample_frame(GltfModel *model, int anim_idx, float time) {
