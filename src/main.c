@@ -22,6 +22,7 @@
 #include "camera.h"
 #include "event.h"
 #include "frame_clock.h"
+#include "gem_menu.h"
 #include "gltf_loader.h"
 #include "ipc.h"
 #include "hit_capture.h"
@@ -70,6 +71,9 @@ typedef struct {
   uint32_t studio_request_seq;
   uint32_t visibility_request_seq;
   uint32_t overlay_menu_seq;
+  uint32_t menu_action_seq;
+  char menu_action_id[49],menu_action_context[49];
+  GemMenu menu;
   int overlay_menu_x, overlay_menu_y;
   ClipBoundsCache bounds_cache[32];
   unsigned bounds_cache_cursor;
@@ -578,6 +582,9 @@ static void respond_state(int id) {
   cJSON_AddNumberToObject(state, "visibility_request_seq", app.visibility_request_seq);
   cJSON_AddStringToObject(state, "window_backend", platform_backend_name());
   cJSON_AddNumberToObject(state, "overlay_menu_seq", app.overlay_menu_seq);
+  cJSON_AddNumberToObject(state, "menu_action_seq", app.menu_action_seq);
+  cJSON_AddStringToObject(state, "menu_action_id", app.menu_action_id);
+  cJSON_AddStringToObject(state, "menu_action_context", app.menu_action_context);
   cJSON *menu = cJSON_AddObjectToObject(state, "overlay_menu_position");
   cJSON_AddNumberToObject(menu, "x", app.overlay_menu_x);
   cJSON_AddNumberToObject(menu, "y", app.overlay_menu_y);
@@ -1312,6 +1319,14 @@ static void on_ipc_command(const char *action, void *params, int id,
     } else {
       ipc_respond(&app.ipc, id, false, "Missing path");
     }
+  } else if (strcmp(action, "configure_menu") == 0) {
+    GemMenu candidate;
+    if (!gem_menu_parse(cJSON_GetObjectItemCaseSensitive(json,"menu"),&candidate)) {
+      ipc_respond(&app.ipc,id,false,"Invalid or excessive gem menu specification");return;
+    }
+    app.menu=candidate;
+    platform_configure_menu(app.window,&app.menu);
+    ipc_respond(&app.ipc,id,true,NULL);
   } else if (strcmp(action, "lip_sync_enable") == 0) {
     cJSON *en = cJSON_GetObjectItem(json, "enabled");
     viseme_set_enabled(&app.viseme, en ? cJSON_IsTrue(en) : true);
@@ -1472,10 +1487,16 @@ static void on_mouse_button(int button, int action, void *user) {
 
 static void on_menu_action(int action, void *user) {
   (void)user;
-  if (action == 0) app.chat_request_seq++;
-  else if (action == 1) app.studio_request_seq++;
-  else if (action == 2) app.visibility_request_seq++;
-  else if (action == 3) app.running = false;
+  if(action<0 || action>=app.menu.count)return;
+  const char *identity=app.menu.actions[action].id;
+  if(app.menu.context[0]) {
+    snprintf(app.menu_action_id,sizeof(app.menu_action_id),"%s",identity);
+    snprintf(app.menu_action_context,sizeof(app.menu_action_context),"%s",app.menu.context);
+    app.menu_action_seq++;
+  } else if(!strcmp(identity,"chat"))app.chat_request_seq++;
+  else if(!strcmp(identity,"studio"))app.studio_request_seq++;
+  else if(!strcmp(identity,"visibility"))app.visibility_request_seq++;
+  else if(!strcmp(identity,"quit"))app.running=false;
 }
 
 static void on_scroll(double dx, double dy, void *user) {
@@ -1621,6 +1642,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  gem_menu_default(&app.menu);
+  platform_configure_menu(app.window,&app.menu);
   platform_make_context_current(app.window);
 
   printf("OpenGL: %s\n", glGetString(GL_VERSION));
@@ -1749,6 +1772,11 @@ int main(int argc, char *argv[]) {
     hit_capture_poll(&app.hit_capture);
     platform_poll_events();
     ipc_poll(&app.ipc);
+    if(app.menu.context[0] && app.ipc.client_fd<0) {
+      /* Detaching Studio must not leave a callback-only menu without its owner. */
+      gem_menu_default(&app.menu);
+      platform_configure_menu(app.window,&app.menu);
+    }
     apply_scroll_zoom();
     double ipc_finished = platform_get_time();
     if (app.visible && platform_frame_ready(app.window)) {

@@ -19,6 +19,7 @@ from .animation_config import FLAGS, load_properties, load_motion_properties, lo
 from .avatar_catalog import starter_avatars
 from .qt_avatar_library import AvatarLibrary
 from .qt_overlay_menu import OverlayMenuInput
+from .qt_gem_menu import GemMenu
 from .pose_routes import current_pose, transition_route
 from .paths import default_socket_path, development_file, renderer_executable
 from .presentation import PresentationQueue
@@ -114,6 +115,7 @@ class Controller(QObject):
         self._requested_avatar = False
         self._chat_request_seq = None
         self._menu_request_seq = None
+        self._native_menu_request_seq = None
         self._studio_request_seq = None
         self._visibility_request_seq = None
         self._overlay_menu_input = None
@@ -159,6 +161,7 @@ class Controller(QObject):
         self.presentations = PresentationQueue(self)
         self.visibility = AvatarVisibility(self)
         self._visibility_shortcut = VisibilityShortcut(self)
+        self._gem_menu = GemMenu(self)
         self._avatars = AvatarLibrary(self, root=avatar_dir)
         self.scanAnimations()
 
@@ -167,6 +170,7 @@ class Controller(QObject):
     avatarShown = Property(bool, lambda self: self.visibility.wanted, notify=changed)
     visibilityPhase = Property(str, lambda self: self.visibility.phase, notify=changed)
     visibilityShortcut = Property(QObject, lambda self: self._visibility_shortcut, constant=True)
+    gemMenu = Property(QObject, lambda self: self._gem_menu, constant=True)
 
     @Slot()
     def toggleAvatar(self):
@@ -225,6 +229,7 @@ class Controller(QObject):
 
     @Slot(QObject)
     def registerOverlayMenu(self, window):
+        if self._overlay_menu_input:self._overlay_menu_input.close()
         self._overlay_menu_input = OverlayMenuInput(window)
 
     @Slot()
@@ -329,6 +334,8 @@ class Controller(QObject):
             self._fail(self._socket.errorString())
 
     def _transport_connected(self):
+        self._native_menu_request_seq = None
+        self._gem_menu._last_sent = ''
         self._chat_request_seq = None
         self._menu_request_seq = None
         self._studio_request_seq = None
@@ -520,6 +527,12 @@ class Controller(QObject):
             self.libraryChanged.emit()
         self.stateChanged.emit()
         QTimer.singleShot(0, self._maybe_idle)
+        sequence=state.get('menu_action_seq')
+        if isinstance(sequence,int):
+            previous,self._native_menu_request_seq=self._native_menu_request_seq,sequence
+            if (previous is not None and sequence!=previous and
+                    state.get('menu_action_context')==self._gem_menu.spec.get('context')):
+                self._gem_menu.activate(state.get('menu_action_id',''))
         sequence = state.get('visibility_request_seq')
         if isinstance(sequence, int):
             previous, self._visibility_request_seq = self._visibility_request_seq, sequence
@@ -1011,8 +1024,10 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         self._closing = True
+        if self._overlay_menu_input:self._overlay_menu_input.close()
         self.visibility.timer.stop()
         self._visibility_shortcut.shutdown()
+        self._gem_menu.shutdown()
         self.presentations.cancel_all()
         self.presentations.timer.stop()
         self._avatars.shutdown()

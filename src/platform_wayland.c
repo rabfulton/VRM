@@ -16,12 +16,21 @@
 #include "xdg-shell-client.h"
 #include "platform_backend.h"
 #include "input_mask.h"
+#include "gem_menu.h"
+#include <math.h>
 #include <linux/input-event-codes.h>
 #include <cairo/cairo.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 
+typedef struct {
+    PlatformWindow *owner;
+    struct wl_buffer *buffer;
+    void *pixels;
+    int size,stride;
+    bool busy;
+} MenuBuffer;
 struct PlatformWindow {
     struct wl_display *display;
     struct wl_registry *registry;
@@ -50,7 +59,11 @@ struct PlatformWindow {
     struct wl_surface *pointer_surface, *menu_surface;
     struct xdg_surface *menu_xdg;
     struct xdg_popup *menu;
-    struct wl_buffer *menu_buffer;
+    MenuBuffer menu_buffers[2];
+    GemMenu menu_model;
+    int menu_page,menu_hover;
+    double menu_scale,menu_started,menu_last_paint;
+    bool menu_ready,menu_dirty;
     uint32_t button_serial, seat_id;
     unsigned char *mask;
     int mask_width, mask_height;
@@ -58,6 +71,8 @@ struct PlatformWindow {
 static PlatformWindow *active;
 static void apply_input(PlatformWindow *p);
 static void close_menu(PlatformWindow *p);
+static void redraw_menu(PlatformWindow *p);
+static void activate_menu(PlatformWindow *p,int hit);
 static void cancel_drag(PlatformWindow *p);
 static const struct wl_seat_listener seat_listener;
 static void wm_ping(void *data, struct xdg_wm_base *wm, uint32_t serial) {
@@ -106,6 +121,7 @@ static void configure(void *data, struct zwlr_layer_surface_v1 *layer,
         p->closed = true;
         return;
     }
+    if(p->menu && (p->width!=(int)width || p->height!=(int)height))close_menu(p);
     p->width = (int)width;
     p->height = (int)height;
     if (p->x > p->width - 40) p->x = p->width - p->scene_width;
@@ -128,7 +144,10 @@ static void leave(void *data, struct wl_surface *surface, struct wl_output *outp
 static void preferred_scale(void *data, struct wl_surface *surface, int32_t scale) {
     (void)surface;
     PlatformWindow *p = data;
-    if (scale > 0 && scale <= 8) p->scale = scale;
+    if (scale > 0 && scale <= 8 && scale!=p->scale) {
+        if(p->menu)close_menu(p);
+        p->scale=scale;
+    }
 }
 static void preferred_transform(void *data, struct wl_surface *surface, uint32_t transform) {
     (void)data; (void)surface; (void)transform;
@@ -197,6 +216,10 @@ static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t seria
     PlatformWindow *p = data;
     p->pointer_surface = surface;
     p->pointer_x = wl_fixed_to_double(x); p->pointer_y = wl_fixed_to_double(y);
+    if (p->pointer_surface==p->menu_surface && p->menu) {
+        int hit=gem_menu_hit(&p->menu_model,p->menu_page,p->pointer_x/p->menu_scale,p->pointer_y/p->menu_scale);
+        if(hit!=p->menu_hover){p->menu_hover=hit;redraw_menu(p);}
+    }
 }
 static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
                           struct wl_surface *surface) {
@@ -209,6 +232,10 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
     (void)pointer; (void)time;
     PlatformWindow *p = data;
     p->pointer_x = wl_fixed_to_double(x); p->pointer_y = wl_fixed_to_double(y);
+    if(p->pointer_surface==p->menu_surface && p->menu) {
+        int hit=gem_menu_hit(&p->menu_model,p->menu_page,p->pointer_x/p->menu_scale,p->pointer_y/p->menu_scale);
+        if(hit!=p->menu_hover){p->menu_hover=hit;redraw_menu(p);}
+    }
     if (p->pointer_surface == p->surface && p->cb.on_mouse_move)
         p->cb.on_mouse_move(p->pointer_x-p->x,p->pointer_y-p->y,p->cb.user_data);
 }
@@ -220,10 +247,8 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
     if (p->menu) {
         if (button==BTN_RIGHT && state) { close_menu(p); return; }
         if (p->pointer_surface == p->menu_surface && button == BTN_LEFT && !state) {
-            int row = ((int)p->pointer_y-6)/34;
-            bool valid = p->pointer_y >= 6 && p->pointer_x >= 6 && p->pointer_x < 174 && row >= 0 && row < 4;
-            close_menu(p);
-            if (valid && p->cb.on_menu_action) p->cb.on_menu_action(row,p->cb.user_data);
+            int hit=gem_menu_hit(&p->menu_model,p->menu_page,p->pointer_x/p->menu_scale,p->pointer_y/p->menu_scale);
+            activate_menu(p,hit);
         }
         return;
     }
@@ -263,6 +288,17 @@ static void key_leave(void *d, struct wl_keyboard *k, uint32_t s, struct wl_surf
 static void key(void *d, struct wl_keyboard *k, uint32_t s, uint32_t t, uint32_t code, uint32_t state) {
     (void)k; (void)s; (void)t;
     if (code == KEY_ESC && state) close_menu(d);
+    PlatformWindow *p=d;
+    if(!p->menu || !state)return;
+    if(code==KEY_ENTER || code==KEY_SPACE)activate_menu(p,p->menu_hover);
+    else if(code==KEY_LEFT || code==KEY_RIGHT)activate_menu(p,code==KEY_LEFT?-3:-4);
+    else if(code==KEY_TAB || code==KEY_DOWN || code==KEY_UP) {
+        int step=code==KEY_UP?-1:1,index=p->menu_hover<0?(step>0?-1:p->menu_model.count):p->menu_hover;
+        for(int i=0;i<p->menu_model.count;i++) {
+            index=(index+step+p->menu_model.count)%p->menu_model.count;
+            if(p->menu_model.actions[index].page==p->menu_page && p->menu_model.actions[index].enabled){p->menu_hover=index;redraw_menu(p);break;}
+        }
+    }
 }
 static void modifiers(void *d, struct wl_keyboard *k, uint32_t s, uint32_t a, uint32_t b, uint32_t c, uint32_t g) {
     (void)d; (void)k; (void)s; (void)a; (void)b; (void)c; (void)g;
@@ -296,74 +332,132 @@ static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
 static void seat_name(void *d, struct wl_seat *s, const char *n) { (void)d; (void)s; (void)n; }
 static const struct wl_seat_listener seat_listener = {seat_capabilities,seat_name};
 
-static void close_menu(PlatformWindow *p) {
-    if (!p->menu) return;
-    xdg_popup_destroy(p->menu); p->menu=NULL;
-    xdg_surface_destroy(p->menu_xdg); p->menu_xdg=NULL;
-    wl_surface_destroy(p->menu_surface); p->menu_surface=NULL;
-    if (p->menu_buffer) { wl_buffer_destroy(p->menu_buffer); p->menu_buffer=NULL; }
-    p->pointer_surface=NULL;
-    zwlr_layer_surface_v1_set_keyboard_interactivity(p->layer,0);
-    wl_surface_commit(p->surface);
+static void menu_buffer_release(void *data,struct wl_buffer *buffer) {
+    (void)buffer;MenuBuffer *b=data;b->busy=false;
+    if (b->owner->menu && b->owner->menu_dirty) redraw_menu(b->owner);
 }
-static void menu_configure(void *data, struct xdg_surface *surface, uint32_t serial) {
-    PlatformWindow *p = data;
-    xdg_surface_ack_configure(surface,serial);
-    wl_surface_attach(p->menu_surface,p->menu_buffer,0,0);
-    wl_surface_damage(p->menu_surface,0,0,180,148);
+static const struct wl_buffer_listener menu_buffer_listener={menu_buffer_release};
+static bool allocate_menu_buffer(PlatformWindow *p,MenuBuffer *b) {
+    int width=(int)ceil(p->menu_model.width*p->menu_scale)*p->scale;
+    int height=(int)ceil(p->menu_model.height*p->menu_scale)*p->scale;
+    b->owner=p;b->stride=width*4;b->size=b->stride*height;
+    int fd=memfd_create("domovushka-gems",MFD_CLOEXEC);
+    if(fd<0)return false;
+    if(ftruncate(fd,b->size)<0){close(fd);return false;}
+    b->pixels=mmap(NULL,b->size,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
+    if(b->pixels==MAP_FAILED){b->pixels=NULL;close(fd);return false;}
+    struct wl_shm_pool *pool=wl_shm_create_pool(p->shm,fd,b->size);
+    b->buffer=wl_shm_pool_create_buffer(pool,0,width,height,b->stride,WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);close(fd);
+    if(!b->buffer)return false;
+    wl_buffer_add_listener(b->buffer,&menu_buffer_listener,b);return true;
+}
+static void close_menu(PlatformWindow *p) {
+    bool was_open=p->menu || p->menu_surface;
+    if(p->menu)xdg_popup_destroy(p->menu);
+    if(p->menu_xdg)xdg_surface_destroy(p->menu_xdg);
+    if(p->menu_surface)wl_surface_destroy(p->menu_surface);
+    p->menu=NULL;p->menu_xdg=NULL;p->menu_surface=NULL;p->menu_ready=false;
+    for(int i=0;i<2;i++) {
+        MenuBuffer *b=&p->menu_buffers[i];
+        if(b->buffer)wl_buffer_destroy(b->buffer);
+        if(b->pixels)munmap(b->pixels,b->size);
+        memset(b,0,sizeof(*b));
+    }
+    if(was_open) {
+        p->pointer_surface=NULL;
+        if(p->layer){zwlr_layer_surface_v1_set_keyboard_interactivity(p->layer,0);wl_surface_commit(p->surface);}
+    }
+}
+static void redraw_menu(PlatformWindow *p) {
+    p->menu_dirty=true;
+    if(!p->menu || !p->menu_ready)return;
+    MenuBuffer *b=NULL;
+    for(int i=0;i<2;i++)if(!p->menu_buffers[i].busy){b=&p->menu_buffers[i];break;}
+    if(!b)return;
+    int width=b->stride/4,height=b->size/b->stride;
+    cairo_surface_t *image=cairo_image_surface_create_for_data(b->pixels,CAIRO_FORMAT_ARGB32,width,height,b->stride);
+    cairo_t *cr=cairo_create(image);cairo_set_operator(cr,CAIRO_OPERATOR_CLEAR);cairo_paint(cr);
+    cairo_set_operator(cr,CAIRO_OPERATOR_OVER);cairo_scale(cr,p->scale*p->menu_scale,p->scale*p->menu_scale);
+    double t=fmin(1,(platform_get_time()-p->menu_started)/.15);
+    double opening=1-pow(1-t,3);
+    gem_menu_draw(&p->menu_model,cr,p->menu_page,p->menu_hover,opening);
+    cairo_destroy(cr);cairo_surface_flush(image);cairo_surface_destroy(image);
+    b->busy=true;p->menu_dirty=false;p->menu_last_paint=platform_get_time();
+    wl_surface_attach(p->menu_surface,b->buffer,0,0);
+    wl_surface_damage(p->menu_surface,0,0,(int)ceil(p->menu_model.width*p->menu_scale),(int)ceil(p->menu_model.height*p->menu_scale));
     wl_surface_commit(p->menu_surface);
 }
-static const struct xdg_surface_listener menu_surface_listener = {menu_configure};
-static void popup_configure(void *d, struct xdg_popup *p, int32_t x, int32_t y, int32_t w, int32_t h) {
-    (void)d; (void)p; (void)x; (void)y; (void)w; (void)h;
-}
-static void popup_done(void *d, struct xdg_popup *p) { (void)p; close_menu(d); }
-static const struct xdg_popup_listener popup_listener = {.configure=popup_configure,.popup_done=popup_done};
-bool wayland_open_menu(PlatformWindow *p) {
-    if (p->menu) { close_menu(p); return true; }
-    if (!p->wm || !p->shm || !p->seat || !p->button_serial) return true;
-    int width=180*p->scale,height=148*p->scale,stride=width*4,size=stride*height;
-    int fd=memfd_create("vrm-menu",MFD_CLOEXEC);
-    if (fd<0) return true;
-    if (ftruncate(fd,size)<0) { close(fd); return true; }
-    void *pixels=mmap(NULL,size,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
-    if (pixels==MAP_FAILED) { close(fd); return true; }
-    cairo_surface_t *image=cairo_image_surface_create_for_data(pixels,CAIRO_FORMAT_ARGB32,width,height,stride);
-    cairo_t *cr=cairo_create(image);
-    cairo_scale(cr,p->scale,p->scale);
-    cairo_set_source_rgb(cr,0.09,0.13,0.18); cairo_paint(cr);
-    cairo_select_font_face(cr,"sans",CAIRO_FONT_SLANT_NORMAL,CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr,15);
-    const char *labels[]={"Chat","Studio","Hide avatar","Quit"};
-    for (int i=0;i<4;i++) {
-        cairo_set_source_rgb(cr,0.14,0.20,0.28); cairo_rectangle(cr,6,6+i*34,168,32); cairo_fill(cr);
-        cairo_set_source_rgb(cr,0.95,0.96,0.98); cairo_move_to(cr,18,28+i*34); cairo_show_text(cr,labels[i]);
+static void activate_menu(PlatformWindow *p,int hit) {
+    if(hit==-2) {
+        if(!strcmp(p->menu_model.pages[p->menu_page].group,"main")){close_menu(p);return;}
+        p->menu_page=gem_menu_target(&p->menu_model,"main");p->menu_hover=-2;redraw_menu(p);return;
     }
-    cairo_destroy(cr); cairo_surface_flush(image); cairo_surface_destroy(image);
-    struct wl_shm_pool *pool=wl_shm_create_pool(p->shm,fd,size);
-    p->menu_buffer=wl_shm_pool_create_buffer(pool,0,width,height,stride,WL_SHM_FORMAT_ARGB8888);
-    wl_shm_pool_destroy(pool); munmap(pixels,size); close(fd);
+    if(hit==-3 || hit==-4) {
+        int page=gem_menu_sibling(&p->menu_model,p->menu_page,hit==-3?-1:1);
+        if(page>=0){p->menu_page=page;p->menu_hover=-2;redraw_menu(p);}return;
+    }
+    if(hit<0 || hit>=p->menu_model.count){close_menu(p);return;}
+    GemAction *a=&p->menu_model.actions[hit];
+    if(!a->enabled)return;
+    if(a->target[0]) {
+        int page=gem_menu_target(&p->menu_model,a->target);
+        if(page>=0){p->menu_page=page;p->menu_hover=-2;redraw_menu(p);}return;
+    }
+    if(a->close)close_menu(p);
+    if(p->cb.on_menu_action)p->cb.on_menu_action(hit,p->cb.user_data);
+}
+static void menu_configure(void *data,struct xdg_surface *surface,uint32_t serial) {
+    PlatformWindow *p=data;xdg_surface_ack_configure(surface,serial);p->menu_ready=true;redraw_menu(p);
+}
+static const struct xdg_surface_listener menu_surface_listener={menu_configure};
+static void popup_configure(void *d,struct xdg_popup *p,int32_t x,int32_t y,int32_t w,int32_t h) {
+    (void)d;(void)p;(void)x;(void)y;(void)w;(void)h;
+}
+static void popup_done(void *d,struct xdg_popup *p){(void)p;close_menu(d);}
+static const struct xdg_popup_listener popup_listener={.configure=popup_configure,.popup_done=popup_done};
+void wayland_configure_menu(PlatformWindow *p,const GemMenu *model) {
+    char page_id[32]="",hover_id[49]="";
+    if(p->menu_page>=0 && p->menu_page<p->menu_model.page_count)
+        snprintf(page_id,sizeof(page_id),"%s",p->menu_model.pages[p->menu_page].id);
+    if(p->menu_hover>=0 && p->menu_hover<p->menu_model.count)
+        snprintf(hover_id,sizeof(hover_id),"%s",p->menu_model.actions[p->menu_hover].id);
+    if(strcmp(p->menu_model.context,model->context))close_menu(p);
+    p->menu_model=*model;
+    p->menu_page=0;
+    for(int i=0;i<model->page_count;i++)if(!strcmp(model->pages[i].id,page_id))p->menu_page=i;
+    if(hover_id[0]) {
+        p->menu_hover=-2;
+        for(int i=0;i<model->count;i++)if(model->actions[i].page==p->menu_page && !strcmp(model->actions[i].id,hover_id))p->menu_hover=i;
+    }
+    if(p->menu)redraw_menu(p);
+}
+bool wayland_open_menu(PlatformWindow *p) {
+    if(p->menu){close_menu(p);return true;}
+    if(!p->wm || !p->shm || !p->seat || !p->button_serial)return true;
+    p->menu_scale=fmin(1,fmin((p->width-16.)/p->menu_model.width,(p->height-16.)/p->menu_model.height));
+    if(p->menu_scale<.25)return true;
+    if(!allocate_menu_buffer(p,&p->menu_buffers[0]) || !allocate_menu_buffer(p,&p->menu_buffers[1])){close_menu(p);return true;}
+    p->menu_page=0;p->menu_hover=-2;p->menu_started=platform_get_time();
     p->menu_surface=wl_compositor_create_surface(p->compositor);
     wl_surface_set_buffer_scale(p->menu_surface,p->scale);
     p->menu_xdg=xdg_wm_base_get_xdg_surface(p->wm,p->menu_surface);
     xdg_surface_add_listener(p->menu_xdg,&menu_surface_listener,p);
     struct xdg_positioner *pos=xdg_wm_base_create_positioner(p->wm);
-    xdg_positioner_set_size(pos,180,148);
+    xdg_positioner_set_size(pos,(int)ceil(p->menu_model.width*p->menu_scale),(int)ceil(p->menu_model.height*p->menu_scale));
     xdg_positioner_set_anchor_rect(pos,(int)p->pointer_x,(int)p->pointer_y,1,1);
     xdg_positioner_set_anchor(pos,XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT);
     xdg_positioner_set_gravity(pos,XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
-    xdg_positioner_set_constraint_adjustment(pos,XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
-    p->menu=xdg_surface_get_popup(p->menu_xdg,NULL,pos);
-    xdg_positioner_destroy(pos);
+    xdg_positioner_set_offset(pos,-(int)round(p->menu_model.cx*p->menu_scale),-(int)round(p->menu_model.cy*p->menu_scale));
+    xdg_positioner_set_constraint_adjustment(pos,XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X|XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+    p->menu=xdg_surface_get_popup(p->menu_xdg,NULL,pos);xdg_positioner_destroy(pos);
     xdg_popup_add_listener(p->menu,&popup_listener,p);
     zwlr_layer_surface_v1_get_popup(p->layer,p->menu);
-    if (wl_proxy_get_version((struct wl_proxy *)p->shell)>=4)
-        zwlr_layer_surface_v1_set_keyboard_interactivity(p->layer,2); /* on demand */
-    wl_surface_commit(p->surface);
-    xdg_popup_grab(p->menu,p->seat,p->button_serial);
-    wl_surface_commit(p->menu_surface);
+    if(wl_proxy_get_version((struct wl_proxy *)p->shell)>=4)zwlr_layer_surface_v1_set_keyboard_interactivity(p->layer,2);
+    wl_surface_commit(p->surface);xdg_popup_grab(p->menu,p->seat,p->button_serial);wl_surface_commit(p->menu_surface);
     return true;
 }
+
 
 static bool dispatch(PlatformWindow *p, int timeout) {
     while (wl_display_prepare_read(p->display)!=0)
@@ -385,6 +479,7 @@ PlatformWindow *wayland_create_window(int width,int height,const char *title,boo
     (void)title; (void)transparent; (void)decorated;
     PlatformWindow *p=calloc(1,sizeof(*p));
     if (!p) return NULL;
+    gem_menu_default(&p->menu_model);
     p->scale=1; p->scene_width=width; p->scene_height=height;
     p->x=100; p->y=100; p->visible=true; p->input_dirty=true;
     p->display=wl_display_connect(NULL);
@@ -446,6 +541,8 @@ void wayland_destroy_window(PlatformWindow *p) {
 bool wayland_should_close(PlatformWindow *p) { return p->closed; }
 void wayland_poll_events(void) {
     if (active && !dispatch(active,active->ready && active->visible ? 0 : 8)) active->closed=true;
+    if(active && active->menu && platform_get_time()-active->menu_started<.17 && platform_get_time()-active->menu_last_paint>=1./60)
+        redraw_menu(active);
 }
 bool wayland_frame_ready(PlatformWindow *p) { return p->ready && p->visible && !p->closed; }
 void wayland_make_context_current(PlatformWindow *p) { eglMakeCurrent(p->egl,p->buffer,p->buffer,p->context); }
@@ -558,6 +655,7 @@ const PlatformBackend platform_wayland_backend = {
     .frame_ready = wayland_frame_ready,
     .present = wayland_present,
     .open_menu = wayland_open_menu,
+    .configure_menu = wayland_configure_menu,
     .create_window = wayland_create_window,
     .destroy_window = wayland_destroy_window,
     .should_close = wayland_should_close,

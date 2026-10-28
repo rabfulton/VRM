@@ -83,7 +83,14 @@ Window { id: target; width: 100; height: 100; flags: Qt.FramelessWindowHint
 
             def click(name):
                 QTest.qWait(60)
-                item = menu.findChild(QQuickItem, name)
+                def find(parent):
+                    if parent.objectName()==name:return parent
+                    for child in parent.childItems():
+                        found=find(child)
+                        if found:return found
+                    return None
+                item = find(menu.contentItem())
+                assert item, name
                 point = item.mapToScene(item.boundingRect().center())
                 QTest.mouseClick(menu, Qt.LeftButton, Qt.NoModifier,
                                  QPoint(round(point.x()), round(point.y())))
@@ -195,8 +202,8 @@ Window { id: target; width: 100; height: 100; flags: Qt.FramelessWindowHint
                     raise AssertionError(('Menu not visible',bridge.state.get('overlay_menu_seq'),menus,menu.isActive(),(x,y,rw,rh),cursor))
                 point=QCursor.pos()
                 screen=QGuiApplication.screenAt(point).availableGeometry()
-                expected_x=max(screen.left(),min(point.x(),screen.right()+1-menu.width()))
-                expected_y=max(screen.top(),min(point.y(),screen.bottom()+1-menu.height()))
+                expected_x=max(screen.left(),min(round(point.x()-menu.width()/2),screen.right()+1-menu.width()))
+                expected_y=max(screen.top(),min(round(point.y()-220*menu.property('menuScale')),screen.bottom()+1-menu.height()))
                 assert abs(menu.x()-expected_x)<=1 and abs(menu.y()-expected_y)<=1,(menu.position(),point)
                 print('Input check: background and interior gaps pass clicks through; figure opens menu at Qt cursor coordinates.',flush=True)
                 QTest.qWait(80)

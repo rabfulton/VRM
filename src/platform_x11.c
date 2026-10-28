@@ -296,6 +296,7 @@ void x11_set_input_regions(PlatformWindow *win, const PlatformRect *rects, int r
 
 bool x11_frame_ready(PlatformWindow *win) { (void)win; return true; }
 bool x11_open_menu(PlatformWindow *win) { (void)win; return false; }
+void x11_configure_menu(PlatformWindow *win,const GemMenu *menu) { (void)win;(void)menu; }
 void x11_present(PlatformWindow *win, unsigned int source, int width, int height) {
     (void)win;
     if (!source) return;
@@ -310,6 +311,7 @@ const PlatformBackend platform_x11_backend = {
     .frame_ready = x11_frame_ready,
     .present = x11_present,
     .open_menu = x11_open_menu,
+    .configure_menu = x11_configure_menu,
     .create_window = x11_create_window,
     .destroy_window = x11_destroy_window,
     .should_close = x11_should_close,

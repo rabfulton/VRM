@@ -8,6 +8,7 @@
 #include <stdbool.h>
 
 typedef struct PlatformWindow PlatformWindow;
+typedef struct GemMenu GemMenu;
 
 typedef struct {
     void (*on_resize)(int width, int height, void *user);
@@ -15,7 +16,7 @@ typedef struct {
     void (*on_mouse_button)(int button, int action, void *user);
     void (*on_scroll)(double dx, double dy, void *user);
     void (*on_key)(int key, int action, void *user);
-    void (*on_menu_action)(int action, void *user); /* 0 Chat, 1 Studio, 2 Quit */
+    void (*on_menu_action)(int action, void *user); /* Shared menu action index. */
     void *user_data;
 } PlatformCallbacks;
 
@@ -27,6 +28,7 @@ bool platform_frame_ready(PlatformWindow *win);
 void platform_present(PlatformWindow *win, unsigned int source, int width, int height);
 /* Returns false for X11, whose menu is owned by the Qt controller. */
 bool platform_open_menu(PlatformWindow *win);
+void platform_configure_menu(PlatformWindow *win, const GemMenu *menu);
 
 /* Geometry describes the bounded avatar viewport. On X11 it is a native
  * window rectangle; on Wayland it is output-local placement within the canvas.

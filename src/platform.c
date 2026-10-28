@@ -54,6 +54,7 @@ ready:
 bool platform_frame_ready(PlatformWindow *win) { return backend->frame_ready(win); }
 void platform_present(PlatformWindow *win, unsigned int source, int width, int height) { backend->present(win,source,width,height); }
 bool platform_open_menu(PlatformWindow *win) { return backend->open_menu(win); }
+void platform_configure_menu(PlatformWindow *win,const GemMenu *menu) { backend->configure_menu(win,menu); }
 void platform_destroy_window(PlatformWindow *win) { backend->destroy_window(win); }
 bool platform_should_close(PlatformWindow *win) { return backend->should_close(win); }
 void platform_poll_events(void) { backend->poll_events(); }

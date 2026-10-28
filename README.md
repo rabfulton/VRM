@@ -82,7 +82,7 @@ Native Wayland support currently targets compositors with `wlr-layer-shell` and
 has been exercised on Hyprland. The avatar appears on a transparent canvas with
 input restricted to its silhouette: gaps and shadows stay click-through. Left-drag
 to move the avatar within its output, middle-drag to orbit, and scroll to zoom.
-Right-click opens a native **Chat / Studio / Quit** popup at the pointer.
+Right-click opens the native [radial gem menu](docs/gem-menu.md) at the pointer.
 
 This first native implementation uses one compositor-selected output with integer
 scaling. Fractional scaling, explicit output selection and migration, and
@@ -99,8 +99,9 @@ enables blinking, plays a configured startup once, then moves to an idle.
 Use **⋯** beside an animation to edit looping, startup, idle, pose and floor-contact properties in its
 `.cfg` file; see [animation properties](docs/animation-properties.md).
 
-The companion starts with Studio hidden. Right-click the avatar for **Chat**,
-**Studio** and **Quit**. The X11 menu also includes **Always on top**; rendering
+The companion starts with Studio hidden. Right-click for the avatar-coloured
+gem menu: **Talk to me**, **Studio**, **Always on top**, **Hide avatar**, **Colours**
+and **Quit**. Both desktop backends use the same menu; rendering
 preferences remain available in Studio. The floating preference is remembered
 across restarts. Right-click again or left-click outside to dismiss the menu.
 Closing Studio or chat keeps the companion running;
@@ -132,7 +133,7 @@ connecting another client. Use a separate socket for each independent instance.
 
 In Studio's **Speech** tab, select **Prepare voice**, then try a preview. Native
 engines and models download separately; no Python ML stack is required.
-See [speech setup and limits](docs/tts.md). Open **Chat…**, choose **Chat** from the avatar's right-click menu,
+See [speech setup and limits](docs/tts.md). Open **Chat…**, choose **Talk to me** from the avatar's right-click menu,
 or press Ctrl+Enter while the app has focus to start a conversation. Chat Settings
 select the API endpoint/model and save its key to your system keyring. Replies
 speak sentence by sentence as they stream; see the [chat guide](docs/chat.md).

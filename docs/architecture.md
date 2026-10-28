@@ -12,6 +12,7 @@ Wayland/EGL/layer-shell. Maintained desktop targets are Xorg and Hyprland; see
 | --- | --- | --- |
 | Integration | `src/main.c` | Main loop, IPC handlers and authoritative state snapshot |
 | Desktop backend | `src/platform.c`, `platform_x11.c`, `platform_wayland.c` | Backend selection, window/surface lifecycle, presentation and pointer input |
+| Radial menu | `qt_gem_menu.py`, `menu_design.py`, `qml/Gem*.qml`, `src/gem_menu*.c` | Shared action/page contract and icons, bounded background palette sampling, Qt/Cairo presentation and native popup validation |
 | Visibility | `vrm_overlay/visibility.py`, `qt_shortcut.py`, `visibility_shortcut.py` | Shared interruptible exit/entrance lifecycle and isolated Xorg/Hyprland global shortcut ownership |
 | Files and installation | `src/app_paths.c`, `vrm_overlay/paths.py`, `scripts/install.py` | Matching user config/runtime paths, checkout migration and installed resource discovery |
 | IPC | `src/ipc.c`, `vrm_overlay/client.py` | NDJSON framing, request IDs, queued responses and socket ownership |

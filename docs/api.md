@@ -392,8 +392,8 @@ callers can still disable the analyzer. A new stream enables it as before.
 
 `get_state.data.overlay_menu_seq` is an unsigned 32-bit counter incremented by a
 right-button press on the avatar. `overlay_menu_position` records its global X11
-`x`/`y` coordinates. The background controller opens its QML **Chat / Studio / Always on top / Quit**
-menu even with Studio hidden. Establish a baseline on connect; do not replay old
+`x`/`y` coordinates. The background controller opens its QML radial gem menu
+even with Studio hidden. Establish a baseline on connect; do not replay old
 clicks. Qt uses its own current cursor and available-screen geometry to place the
 menu, since X11 native pixels differ from Qt logical coordinates on scaled displays.
 The menu owns mouse input while visible; a second right-click or an outside
@@ -473,5 +473,9 @@ controller follows its existing renderer-exit lifecycle.
 On Wayland, window geometry commands describe a bounded avatar viewport within
 the selected output's logical canvas, not global desktop window coordinates.
 `always_on_top` selects the top or bottom layer when the compositor supports it.
-The Wayland menu contains Chat, Studio and Quit; other rendering preferences remain
-available in Studio. See [Wayland](wayland.md) for current limitations.
+`configure_menu` accepts a bounded version-1 menu specification in its `menu`
+object. The shared controller model supplies pages, enabled/checked actions,
+palette and vector icons. Selected actions update `menu_action_seq`,
+`menu_action_id` and `menu_action_context`; controllers baseline the sequence and
+validate context/known IDs before dispatch. See the [menu contract](gem-menu.md)
+and [Wayland](wayland.md) for details and limits.

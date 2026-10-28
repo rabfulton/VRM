@@ -10,7 +10,7 @@ This is the basic conversation option. Selecting **Speech → Conversation → E
 
 1. Install `requirements-gui.txt`, build with `make`, then start `./domovushka`.
 2. Open **Chat…** in Studio, press **Ctrl+Enter** while this application has focus,
-   or choose **Chat** from the avatar's right-click menu. Chat opens near the pointer, kept
+   or choose **Talk to me** from the avatar's right-click menu. Chat opens near the pointer, kept
    within the current screen. The shortcut is application-wide, not an OS global hotkey.
 3. In chat **Settings**, enter the full OpenAI-compatible Chat Completions URL
    and the model ID supplied by your provider. The default URL is

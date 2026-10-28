@@ -6,6 +6,7 @@ typedef struct {
     bool (*frame_ready)(PlatformWindow *win);
     void (*present)(PlatformWindow *win, unsigned int source, int width, int height);
     bool (*open_menu)(PlatformWindow *win);
+    void (*configure_menu)(PlatformWindow *win, const GemMenu *menu);
     PlatformWindow * (*create_window)(int width, int height, const char *title, bool transparent, bool decorated);
     void (*destroy_window)(PlatformWindow *win);
     bool (*should_close)(PlatformWindow *win);
@@ -36,6 +37,7 @@ extern const PlatformBackend platform_wayland_backend;
 bool x11_frame_ready(PlatformWindow *win);
 void x11_present(PlatformWindow *win, unsigned int source, int width, int height);
 bool x11_open_menu(PlatformWindow *win);
+void x11_configure_menu(PlatformWindow *win, const GemMenu *menu);
 PlatformWindow * x11_create_window(int width, int height, const char *title, bool transparent, bool decorated);
 void x11_destroy_window(PlatformWindow *win);
 bool x11_should_close(PlatformWindow *win);
@@ -63,6 +65,7 @@ void x11_set_input_regions(PlatformWindow *win, const PlatformRect *rects, int r
 bool wayland_frame_ready(PlatformWindow *win);
 void wayland_present(PlatformWindow *win, unsigned int source, int width, int height);
 bool wayland_open_menu(PlatformWindow *win);
+void wayland_configure_menu(PlatformWindow *win, const GemMenu *menu);
 PlatformWindow * wayland_create_window(int width, int height, const char *title, bool transparent, bool decorated);
 void wayland_destroy_window(PlatformWindow *win);
 bool wayland_should_close(PlatformWindow *win);

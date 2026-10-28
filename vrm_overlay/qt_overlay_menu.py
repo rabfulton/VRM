@@ -15,6 +15,7 @@ class OverlayMenuInput(QObject):
         window.visibleChanged.connect(self._visibility_changed)
 
     def _visibility_changed(self, visible):
+        if getattr(self,'_window',None) is None:return
         if visible:
             self._grab_timer.start(0)
         else:
@@ -23,13 +24,18 @@ class OverlayMenuInput(QObject):
                 self._window.setMouseGrabEnabled(False)
 
     def _grab(self):
-        if self._window.isVisible() and self._window.isExposed() and self._native_input:
+        window=getattr(self,'_window',None)
+        if window is not None and window.isVisible() and window.isExposed() and self._native_input:
             # Catch outside presses even when they target another application.
             # Keyboard focus stays with the menu through requestActivate().
             self._window.setMouseGrabEnabled(True)
 
     def eventFilter(self, watched, event):
-        if watched is self._window and self._window.isVisible():
+        # Qt can deliver teardown events while a Python-owned filter's wrapper
+        # is being finalized. Do not inspect half-destroyed Python state.
+        window=getattr(self,'_window',None)
+        if window is None:return False
+        if watched is window and window.isVisible():
             if event.type() == QEvent.Expose:
                 self._grab_timer.start(0)
             elif event.type() == QEvent.MouseButtonPress:
@@ -41,3 +47,14 @@ class OverlayMenuInput(QObject):
                 self._window.hide()
                 return True
         return super().eventFilter(watched, event)
+
+    def close(self):
+        window=getattr(self,'_window',None)
+        if window is None:return
+        try:
+            self._grab_timer.stop()
+            window.removeEventFilter(self)
+            if self._native_input:window.setMouseGrabEnabled(False)
+        except RuntimeError:
+            pass  # The QML engine may already have destroyed the window.
+        self._window=None

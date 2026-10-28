@@ -30,7 +30,7 @@ A new renderer loads the selected model, plays a configured startup once,
 then transitions to an idle and enables blinking. Studio starts hidden; pass
 `--studio` to show it immediately. Missing assets/errors open it automatically.
 Closing Studio or chat hides that window while the controller keeps running.
-Right-click the avatar to reopen **Chat** or **Studio**, **Hide avatar**, toggle **Always on top**,
+Right-click the avatar for the [radial gem menu](gem-menu.md): **Talk to me**, **Studio**, **Hide avatar**, **Colours**, **Always on top**,
 or choose **Quit** to stop
 the companion and controller. The overlay sets X11 utility/skip-taskbar/skip-pager
 hints; the window manager controls their presentation. `--attach` never starts a
@@ -140,17 +140,19 @@ runtime preserves its current model, playback and behaviour state.
 Dragging the avatar moves its overlay window. Transparent areas, including gaps
 between limbs and the shadow, pass clicks to the window underneath. The hit mask
 follows the rendered mesh rather than a bounding rectangle. Middle-drag orbits the camera;
-scroll scales the figure. Right-click opens the **Chat / Studio / Always on top / Quit**
-menu. A second right-click, an outside left-click, Escape or switching focus
+scroll scales the figure. Right-click opens the avatar-coloured gem menu.
+**Colours** offers automatic avatar colours and five persistent per-avatar themes.
+The menu expands to additional pages when actions are added. A second right-click,
+an outside left-click, Escape or switching focus
 dismisses it. Outside cancellation consumes the click rather than triggering an
 avatar action. **Always on top** changes the avatar's window-manager floating
 property; it is shared with the View tab and the renderer's **T** shortcut. The
 renderer saves the on/off choice immediately in its XDG config file
 (`~/.config/domovushka/renderer.cfg` by default) and restores it
-at startup, including standalone launches. **Chat** opens chat near the pointer. **Chat…** in
+at startup, including standalone launches. **Talk to me** opens chat near the pointer. **Chat…** in
 Studio or Ctrl+Enter while this app has focus also opens chat; Escape hides it.
-The menu uses Qt cursor/workarea coordinates so native X11 pixels do not displace
-it on scaled displays; it only shifts when necessary to stay inside the workarea.
+The X11 menu uses Qt cursor/workarea coordinates so native pixels do not displace
+it on scaled displays. It centres on the click and fits inside the workarea.
 When a startup animation is set, nothing is shown before that animation begins.
 
 ## Structure and ownership

@@ -54,6 +54,11 @@ redistributable starter/test content.
 
 ## 2. External agents through MCP
 
+The companion's daily controls now use an avatar-coloured radial gem menu, shared
+between X11 and native Wayland. Its action registry supports grouped submenus and
+automatic pagination; new controls should extend that registry instead of adding
+backend-specific buttons. See [menu design and extension guide](gem-menu.md).
+
 The avatar is an MCP capability for external agents. Built-in chat is the basic
 standalone option; advanced users choose External agent in Studio and use their
 agent’s own interface, tools and skills. See [MCP setup](mcp.md) and the

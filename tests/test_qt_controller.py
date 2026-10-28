@@ -285,7 +285,7 @@ class QtControllerTests(unittest.TestCase):
         self.engine.deleteLater()
         self.app.processEvents()
 
-    def click(self, name, window=None):
+    def item(self, name, window=None):
         window = window or self.window
         item = window.findChild(QQuickItem, name)
         if item is None:
@@ -301,6 +301,11 @@ class QtControllerTests(unittest.TestCase):
                 return None
             item = find_visual(window.contentItem())
         self.assertIsNotNone(item, name)
+        return item
+
+    def click(self, name, window=None):
+        window = window or self.window
+        item = self.item(name,window)
         self.assertTrue(item.isEnabled(), name)
         point = item.mapToScene(item.boundingRect().center())
         QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(round(point.x()), round(point.y())))
@@ -555,16 +560,67 @@ class QtControllerTests(unittest.TestCase):
     def test_overlay_always_on_top_toggle_tracks_renderer_state(self):
         self.load_qml()
         menu = self.window.findChild(QObject, 'overlayMenu')
-        option = menu.findChild(QQuickItem, 'overlayAlwaysOnTopCheck')
         for expected in (True, False):
             self.bridge.overlayMenuRequested.emit(dict(x=40, y=50))
             self.wait_for(menu.isVisible)
             QTest.qWait(30)
+            option = self.item('overlayAlwaysOnTopCheck',menu)
             self.assertEqual(option.property('checked'), not expected)
             self.click('overlayAlwaysOnTopCheck', menu)
             self.wait_for(lambda: self.bridge.state['always_on_top'] == expected and not self.bridge.busy)
             self.assertFalse(menu.isVisible())
         self.assertEqual([c['always_on_top'] for c in self.commands if c['action'] == 'set_render'], [True, False])
+
+    def test_gem_menu_pages_extra_actions_and_remembers_palette_without_closing(self):
+        from vrm_overlay.qt_gem_menu import MenuAction
+        calls=[]
+        for i in range(8):
+            self.bridge.gemMenu.register(MenuAction('extra:'+str(i),'Extra '+str(i),'spark',lambda i=i:calls.append(i)))
+        self.load_qml()
+        menu=self.window.findChild(QObject,'overlayMenu')
+        def show():
+            self.bridge.overlayMenuRequested.emit(dict(x=700,y=500,left=0,top=0,right=940,bottom=680))
+            self.wait_for(menu.isVisible);QTest.qWait(170)
+        show()
+        self.assertLessEqual(menu.x()+menu.width(),940)
+        self.assertLessEqual(menu.y()+menu.height(),680)
+        self.click('gemNextPage',menu)
+        self.wait_for(lambda:self.bridge.gemMenu.currentPage==1)
+        self.click('gemAction_extra:0',menu)
+        self.assertEqual(calls,[0]);self.assertFalse(menu.isVisible())
+        show()
+        self.click('gemAction_colours',menu)
+        self.wait_for(lambda:self.bridge.gemMenu.pages[self.bridge.gemMenu.currentPage]['group']=='themes')
+        self.click('gemAction_theme:mint',menu)
+        self.assertTrue(menu.isVisible())
+        self.assertEqual(self.bridge.gemMenu.theme['name'],'Jade')
+        self.click('gemMenuCore',menu)
+        self.assertEqual(self.bridge.gemMenu.currentPage,0)
+        QTest.keyClick(menu,Qt.Key_Escape)
+        self.assertFalse(menu.isVisible())
+
+    def test_gem_menu_scales_into_small_workareas_and_empty_space_dismisses(self):
+        self.load_qml();menu=self.window.findChild(QObject,'overlayMenu')
+        self.bridge.overlayMenuRequested.emit(dict(x=370,y=340,left=40,top=50,right=390,bottom=350))
+        self.wait_for(menu.isVisible);QTest.qWait(170)
+        self.assertGreaterEqual(menu.x(),40);self.assertGreaterEqual(menu.y(),50)
+        self.assertLessEqual(menu.x()+menu.width(),390);self.assertLessEqual(menu.y()+menu.height(),350)
+        QTest.mouseClick(menu,Qt.LeftButton,Qt.NoModifier,QPoint(4,4))
+        self.assertFalse(menu.isVisible())
+        self.assertFalse(any(c['action']=='shutdown' for c in self.commands))
+
+    def test_native_gem_events_validate_context_ids_and_initial_sequence(self):
+        requests=[];self.bridge.studioRequested.connect(lambda:requests.append(True))
+        context=self.bridge.gemMenu.spec['context']
+        self.state.update(menu_action_seq=4,menu_action_id='studio',menu_action_context=context)
+        self.bridge.refresh();self.wait_for(lambda:self.bridge._native_menu_request_seq==4)
+        self.assertFalse(requests)
+        self.state.update(menu_action_seq=5,menu_action_context='old avatar')
+        self.bridge.refresh();self.wait_for(lambda:self.bridge._native_menu_request_seq==5)
+        self.assertFalse(requests)
+        self.state.update(menu_action_seq=6,menu_action_context=context)
+        self.bridge.refresh();self.wait_for(lambda:bool(requests))
+        self.assertEqual(requests,[True])
 
     def test_expected_socket_close_during_quit_does_not_open_error_window(self):
         quits=[]

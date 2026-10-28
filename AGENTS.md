@@ -53,6 +53,10 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/audio.c/.h`, `viseme.c/.h`: miniaudio playback, PCM ring and default lip sync.
 - `src/event.c/.h`: continuous `EventStream` data and discrete multi-clock scheduler.
 - `vrm_overlay/qt_controller.py`, `qml/`: asynchronous IPC and Studio lifecycle.
+  `qt_gem_menu.py` owns the extensible action registry and per-avatar menu theme;
+  `menu_design.py` defines palette sampling, layout and shared vector icons.
+  Qt and `src/gem_menu*.c` draw the same bounded spec; preserve native Wayland
+  popup/grab ownership and shared-buffer release rules. See `docs/gem-menu.md`.
   `visibility.py` owns hide/exit/summon/entrance across UI and MCP. Shortcut helpers
   in `qt_shortcut.py` / `visibility_shortcut.py` own Xorg grabs or temporary
   Hyprland bindings; never overwrite existing compositor bindings/configuration.
