@@ -7,6 +7,22 @@ An animated desktop companion for Linux/X11 and Wayland, with a Qt Quick control
 The C/C++ runtime renders VRM/glTF models, plays VRMA/GLB animations, simulates
 spring bones, and drives expressions and lip sync through JSON IPC.
 
+## Arch package
+
+To build a test package from this checkout, including uncommitted changes:
+
+```sh
+python3 scripts/build_arch_package.py -- --syncdeps
+sudo pacman -U build/packages/domovushka-git-r*.pkg.tar.zst
+domovushka --studio
+```
+
+This needs `base-devel` and initialized ozz sources. Copy the main package to
+other up-to-date x86_64 Arch machines and install with `pacman -U`. Speech engines
+and models remain optional downloads. The [PKGBUILD](packaging/arch/PKGBUILD)
+builds both native Wayland and X11 support. See [packaging and user file locations](docs/packaging.md)
+for dependencies, migration, staged installs and direct makepkg builds.
+
 ## Build and launch
 
 Requires a C11/C++20 toolchain, GNU Make 4.3+, CMake, pkg-config, and development
@@ -76,9 +92,7 @@ current behavior, validation and limits.
 
 ## Companion controls
 
-The desktop entry in [packaging/domovushka.desktop](packaging/domovushka.desktop)
-is provided for future packaging. It expects the
-`domovushka` command to be installed on `PATH`.
+The package installs a desktop entry and the `domovushka` command on `PATH`.
 
 Studio remembers the selected model and animation folder. On a new session it
 enables blinking, plays a configured startup once, then moves to an idle.
@@ -125,13 +139,17 @@ speak sentence by sentence as they stream; see the [chat guide](docs/chat.md).
 The Speech tab remains a whole-WAV voice preview.
 
 Physics uses skeleton proxies rather than full cloth mesh contact. Foot planting
-currently assumes a flat floor. Desktop window interaction, microphone input and
-system-audio reactions remain planned work; see the [roadmap](docs/roadmap.md).
+currently assumes a flat floor. Arch packages are ready for installation testing;
+optional user-authored agent skills, desktop guidance, window interaction, microphone input
+and system-audio reactions remain planned work. Maintained desktop targets are
+Hyprland and Xorg; other compositor integrations are welcome as contributed PRs.
+See the [roadmap](docs/roadmap.md) and [packaging guide](docs/packaging.md).
 
 ## Control from code
 
-Commands are newline-delimited JSON over a Unix socket, defaulting to
-`/tmp/vrm-overlay.sock`. From this checkout:
+Commands are newline-delimited JSON over a private Unix socket, defaulting to
+`$XDG_RUNTIME_DIR/domovushka/renderer.sock` (or `/tmp/domovushka-UID/renderer.sock`
+without a valid runtime directory). The Python client resolves this automatically:
 
 ```python
 from vrm_overlay import IpcClient
@@ -142,7 +160,8 @@ with IpcClient() as avatar:
     print(avatar.request({"action": "list_expressions"}))
 ```
 
-See the [IPC reference](docs/api.md) for animation, expressions, streamed PCM,
+The project is [MIT licensed](LICENSE); bundled components and starter assets
+retain their own notices. See the [IPC reference](docs/api.md) for animation, expressions, streamed PCM,
 state queries and tuning commands. The shared Python client consumes replies,
 matches request IDs and raises `IpcError` on rejected commands.
 

@@ -44,7 +44,7 @@ def main():
             save_properties(path, dict(loopable=True, startup=False, is_idle=True))
         with (root/'renderer.log').open('w+') as log:
             socket = str(root/'runtime.sock')
-            process = subprocess.Popen([str(ROOT/'vrm-overlay'), '--socket', socket],
+            process = subprocess.Popen([str(ROOT/'vrm-overlay'), '--socket', socket, '--settings', str(root/'settings.cfg')],
                                        cwd=root, stdout=log, stderr=subprocess.STDOUT)
             bridge = Controller(socket, attach=True, animation_dir=str(root),
                                 settings=QSettings(str(root/'settings.ini'), QSettings.IniFormat))
@@ -241,7 +241,7 @@ Window { id: target; width: 100; height: 100; flags: Qt.FramelessWindowHint
                 from vrm_overlay import IpcClient
                 for number,expected in enumerate((True,False)):
                     restored_socket=str(root/f'restored-{number}.sock')
-                    process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',restored_socket],cwd=root,stdout=log,stderr=subprocess.STDOUT)
+                    process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',restored_socket,'--settings',str(root/'settings.cfg')],cwd=root,stdout=log,stderr=subprocess.STDOUT)
                     wait(lambda:Path(restored_socket).exists())
                     with IpcClient(restored_socket) as restored:
                         assert restored.request(dict(action='get_state'),timeout_s=30)['data']['always_on_top']==expected

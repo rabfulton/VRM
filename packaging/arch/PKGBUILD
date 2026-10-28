@@ -1,0 +1,57 @@
+# Maintainer: Robert Fulton (rabfulton on AUR)
+pkgname=domovushka-git
+pkgver=r55.76582e8
+pkgrel=1
+pkgdesc='Animated desktop companion with a VRM renderer, Qt Quick Studio, chat and local speech'
+arch=('x86_64')
+url='https://github.com/rabfulton/VRM'
+# Application plus the separately licensed code/assets bundled in this package.
+license=('MIT' 'MIT-0' 'CC0-1.0' 'Zlib' 'BSL-1.0' 'HPND-sell-variant')
+depends=('glibc' 'libgcc' 'libstdc++' 'libepoxy' 'glfw' 'libx11' 'libxext'
+         'libxcursor' 'libxi' 'libxinerama' 'libxrandr'
+         'wayland>=1.22' 'libglvnd' 'cairo' 'alsa-lib' 'libpulse'
+         'python>=3.10' 'pyside6>=6.7' 'qt6-base' 'qt6-declarative' 'qt6-wayland'
+         'python-keyring>=25')
+makedepends=('git' 'cmake' 'wayland-protocols')
+checkdepends=('desktop-file-utils')
+optdepends=('vulkan-icd-loader: local speech with Vulkan (also requires your GPU driver)'
+            'org.freedesktop.secrets: store API keys using a running, unlocked Secret Service provider'
+            'python-dbus: use the KWallet keyring backend'
+            'jack: optional JACK audio backend')
+provides=('domovushka')
+conflicts=('domovushka')
+source=('domovushka::git+https://github.com/rabfulton/VRM.git'
+        'ozz-animation::git+https://github.com/guillaumeblanc/ozz-animation.git')
+sha256sums=('SKIP' 'SKIP')
+
+pkgver() {
+    cd domovushka
+    printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+    cd domovushka
+    git submodule init
+    git config submodule.deps/ozz-animation.url "$srcdir/ozz-animation"
+    git -c protocol.file.allow=always submodule update deps/ozz-animation
+}
+
+build() {
+    cd domovushka
+    make WINDOW_BACKEND=both USE_OZZ=1
+}
+
+check() {
+    cd domovushka
+    QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software make test
+    desktop-file-validate packaging/domovushka.desktop
+}
+
+package() {
+    cd domovushka
+    # The installed site-packages directory is specific to this Python minor.
+    # A binary copied to a derivative with another minor must be rebuilt there.
+    depends+=("python>=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+              "python<$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor + 1}")')")
+    make install PREFIX=/usr DESTDIR="$pkgdir" LICENSE_NAME="$pkgname" WINDOW_BACKEND=both USE_OZZ=1
+}

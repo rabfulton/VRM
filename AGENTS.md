@@ -1,7 +1,8 @@
 # Project guide (domovushka)
 
-This repository builds a Linux/X11 OpenGL avatar renderer with JSON IPC and a
-separate Python/PySide6 Qt Quick controller. Read [README.md](README.md) for setup.
+This repository builds a Linux/X11 and native Wayland OpenGL avatar renderer with
+JSON IPC and a separate Python/PySide6 Qt Quick controller. Read [README.md](README.md)
+for setup.
 
 ## Layout and ownership
 
@@ -24,7 +25,11 @@ local copies and third-party notices. Do not add generated binaries or objects.
 ## Runtime modules
 
 - `src/main.c`: integration, keyboard controls, IPC request handlers and state.
-- `src/ipc.c/.h`: NDJSON server; default `/tmp/vrm-overlay.sock`, one controller.
+- `src/platform.c`, `platform_x11.c`, `platform_wayland.c`: backend selection,
+  surface/window lifecycle and presentation. Maintained targets are Xorg and
+  Hyprland; monitor selection is deferred. See `docs/wayland.md`.
+- `src/ipc.c/.h`: NDJSON server; one controller. `app_paths.c` and Python `paths.py`
+  share private XDG runtime socket defaults and renderer settings paths.
 - `src/gltf_loader.c/.h`, `gltf_loader_impl.cpp`: VRM/glTF loading and expressions.
 - `src/bounds.c`: skinned geometry envelopes, in-memory full-clip bounds and
   pixel-stable transparent viewport expansion. Legacy 2D bounds caches are ignored.
@@ -89,6 +94,8 @@ Analyze at ingest or use a non-destructive tap/FIFO.
 - [Motion](docs/motion.md), [foot planting](docs/foot-planting.md): algorithms/limits.
 - [Development](docs/development.md): build variants, assets and tests.
 - [Roadmap](docs/roadmap.md): outstanding product work.
+- [Packaging](docs/packaging.md): Arch PKGBUILD, staged installs, user paths and
+  migration. GitHub Actions package builds are planned for later.
 
 ## Build and verification
 

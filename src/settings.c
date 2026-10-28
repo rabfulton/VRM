@@ -1,9 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
 #include "settings.h"
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <limits.h>
 
 #define MAX_PATH_LENGTH 256
 
@@ -126,8 +129,42 @@ bool settings_load(const char *path, Settings *out_settings) {
 
 bool settings_save(const char *path, const Settings *settings) {
     if (!path || !settings) return false;
-    FILE *f = fopen(path, "w");
-    if (!f) return false;
+    char temporary[PATH_MAX];
+    int length = snprintf(temporary, sizeof(temporary), "%s.tmp-XXXXXX", path);
+    if (length < 0 || (size_t)length >= sizeof(temporary)) return false;
+    int fd = mkstemp(temporary);
+    if (fd < 0) return false;
+    FILE *f = fdopen(fd, "w");
+    if (!f) { close(fd); unlink(temporary); return false; }
+    FILE *old = fopen(path, "r");
+    if (old) {
+        char *line = NULL;
+        size_t capacity = 0;
+        const char *keys[] = {"always_on_top", "camera_distance", "model_pos_x", "model_pos_y", "model_pos_z",
+                             "model_scale", "window_pos_x", "window_pos_y", "wayland_pos_x", "wayland_pos_y",
+                             "window_size_w", "window_size_h"};
+        while (getline(&line, &capacity, old) >= 0) {
+            char *copy = strdup(line);
+            if (!copy) { free(line); fclose(old); fclose(f); unlink(temporary); return false; }
+            char *equal = strchr(copy, '=');
+            bool known = false;
+            if (equal) {
+                *equal = '\0';
+                char *key = trim(copy);
+                for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+                    if (strcmp(key, keys[i]) == 0) { known = true; break; }
+            }
+            if (!known) {
+                fputs(line, f);
+                if (*line && line[strlen(line) - 1] != '\n') fputc('\n', f);
+            }
+            free(copy);
+        }
+        bool failed = ferror(old);
+        free(line);
+        fclose(old);
+        if (failed) { fclose(f); unlink(temporary); return false; }
+    }
     if (settings->has_always_on_top) {
         fprintf(f, "always_on_top=%d\n", settings->always_on_top ? 1 : 0);
     }
@@ -153,6 +190,10 @@ bool settings_save(const char *path, const Settings *settings) {
         fprintf(f, "window_size_w=%d\n", settings->window_size[0]);
         fprintf(f, "window_size_h=%d\n", settings->window_size[1]);
     }
-    fclose(f);
-    return true;
+    bool ok = !ferror(f);
+    if (fflush(f) != 0 || fsync(fd) != 0) ok = false;
+    if (fclose(f) != 0) ok = false;
+    if (ok && rename(temporary, path) == 0) return true;
+    unlink(temporary);
+    return false;
 }

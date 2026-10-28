@@ -23,7 +23,6 @@ from tkinter import messagebox, ttk
 
 DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_SOCKET_PATH = "/tmp/vrm-overlay.sock"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -33,6 +32,9 @@ from vrm_overlay import IpcClient
 from vrm_overlay.speech import TtsAudioWorker
 from vrm_overlay.tts import SpeechConfig, create_tts
 from vrm_overlay.credentials import CredentialError, SystemCredentials
+from vrm_overlay.paths import default_socket_path
+
+DEFAULT_SOCKET_PATH = default_socket_path()
 
 DEFAULT_VRM_PATH = str((REPO_ROOT / "test.vrm").resolve())
 DEFAULT_ANIM_PATH = str((REPO_ROOT / "animation" / "Relax.vrma").resolve())

@@ -1,12 +1,48 @@
 """Validated local starter avatars and their matching animation libraries."""
 import json
+import hashlib
+import os
 from pathlib import Path
+import tempfile
+from .paths import checkout_root, data_home, resource_directory
 
-ROOT=Path(__file__).resolve().parent.parent
+ROOT=resource_directory()
 STARTER=ROOT/'assets/starter'
 
 
-def starter_avatars():
+def _writable_animations(source):
+    """Seed stable user copies atomically; never replace existing files on upgrades."""
+    destination = data_home() / 'domovushka/starter' / source.relative_to(STARTER)
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.iterdir()):
+        if not path.is_file() or path.suffix not in ('.vrma', '.glb', '.cfg'):
+            continue
+        target = destination / path.name
+        if target.exists():
+            continue
+        fd, temporary = tempfile.mkstemp(prefix='.seed-', dir=destination)
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(path.read_bytes())
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                pass
+        finally:
+            os.unlink(temporary)
+    version = hashlib.sha256((STARTER / 'manifest.json').read_bytes()).hexdigest()
+    fd, temporary = tempfile.mkstemp(prefix='.version-', dir=destination)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(version + '\n')
+        os.replace(temporary, destination / '.packaged-version')
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return destination
+
+
+def starter_avatars(*, writable=False):
     try:catalog=json.loads((STARTER/'catalog.json').read_text())
     except (OSError,ValueError):return []
     if not isinstance(catalog,dict) or not isinstance(catalog.get('avatars'),list):return []
@@ -16,6 +52,8 @@ def starter_avatars():
         model=(STARTER/entry['model']).resolve()
         animations=(STARTER/entry['animations']).resolve()
         if model.is_relative_to(STARTER) and animations.is_relative_to(STARTER) and model.is_file() and animations.is_dir():
+            if writable and (checkout_root() is None or os.environ.get('VRM_DATA_DIR')):
+                animations = _writable_animations(animations)
             rows.append(dict(name=entry['name'],path=str(model),animations=str(animations),rig=entry['rig'],camera=entry.get('camera',{})))
     return rows
 
@@ -26,7 +64,7 @@ def featured_avatars():
     for entry in starter_avatars():
         if entry['rig'] != 'humanoid':
             continue
-        thumbnail = ROOT / 'vrm_overlay/thumbnails/starter.png'
+        thumbnail = Path(__file__).parent / 'thumbnails/starter.png'
         rows.append(dict(entry, id='starter-anime', kind='bundled', badge='Included',
                          author='VRoid / pixiv', thumbnail=thumbnail.as_uri(),
                          description='Sendagaya Shibu · A ready-to-use anime companion with matching motions.',

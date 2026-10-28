@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 from urllib.request import Request, urlopen
 import zipfile
+from .paths import data_home, development_file
 
 VERSION = "v0.8.45"
 RELEASE_URL = f"https://github.com/CrispStrobe/CrispASR/releases/download/{VERSION}"
@@ -32,7 +33,7 @@ def data_directory():
         return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "vrm-overlay/speech"
     if platform.system() == "Darwin":
         return Path.home() / "Library/Application Support/vrm-overlay/speech"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "vrm-overlay/speech"
+    return data_home() / "vrm-overlay/speech"
 
 
 def _machine():
@@ -44,8 +45,8 @@ def model_directory():
     if os.environ.get("CRISPASR_CACHE_DIR"):
         return Path(os.environ["CRISPASR_CACHE_DIR"]).expanduser()
     installed = data_directory() / "models"
-    development = Path(__file__).resolve().parent.parent / "build/speech/models"
-    if not os.environ.get("VRM_SPEECH_HOME") and not installed.exists() and development.is_dir():
+    development = development_file("build/speech/models")
+    if not os.environ.get("VRM_SPEECH_HOME") and not installed.exists() and development is not None and development.is_dir():
         return development
     return installed
 
@@ -62,7 +63,10 @@ def find_crispasr(executable="", device="vulkan"):
             return candidate
         raise RuntimeError(f"CrispASR executable not found: {executable}")
     variant = "vulkan" if device == "vulkan" else "cpu"
-    roots = [data_directory(), Path(__file__).resolve().parent.parent / "build/speech"]
+    roots = [data_directory()]
+    development = development_file('build/speech')
+    if development is not None:
+        roots.append(development)
     for root in roots:
         directory = root / VERSION / variant
         if directory.is_dir():

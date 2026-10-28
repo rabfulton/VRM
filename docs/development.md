@@ -1,8 +1,12 @@
 # Development and testing
 
 Start with the [build instructions](../README.md). Keep ozz-animation initialized
-through `.gitmodules`; the other runtime libraries are vendored. Native builds
-need GLFW/libepoxy development packages even when running only headless tests.
+through `.gitmodules`; the other runtime libraries are vendored. The default
+combined build needs the X11 and Wayland development dependencies listed in the
+README. Backend-specific builds omit the other backend's direct dependencies.
+Arch install/package builds are documented in the [packaging guide](packaging.md).
+`scripts/build_arch_package.py` tests the current working tree through the same
+PKGBUILD. GitHub Actions builds are planned for later.
 
 ## Source and local data
 
@@ -126,9 +130,9 @@ or permit the initial download. CPU can be selected with
 
 Run the relevant checks and `git diff --check`. Review untracked source and docs
 with `git status --short`; `.gitignore` deliberately allows Markdown, text notices
-and source images. Runtime downloads and your avatars should stay ignored. No
-project-wide license is supplied here; choose one before presenting the project
-as licensed for redistribution, and preserve third-party notices separately.
+and source images. Runtime downloads and your avatars should stay ignored. The
+project uses [MIT](../LICENSE); dependencies and assets retain their separate
+licences, and installed packages preserve their notices.
 
 `make test-chat` uses the same local assets with a streamed HTTP fixture, real
 Nano speech and QML chat controls. It verifies expression and thinking/idle cues

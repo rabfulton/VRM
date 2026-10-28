@@ -6,6 +6,7 @@ GenericName=Desktop Companion
 Comment=Animated desktop companion with chat and speech
 Exec=domovushka
 TryExec=domovushka
+Icon=domovushka
 Terminal=false
 StartupNotify=false
 Categories=Utility;

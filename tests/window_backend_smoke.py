@@ -28,7 +28,7 @@ def main():
         with open(Path(folder) / 'renderer.log', 'w+') as log:
             process = subprocess.Popen([
                 str(ROOT / 'vrm-overlay'), '--window-backend', 'auto' if args.auto else args.backend,
-                '--socket', socket, str(ROOT / 'assets/starter/models/anime.vrm'),
+                '--socket', socket, '--settings', str(Path(folder) / 'settings.cfg'), str(ROOT / 'assets/starter/models/anime.vrm'),
             ], cwd=folder, env=env, stdout=log, stderr=log)
             try:
                 deadline = time.monotonic() + 20

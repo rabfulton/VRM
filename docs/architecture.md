@@ -1,14 +1,18 @@
 # Architecture and timing
 
 The renderer and Studio are separate processes. `domovushka` launches the
-PySide6/Qt Quick workspace; `vrm-overlay` owns the transparent GLFW/OpenGL window,
-audio output and model state. Linux/X11 is the supported renderer platform.
+PySide6/Qt Quick workspace; `vrm-overlay` owns the transparent OpenGL overlay,
+audio output and model state. The platform interface selects GLFW/X11 or native
+Wayland/EGL/layer-shell. Maintained desktop targets are Xorg and Hyprland; see
+[Wayland scope](wayland.md) and the [roadmap](roadmap.md).
 
 ## Runtime modules
 
 | Area | Sources | Responsibility |
 | --- | --- | --- |
 | Integration | `src/main.c` | Main loop, IPC handlers and authoritative state snapshot |
+| Desktop backend | `src/platform.c`, `platform_x11.c`, `platform_wayland.c` | Backend selection, window/surface lifecycle, presentation and pointer input |
+| Files and installation | `src/app_paths.c`, `vrm_overlay/paths.py`, `scripts/install.py` | Matching user config/runtime paths, checkout migration and installed resource discovery |
 | IPC | `src/ipc.c`, `vrm_overlay/client.py` | NDJSON framing, request IDs, queued responses and socket ownership |
 | Models | `src/gltf_loader.c`, `src/gltf_loader_impl.cpp` | VRM/glTF loading, humanoid mapping, morphs and expression metadata |
 | Rendering | `src/renderer.c` | Embedded shaders, skinning, GPU morphs and draw passes |

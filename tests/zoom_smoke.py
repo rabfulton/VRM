@@ -28,7 +28,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='vrm-zoom-') as directory:
         root=Path(directory);socket=str(root/'runtime.sock')
         with (root/'renderer.log').open('w+') as log:
-            process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',socket],cwd=root,
+            process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',socket,'--settings',str(root/'settings.cfg')],cwd=root,
                                      stdout=log,stderr=subprocess.STDOUT)
             client=IpcClient(socket)
             def request(action,**values):return client.request(dict(action=action,**values),timeout_s=30)

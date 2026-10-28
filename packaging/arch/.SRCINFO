@@ -1,0 +1,74 @@
+pkgbase = domovushka-git
+	pkgdesc = Animated desktop companion with a VRM renderer, Qt Quick Studio, chat and local speech
+	pkgver = r55.76582e8
+	pkgrel = 1
+	url = https://github.com/rabfulton/VRM
+	arch = x86_64
+	license = MIT
+	license = MIT-0
+	license = CC0-1.0
+	license = Zlib
+	license = BSL-1.0
+	license = HPND-sell-variant
+	checkdepends = desktop-file-utils
+	makedepends = git
+	makedepends = cmake
+	makedepends = wayland-protocols
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = libepoxy
+	depends = glfw
+	depends = libx11
+	depends = libxext
+	depends = libxcursor
+	depends = libxi
+	depends = libxinerama
+	depends = libxrandr
+	depends = wayland>=1.22
+	depends = libglvnd
+	depends = cairo
+	depends = alsa-lib
+	depends = libpulse
+	depends = python>=3.10
+	depends = pyside6>=6.7
+	depends = qt6-base
+	depends = qt6-declarative
+	depends = qt6-wayland
+	depends = python-keyring>=25
+	optdepends = vulkan-icd-loader: local speech with Vulkan (also requires your GPU driver)
+	optdepends = org.freedesktop.secrets: store API keys using a running, unlocked Secret Service provider
+	optdepends = python-dbus: use the KWallet keyring backend
+	optdepends = jack: optional JACK audio backend
+	provides = domovushka
+	conflicts = domovushka
+	source = domovushka::git+https://github.com/rabfulton/VRM.git
+	source = ozz-animation::git+https://github.com/guillaumeblanc/ozz-animation.git
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = domovushka-git
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+	depends = libepoxy
+	depends = glfw
+	depends = libx11
+	depends = libxext
+	depends = libxcursor
+	depends = libxi
+	depends = libxinerama
+	depends = libxrandr
+	depends = wayland>=1.22
+	depends = libglvnd
+	depends = cairo
+	depends = alsa-lib
+	depends = libpulse
+	depends = python>=3.10
+	depends = pyside6>=6.7
+	depends = qt6-base
+	depends = qt6-declarative
+	depends = qt6-wayland
+	depends = python-keyring>=25
+	depends = python>=3.14
+	depends = python<3.15

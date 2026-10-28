@@ -1,6 +1,10 @@
 # VRM Overlay IPC API
 
-The VRM overlay accepts commands via NDJSON over a UNIX domain socket at `/tmp/vrm-overlay.sock`.
+The VRM overlay accepts commands via NDJSON over a private UNIX domain socket at
+`$XDG_RUNTIME_DIR/domovushka/renderer.sock`, falling back to
+`/tmp/domovushka-UID/renderer.sock` without a valid runtime directory. Both the
+renderer and controller accept `--socket PATH`; the Python client resolves the
+default automatically. See [installed paths and migration](packaging.md).
 Override it with `./vrm-overlay --socket PATH [MODEL.vrm]`.
 
 ## Connection
@@ -325,7 +329,8 @@ change runtime state. Qt Studio polls this snapshot to keep controls synchronize
   transition duration and group blend factors are not persisted by this command.
 - `set_render`: shader `anime`, `toon` or `pbr`; boolean `always_on_top`; scale 0.1–10.
   `always_on_top` changes the avatar's native floating-window property and is
-  saved immediately in the renderer's `settings.cfg` for subsequent launches.
+  saved immediately in the renderer's XDG config file for subsequent launches
+  (`~/.config/domovushka/renderer.cfg` by default; `--settings PATH` overrides it).
   Scale changes also update the camera framing. Invalid options reject the update.
 - `clear_expressions`: sets every available expression to zero. Automatic blinking
   and lip sync can continue to drive their expressions while enabled.

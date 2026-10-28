@@ -41,7 +41,8 @@ ordinary Qt windows, with compositor-controlled placement and focus. The X11 QML
 menu remains available for the X11 backend.
 
 Wayland viewport coordinates are output-local. `wayland_pos_x/y` are stored
-separately from X11 `window_pos_x/y` in settings.cfg; switching backends preserves
+separately from X11 `window_pos_x/y` in the renderer preferences
+(`~/.config/domovushka/renderer.cfg` by default); switching backends preserves
 both placements. No desktop configuration or compositor rules are installed.
 
 ## Current scope
@@ -54,6 +55,11 @@ visibility, and activation-token handoff to Qt are still outstanding. The compos
 may deny raising/focusing Studio or Chat. Multi-monitor/hotplug, suspend and lock
 behaviour still need validation. The menu uses a small Cairo-rendered surface;
 full theme/accessibility and keyboard navigation beyond Escape remain future work.
+These are known limits rather than a scheduled implementation checklist. Monitor
+selection is deferred pending an actionable report or contribution with a way to
+test it; other Wayland refinements will be revisited on the target machine.
+The maintained desktop targets are Hyprland and Xorg; other compositor integrations
+are contribution-driven. See the [current priorities](roadmap.md).
 
 The output canvas requires single-sample swapchain buffers: at 5120×2160 each
 RGBA buffer is approximately 42 MiB. It does not allocate full-output MSAA or

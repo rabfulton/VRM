@@ -24,7 +24,7 @@ def main():
         log_path=Path(directory)/'renderer.log'
         with log_path.open('w+') as log:
             socket=str(Path(directory)/'runtime.sock')
-            process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',socket],cwd=directory,stdout=log,stderr=subprocess.STDOUT)
+            process=subprocess.Popen([str(ROOT/'vrm-overlay'),'--socket',socket,'--settings',str(Path(directory)/'settings.cfg')],cwd=directory,stdout=log,stderr=subprocess.STDOUT)
             client=IpcClient(socket)
             def request(action,**values):
                 return client.request(dict(action=action,**values),timeout_s=30)

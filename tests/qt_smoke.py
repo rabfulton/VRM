@@ -47,7 +47,7 @@ def main():
         root = Path(directory)
         bridge = Controller(str(root / "runtime.sock"), model=str(args.model.resolve()),
                             animation_dir=str(args.animation_dir.resolve()),
-                            show_studio=True,
+                            show_studio=True, renderer_settings=str(root / "renderer.cfg"),
                             settings=QSettings(str(root / "settings.ini"), QSettings.IniFormat))
         engine = QQmlApplicationEngine()
         engine.rootContext().setContextProperty("bridge", bridge)

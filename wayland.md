@@ -5,6 +5,9 @@ Status: an initial native avatar backend is implemented alongside X11. See
 is the broader port plan; later-stage capabilities are not implied by this status.
 The standalone [presentation probe](examples/wayland_overlay/README.md) remains
 available for diagnosing EGL/layer-shell separately.
+The [current roadmap](docs/roadmap.md) takes precedence over this original plan:
+monitor selection is deferred, remaining Wayland work awaits the target machine,
+and additional compositors are contribution-driven rather than release goals.
 Primary target: **Hyprland on Omarchy**. Research checked on **2026-10-27**.
 Recheck the installed compositor, protocols and Omarchy configuration format when
 work starts on the target machine. The current X11 application remains supported.

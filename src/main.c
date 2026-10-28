@@ -9,10 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #include "../deps/cjson/cJSON.h"
 #include "../deps/miniaudio.h"
 #include "anim_config.h"
+#include "app_paths.h"
 #include "animator.h"
 #include "audio.h"
 #include "camera.h"
@@ -84,7 +86,7 @@ typedef struct {
 } VrmApp;
 
 static VrmApp app = {0};
-static const char *SETTINGS_PATH = "settings.cfg";
+static const char *SETTINGS_PATH;
 
 static int model_mouse_x = 0, model_mouse_y = 0; /* For model window */
 extern float g_spring_stiffness, g_spring_drag, g_spring_gravity;
@@ -1553,16 +1555,19 @@ static bool model_hit_test(int x, int y) {
 }
 
 int main(int argc, char *argv[]) {
-  const char *socket_path = "/tmp/vrm-overlay.sock";
+  const char *socket_path = NULL;
+  char default_socket[108], default_settings[PATH_MAX];
   const char *model_path = NULL;
   const char *window_backend = "auto";
   int exit_status = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-      printf("Usage: %s [--socket PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
+      printf("Usage: %s [--socket PATH] [--settings PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
       return 0;
     } else if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) {
       socket_path = argv[++i];
+    } else if (strcmp(argv[i], "--settings") == 0 && i + 1 < argc) {
+      SETTINGS_PATH = argv[++i];
     } else if (strcmp(argv[i], "--window-backend") == 0 && i + 1 < argc) {
       window_backend = argv[++i];
     } else if (strncmp(argv[i], "--window-backend=", 17) == 0) {
@@ -1570,9 +1575,23 @@ int main(int argc, char *argv[]) {
     } else if (argv[i][0] != '-' && !model_path) {
       model_path = argv[i];
     } else {
-      fprintf(stderr, "Usage: %s [--socket PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [--socket PATH] [--settings PATH] [--window-backend auto|x11|wayland] [MODEL.vrm]\n", argv[0]);
       return 1;
     }
+  }
+  if (!SETTINGS_PATH) {
+    if (!app_settings_path(default_settings, sizeof(default_settings))) {
+      fprintf(stderr, "Cannot resolve renderer settings path.\n"); return 1;
+    }
+    SETTINGS_PATH = default_settings;
+    const char *override = getenv("VRM_SETTINGS_PATH");
+    if ((!override || !*override) && !app_migrate_settings(SETTINGS_PATH)) {
+      fprintf(stderr, "Cannot import legacy renderer settings.\n"); return 1;
+    }
+  }
+  if (!socket_path) {
+    if (!app_socket_path(default_socket, sizeof(default_socket))) return 1;
+    socket_path = default_socket;
   }
   if (!platform_select_backend(window_backend)) { fprintf(stderr,"Invalid window backend\n"); return 1; }
   if (!ipc_init(&app.ipc, socket_path, on_ipc_command, &app)) return 1;

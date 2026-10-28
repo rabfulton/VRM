@@ -9,7 +9,8 @@ import sys
 def main():
     parser = argparse.ArgumentParser(prog='domovushka', description="domovushka — animated desktop companion")
     parser.add_argument("--window-backend", choices=("auto", "x11", "wayland"), default="auto")
-    parser.add_argument("--socket", default="/tmp/vrm-overlay.sock")
+    parser.add_argument("--socket", help="Renderer socket (default: private user runtime directory)")
+    parser.add_argument("--settings", help="Renderer preferences file (default: XDG config directory)")
     parser.add_argument("--attach", action="store_true", help="Connect only; leave the existing renderer running on exit")
     parser.add_argument("--model", help="Avatar to load when starting a new renderer")
     parser.add_argument("--animation-dir", help="Folder of VRMA/GLB animation files")
@@ -18,11 +19,11 @@ def main():
     args = parser.parse_args()
     try:
         from PySide6.QtCore import QTimer, QUrl
-        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtGui import QGuiApplication, QIcon
         from PySide6.QtQml import QQmlApplicationEngine
         from PySide6.QtQuickControls2 import QQuickStyle
     except ImportError:
-        parser.exit(1, "Install PySide6: python3 -m pip install -r requirements-gui.txt\n")
+        parser.exit(1, "Install PySide6 (Arch: pyside6), or install requirements-gui.txt in your checkout environment.\n")
     from .qt_controller import Controller
 
     QQuickStyle.setStyle("Fusion")
@@ -33,9 +34,10 @@ def main():
     app.setApplicationName("VRM Studio")
     app.setApplicationDisplayName('domovushka')
     app.setDesktopFileName('domovushka')
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'thumbnails/starter.png')))
     app.setQuitOnLastWindowClosed(False)
     bridge = Controller(args.socket, attach=args.attach, model=args.model, animation_dir=args.animation_dir,
-                        show_studio=args.studio, window_backend=args.window_backend)
+                        show_studio=args.studio, window_backend=args.window_backend, renderer_settings=args.settings)
     # QGuiApplication.quit() asks visible windows to close. Studio intentionally
     # rejects ordinary close events to hide itself, which can veto that request
     # after the renderer has already stopped. Explicit companion Quit must end

@@ -26,7 +26,8 @@ if HAS_QT:
     from PySide6.QtQuick import QQuickItem
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtTest import QTest
-    from vrm_overlay.qt_controller import Controller, ROOT, initial_state
+    from vrm_overlay.qt_controller import Controller, initial_state
+    ROOT = Path(__file__).resolve().parent.parent
 
 
 @unittest.skipUnless(HAS_QT, "Install requirements-gui.txt for Qt Quick checks")

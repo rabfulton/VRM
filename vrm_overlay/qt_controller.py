@@ -19,8 +19,7 @@ from .avatar_catalog import starter_avatars
 from .qt_avatar_library import AvatarLibrary
 from .qt_overlay_menu import OverlayMenuInput
 from .pose_routes import current_pose, transition_route
-
-ROOT = Path(__file__).resolve().parent.parent
+from .paths import default_socket_path, development_file, renderer_executable
 
 
 def local_path(value: str) -> Path:
@@ -69,23 +68,29 @@ class Controller(QObject):
     overlayMenuRequested = Signal("QVariantMap")
     quitRequested = Signal()
 
-    def __init__(self, socket_path="/tmp/vrm-overlay.sock", *, attach=False,
-                 model=None, animation_dir=None, settings=None, show_studio=False, window_backend="auto", avatar_dir=None, parent=None):
+    def __init__(self, socket_path=None, *, attach=False,
+                 model=None, animation_dir=None, settings=None, show_studio=False, window_backend="auto", avatar_dir=None, renderer_settings=None, parent=None):
         super().__init__(parent)
         self._settings = settings if settings is not None else QSettings()
-        self._socket_path = socket_path
+        self._socket_path = socket_path if socket_path is not None else default_socket_path()
+        self._renderer_settings = renderer_settings
         self._attach = attach
         self._state = initial_state()
         self._connected = False
         self._status = "Disconnected"
         self._error = ""
         self._logs = deque(maxlen=200)
-        self._starter_avatars=starter_avatars()
-        default_model=ROOT/'test.vrm'
-        if not default_model.is_file() and self._starter_avatars:default_model=Path(self._starter_avatars[0]['path'])
+        self._starter_avatars=starter_avatars(writable=True)
+        default_model=development_file('test.vrm')
+        if (default_model is None or not default_model.is_file()) and self._starter_avatars:default_model=Path(self._starter_avatars[0]['path'])
+        default_folder = development_file('animation')
+        if default_folder is None:
+            default_folder = Path(self._starter_avatars[0]['animations']) if self._starter_avatars else Path.home()
+        if default_model is None:
+            default_model = Path.home() / 'avatar.vrm'
         self._model = str(local_path(model or self._settings.value("model", str(default_model))))
-        self._folder = str(local_path(animation_dir or self._settings.value("animations", str(ROOT / "animation"))))
-        self._audio = str(self._settings.value("audio", str(ROOT / "test.wav")))
+        self._folder = str(local_path(animation_dir or self._settings.value("animations", str(default_folder))))
+        self._audio = str(self._settings.value("audio", str(development_file('test.wav') or '')))
         self._files = []
         self._animation_versions = {}
         self._preview_path = ''
@@ -253,15 +258,17 @@ class Controller(QObject):
                 self._status = "Disconnected"
                 self.changed.emit()
             elif self._process.state() == QProcess.NotRunning and not self._owns_process:
-                binary = ROOT / "vrm-overlay"
+                binary = Path(renderer_executable())
                 if not binary.is_file():
                     self._retry.stop()
                     self._starting = False
-                    self._fail("Build the renderer with make before starting the controller.")
+                    self._fail("Renderer not found. Install vrm-overlay or build the checkout with make.")
                     return
                 self._owns_process = True
-                self._process.setWorkingDirectory(str(ROOT))
-                self._process.start(str(binary), ["--socket", self._socket_path, "--window-backend", self._window_backend])
+                arguments = ["--socket", self._socket_path, "--window-backend", self._window_backend]
+                if self._renderer_settings:
+                    arguments.extend(["--settings", str(self._renderer_settings)])
+                self._process.start(str(binary), arguments)
                 self._status = "Starting renderer…"
                 self.changed.emit()
             return
@@ -401,7 +408,10 @@ class Controller(QObject):
         if self._socket.write(data) != len(data):
             self._timed_out()
             return
-        self._timeout.start(30000 if payload["action"] in ("load", "load_animation") else 3000)
+        # The socket exists before native GL/shader initialization completes.
+        # First-launch driver setup can outlast an ordinary control request.
+        startup = payload['action'] == 'get_state' and not self._connected
+        self._timeout.start(30000 if startup or payload["action"] in ("load", "load_animation") else 3000)
         self.changed.emit()
 
     def _read(self):

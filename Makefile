@@ -2,8 +2,14 @@
 
 CC = gcc
 CXX = g++
-CFLAGS = -std=c11 -Wall -Wextra -g -O2 -MMD -MP
-CXXFLAGS = -std=c++20 -Wall -Wextra -g -O2 -MMD -MP
+CFLAGS ?= -g -O2
+CXXFLAGS ?= -g -O2
+override CFLAGS += -std=c11 -Wall -Wextra -MMD -MP
+override CXXFLAGS += -std=c++20 -Wall -Wextra -MMD -MP
+PYTHON ?= python3
+PREFIX ?= /usr/local
+DESTDIR ?=
+LICENSE_NAME ?= domovushka
 WINDOW_BACKEND ?= both
 WAYLAND_PROBE_DIR = build/wayland-probe
 ifeq ($(filter $(WINDOW_BACKEND),x11 wayland both),)
@@ -14,15 +20,14 @@ PLATFORM_SRC = src/platform.c
 ifneq ($(filter $(WINDOW_BACKEND),x11 both),)
   PLATFORM_PACKAGES += glfw3 x11 xext
   PLATFORM_SRC += src/platform_x11.c
-  CFLAGS += -DVRM_PLATFORM_X11
+  override CPPFLAGS += -DVRM_PLATFORM_X11
 endif
 ifneq ($(filter $(WINDOW_BACKEND),wayland both),)
   PLATFORM_PACKAGES += wayland-client wayland-egl egl cairo
   PLATFORM_SRC += src/platform_wayland.c
-  CFLAGS += -DVRM_PLATFORM_WAYLAND
+  override CPPFLAGS += -DVRM_PLATFORM_WAYLAND
 endif
-CFLAGS += $(shell pkg-config --cflags $(PLATFORM_PACKAGES))
-CXXFLAGS += $(shell pkg-config --cflags $(PLATFORM_PACKAGES))
+override CPPFLAGS += $(shell pkg-config --cflags $(PLATFORM_PACKAGES))
 INCLUDES = -Ideps/cglm/include -Ideps/tinygltf -Ideps/cjson -Ideps/stb
 
 # Optional ozz animation sampling and leg IK
@@ -33,16 +38,15 @@ OZZ_LIBS = $(OZZ_BUILD_DIR)/src/animation/offline/libozz_animation_offline_rd.a 
            $(OZZ_BUILD_DIR)/src/animation/runtime/libozz_animation_rd.a \
            $(OZZ_BUILD_DIR)/src/base/libozz_base_rd.a
 
-LDFLAGS = $(shell pkg-config --libs $(PLATFORM_PACKAGES)) -lm -lstdc++ -lpthread -ldl
+LDLIBS = $(shell pkg-config --libs $(PLATFORM_PACKAGES)) -lm -lstdc++ -lpthread -ldl
 
 ifeq ($(USE_OZZ),1)
   INCLUDES += -Ideps/ozz-animation/include
-  CFLAGS += -DVRM_USE_OZZ=1
-  CXXFLAGS += -DVRM_USE_OZZ=1
-  LDFLAGS += $(OZZ_LIBS)
+  override CPPFLAGS += -DVRM_USE_OZZ=1
+  LDLIBS += $(OZZ_LIBS)
 endif
 
-C_SRC = src/main.c $(PLATFORM_SRC) src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/app_paths.c $(PLATFORM_SRC) src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp src/foot_lock.cpp
 ifeq ($(USE_OZZ),1)
   CXX_SRC += src/ozz_bridge.cpp
@@ -62,14 +66,18 @@ TARGET = vrm-overlay
 
 all: $(TARGET)
 
+.PHONY: install
+install: all
+	$(PYTHON) scripts/install.py --prefix "$(PREFIX)" --destdir "$(DESTDIR)" --license-name "$(LICENSE_NAME)"
+
 FORCE:
 
 $(TARGET): $(OBJ) FORCE
-	$(CXX) $(OBJ) -o $@ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) $(OBJ) -o $@ $(LDLIBS)
 
 ifeq ($(USE_OZZ),1)
 $(OZZ_LIBS) &:
-	cmake -S deps/ozz-animation -B $(OZZ_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo -Dozz_build_tools=OFF -Dozz_build_fbx=OFF -Dozz_build_gltf=OFF -Dozz_build_samples=OFF -Dozz_build_howtos=OFF -Dozz_build_tests=OFF
+	cmake -S deps/ozz-animation -B $(OZZ_BUILD_DIR) -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="$(filter-out -MMD -MP,$(CXXFLAGS))" -Dozz_build_tools=OFF -Dozz_build_fbx=OFF -Dozz_build_gltf=OFF -Dozz_build_samples=OFF -Dozz_build_howtos=OFF -Dozz_build_tests=OFF
 	cmake --build $(OZZ_BUILD_DIR) -j4
 
 $(TARGET): $(OZZ_LIBS)
@@ -77,11 +85,11 @@ endif
 
 $(OBJ_DIR)/%.o: %.c
 	mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OBJ_DIR)/%.o: %.cpp
 	mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	rm -f $(OBJ) $(TARGET)
@@ -133,6 +141,9 @@ $(TEST_BUILD_DIR)/input-mask-test: tests/input_mask_test.c src/input_mask.c src/
 $(TEST_BUILD_DIR)/settings-test: tests/settings_test.c src/settings.c src/settings.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/settings_test.c src/settings.c -o $@
 
+$(TEST_BUILD_DIR)/app-paths-probe: tests/app_paths_probe.c src/app_paths.c src/app_paths.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/app_paths_probe.c src/app_paths.c -o $@
+
 ifeq ($(USE_OZZ),1)
 $(TEST_BUILD_DIR)/animator.o: src/animator.c src/animator.h src/ozz_bridge.h src/foot_lock.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) -DVRM_USE_OZZ=1 -c src/animator.c -o $@
@@ -153,7 +164,7 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
@@ -165,7 +176,7 @@ test: $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR
 	$(TEST_BUILD_DIR)/bounds-test
 	$(TEST_BUILD_DIR)/input-mask-test
 	$(TEST_BUILD_DIR)/settings-test
-	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) python3 -m unittest discover -s tests -v
+	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) VRM_TEST_PATHS_PROBE=$(abspath $(TEST_BUILD_DIR)/app-paths-probe) python3 -m unittest discover -s tests -v
 
 test-sanitize:
 	$(MAKE) test TEST_BUILD_DIR=build/tests/sanitize TEST_SANITIZERS=address,undefined
@@ -200,26 +211,26 @@ test-assets: all
 	python3 tests/starter_assets_smoke.py
 
 $(TEST_BUILD_DIR)/render-target-test.o: tests/render_target_test.c src/renderer.h src/platform.h src/camera.h src/gltf_loader.h src/hit_capture.h | $(TEST_BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
 $(TEST_BUILD_DIR)/render-target-test: $(TEST_BUILD_DIR)/render-target-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/render-target-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) $(TEST_BUILD_DIR)/render-target-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDLIBS)
 
 # Needs an OpenGL/X11 display, but no avatar, speech engine or network.
 test-render: $(TEST_BUILD_DIR)/render-target-test
 	$(TEST_BUILD_DIR)/render-target-test
 
 $(TEST_BUILD_DIR)/asset-preview.o: tests/asset_preview.c src/renderer.h src/animator.h src/camera.h src/spring_bones.h | $(TEST_BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
 $(TEST_BUILD_DIR)/asset-preview: $(TEST_BUILD_DIR)/asset-preview.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/asset-preview.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) $(TEST_BUILD_DIR)/asset-preview.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDLIBS)
 
 $(TEST_BUILD_DIR)/spring-asset-test.o: tests/spring_asset_test.c src/spring_bones.h src/animator.h | $(TEST_BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -Isrc -c $< -o $@
 
 $(TEST_BUILD_DIR)/spring-asset-test: $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) $(if $(filter 1,$(USE_OZZ)),$(OZZ_LIBS))
-	$(CXX) $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDFLAGS)
+	$(CXX) $(LDFLAGS) $(TEST_BUILD_DIR)/spring-asset-test.o $(filter-out $(OBJ_DIR)/src/main.o,$(OBJ)) -o $@ $(LDLIBS)
 
 # Optional real-avatar check: ten seconds of settling in bind and animated poses.
 SPRING_MODEL ?= assets/starter/models/anime.vrm

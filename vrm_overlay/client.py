@@ -6,8 +6,9 @@ import json
 import socket
 import threading
 import time
+from .paths import default_socket_path
 
-DEFAULT_SOCKET_PATH = "/tmp/vrm-overlay.sock"
+DEFAULT_SOCKET_PATH = default_socket_path(create=False)
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 1024 * 1024
 
@@ -28,8 +29,8 @@ class IpcClient:
     leaves the command's outcome unknown, so callers must not blindly retry it.
     """
 
-    def __init__(self, socket_path: str = DEFAULT_SOCKET_PATH):
-        self.socket_path = socket_path
+    def __init__(self, socket_path: str | None = None):
+        self.socket_path = socket_path if socket_path is not None else default_socket_path()
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
         self._recv_buf = bytearray()

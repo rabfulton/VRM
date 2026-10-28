@@ -88,7 +88,8 @@ menu. A second right-click, an outside left-click, Escape or switching focus
 dismisses it. Outside cancellation consumes the click rather than triggering an
 avatar action. **Always on top** changes the avatar's window-manager floating
 property; it is shared with the View tab and the renderer's **T** shortcut. The
-renderer saves the on/off choice immediately in `settings.cfg` and restores it
+renderer saves the on/off choice immediately in its XDG config file
+(`~/.config/domovushka/renderer.cfg` by default) and restores it
 at startup, including standalone launches. **Chat** opens chat near the pointer. **Chat…** in
 Studio or Ctrl+Enter while this app has focus also opens chat; Escape hides it.
 The menu uses Qt cursor/workarea coordinates so native X11 pixels do not displace
