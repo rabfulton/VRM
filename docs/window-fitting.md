@@ -31,6 +31,22 @@ and a 4096 logical-pixel cap; exceptionally large projected motion is reduced to
 fit those limits. Geometry crossing the camera's near plane cannot be fixed by
 resizing the window.
 
+Fitting is checked each presented frame; it does not issue an X11 window move
+or resize unless the required dimensions actually change. Expansion recentres
+the window once to keep the avatar's screen-space camera centre fixed. Dragging
+does explicitly move the window with the pointer. `get_state.frame_timing.window_resizes`
+counts automatic fitting changes. On native Wayland the output-sized layer surface
+stays in place and the avatar is positioned within its canvas; EGL buffer resize
+and buffer-scale requests are sent only when their dimensions/scale change.
+Hidden avatars skip drawing and buffer swaps; X11's loop waits briefly between
+IPC/update passes so it does not spin without vsync.
+
+For a displaced walk-in entrance, run `python3 tests/entrance_smoke.py` on Xorg.
+It uses local `test.vrm` and `animation/Enter_from_left.vrma` by default, copies
+renderer preferences into a temporary directory, and checks the resize counter
+and actual X11 position/dimensions throughout playback. Supply `--model` and
+`--animation` for other local assets. This optional check also needs `xdotool`.
+
 Legacy `bounds.world_w` / `bounds.world_h` sidecar entries are retained when editing
 configs but are no longer used for fitting. They were bone-only, lost the envelope's
 position/depth and were incorrectly shared across avatar models and correction
@@ -111,6 +127,19 @@ loading from steady rendering stalls. Render timings measure CPU submission;
 swap time can include GPU completion and v-sync/compositor waits. Cold clip loading
 and ozz conversion still run on the render thread and may briefly stall playback;
 the bounds cache reduces repeated work but does not make loading asynchronous.
+
+Rendering has a 60 FPS cap; the footer reports an average of completed
+presentations over roughly half a second. Animation and springs still use their
+existing wall-time clocks. FPS sits at the footer's fixed centre and connection
+status is anchored to the right, so digit changes cannot shift either element.
+
+A walk-in entrance fits the complete motion envelope before it is revealed,
+then keeps the expanded surface during playback and subsequent idles. This can
+be a large surface, even while the visible figure occupies only part of it.
+Studio schedules a fresh state check at the expected end of owned one-shot
+motions, avoiding the extra wait for its ordinary 250 ms UI polling interval.
+The next clip still loads synchronously; preloading it would be a further
+improvement to the handoff, independent of window resizing.
 
 ```sh
 python3 tests/push_fit_smoke.py --model /path/to/avatar.vrm --animation-dir /path/to/animations

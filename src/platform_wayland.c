@@ -35,6 +35,7 @@ struct PlatformWindow {
     EGLContext context;
     EGLSurface buffer;
     int width, height, scale, x, y;
+    int egl_width, egl_height, buffer_scale;
     bool configured, closed, ready;
 
     PlatformCallbacks cb;
@@ -176,6 +177,8 @@ static bool initialize_egl(PlatformWindow *p) {
     p->context = eglCreateContext(p->egl, config, EGL_NO_CONTEXT, context_attributes);
     if (p->context == EGL_NO_CONTEXT) return false;
     p->window = wl_egl_window_create(p->surface, p->width * p->scale, p->height * p->scale);
+    p->egl_width = p->width * p->scale;
+    p->egl_height = p->height * p->scale;
     if (!p->window) return false;
     p->buffer = eglCreateWindowSurface(p->egl, config, (EGLNativeWindowType)p->window, NULL);
     if (p->buffer == EGL_NO_SURFACE ||
@@ -218,7 +221,7 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
         if (button==BTN_RIGHT && state) { close_menu(p); return; }
         if (p->pointer_surface == p->menu_surface && button == BTN_LEFT && !state) {
             int row = ((int)p->pointer_y-6)/34;
-            bool valid = p->pointer_y >= 6 && p->pointer_x >= 6 && p->pointer_x < 174 && row >= 0 && row < 3;
+            bool valid = p->pointer_y >= 6 && p->pointer_x >= 6 && p->pointer_x < 174 && row >= 0 && row < 4;
             close_menu(p);
             if (valid && p->cb.on_menu_action) p->cb.on_menu_action(row,p->cb.user_data);
         }
@@ -307,7 +310,7 @@ static void menu_configure(void *data, struct xdg_surface *surface, uint32_t ser
     PlatformWindow *p = data;
     xdg_surface_ack_configure(surface,serial);
     wl_surface_attach(p->menu_surface,p->menu_buffer,0,0);
-    wl_surface_damage(p->menu_surface,0,0,180,114);
+    wl_surface_damage(p->menu_surface,0,0,180,148);
     wl_surface_commit(p->menu_surface);
 }
 static const struct xdg_surface_listener menu_surface_listener = {menu_configure};
@@ -319,7 +322,7 @@ static const struct xdg_popup_listener popup_listener = {.configure=popup_config
 bool wayland_open_menu(PlatformWindow *p) {
     if (p->menu) { close_menu(p); return true; }
     if (!p->wm || !p->shm || !p->seat || !p->button_serial) return true;
-    int width=180*p->scale,height=114*p->scale,stride=width*4,size=stride*height;
+    int width=180*p->scale,height=148*p->scale,stride=width*4,size=stride*height;
     int fd=memfd_create("vrm-menu",MFD_CLOEXEC);
     if (fd<0) return true;
     if (ftruncate(fd,size)<0) { close(fd); return true; }
@@ -331,8 +334,8 @@ bool wayland_open_menu(PlatformWindow *p) {
     cairo_set_source_rgb(cr,0.09,0.13,0.18); cairo_paint(cr);
     cairo_select_font_face(cr,"sans",CAIRO_FONT_SLANT_NORMAL,CAIRO_FONT_WEIGHT_NORMAL);
     cairo_set_font_size(cr,15);
-    const char *labels[]={"Chat","Studio","Quit"};
-    for (int i=0;i<3;i++) {
+    const char *labels[]={"Chat","Studio","Hide avatar","Quit"};
+    for (int i=0;i<4;i++) {
         cairo_set_source_rgb(cr,0.14,0.20,0.28); cairo_rectangle(cr,6,6+i*34,168,32); cairo_fill(cr);
         cairo_set_source_rgb(cr,0.95,0.96,0.98); cairo_move_to(cr,18,28+i*34); cairo_show_text(cr,labels[i]);
     }
@@ -345,7 +348,7 @@ bool wayland_open_menu(PlatformWindow *p) {
     p->menu_xdg=xdg_wm_base_get_xdg_surface(p->wm,p->menu_surface);
     xdg_surface_add_listener(p->menu_xdg,&menu_surface_listener,p);
     struct xdg_positioner *pos=xdg_wm_base_create_positioner(p->wm);
-    xdg_positioner_set_size(pos,180,114);
+    xdg_positioner_set_size(pos,180,148);
     xdg_positioner_set_anchor_rect(pos,(int)p->pointer_x,(int)p->pointer_y,1,1);
     xdg_positioner_set_anchor(pos,XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT);
     xdg_positioner_set_gravity(pos,XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
@@ -454,8 +457,14 @@ void wayland_swap_buffers(PlatformWindow *p) {
 }
 void wayland_present(PlatformWindow *p,unsigned int source,int width,int height) {
     int w=p->width*p->scale,h=p->height*p->scale;
-    wl_surface_set_buffer_scale(p->surface,p->scale);
-    wl_egl_window_resize(p->window,w,h,0,0);
+    if (p->buffer_scale != p->scale) {
+        wl_surface_set_buffer_scale(p->surface,p->scale);
+        p->buffer_scale = p->scale;
+    }
+    if (p->egl_width != w || p->egl_height != h) {
+        wl_egl_window_resize(p->window,w,h,0,0);
+        p->egl_width = w; p->egl_height = h;
+    }
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER,0);
     glDisable(GL_SCISSOR_TEST);
     glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);

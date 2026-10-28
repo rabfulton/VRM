@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import json
 import hashlib
+import math
 from pathlib import Path
 import time
 from typing import Callable
@@ -20,6 +21,9 @@ from .qt_avatar_library import AvatarLibrary
 from .qt_overlay_menu import OverlayMenuInput
 from .pose_routes import current_pose, transition_route
 from .paths import default_socket_path, development_file, renderer_executable
+from .presentation import PresentationQueue
+from .visibility import AvatarVisibility
+from .qt_shortcut import VisibilityShortcut
 
 
 def local_path(value: str) -> Path:
@@ -69,9 +73,12 @@ class Controller(QObject):
     quitRequested = Signal()
 
     def __init__(self, socket_path=None, *, attach=False,
-                 model=None, animation_dir=None, settings=None, show_studio=False, window_backend="auto", avatar_dir=None, renderer_settings=None, parent=None):
+                 model=None, animation_dir=None, settings=None, show_studio=False, window_backend="auto", avatar_dir=None, renderer_settings=None, external_agent=None, parent=None):
         super().__init__(parent)
         self._settings = settings if settings is not None else QSettings()
+        self._external_agent = (self._settings.value('chat/source', 'builtin') == 'external' if external_agent is None else external_agent)
+        if external_agent is not None:
+            self._settings.setValue('chat/source', 'external' if external_agent else 'builtin')
         self._socket_path = socket_path if socket_path is not None else default_socket_path()
         self._renderer_settings = renderer_settings
         self._attach = attach
@@ -108,6 +115,7 @@ class Controller(QObject):
         self._chat_request_seq = None
         self._menu_request_seq = None
         self._studio_request_seq = None
+        self._visibility_request_seq = None
         self._overlay_menu_input = None
         self._studio_visible = show_studio
         self._quitting = False
@@ -139,16 +147,61 @@ class Controller(QObject):
         self._poll = QTimer(self)
         self._poll.setInterval(250)
         self._poll.timeout.connect(self.refresh)
+        self._motion_end = QTimer(self)
+        self._motion_end.setSingleShot(True)
+        self._motion_end.timeout.connect(self.refresh)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(100)
         self._debounce.timeout.connect(self._flush_tuning)
         self._speech = SpeechController(self._settings, self._queue, lambda: self._connected, self)
         self._chat = ChatController(self, self._settings, self)
+        self.presentations = PresentationQueue(self)
+        self.visibility = AvatarVisibility(self)
+        self._visibility_shortcut = VisibilityShortcut(self)
         self._avatars = AvatarLibrary(self, root=avatar_dir)
         self.scanAnimations()
 
     connected = Property(bool, lambda self: self._connected, notify=changed)
+    externalAgent = Property(bool, lambda self: self._external_agent, notify=changed)
+    avatarShown = Property(bool, lambda self: self.visibility.wanted, notify=changed)
+    visibilityPhase = Property(str, lambda self: self.visibility.phase, notify=changed)
+    visibilityShortcut = Property(QObject, lambda self: self._visibility_shortcut, constant=True)
+
+    @Slot()
+    def toggleAvatar(self):
+        try:
+            self.visibility.change(not self.visibility.wanted)
+        except ValueError as error:
+            self._fail(str(error))
+
+    @Slot()
+    def hideAvatar(self):
+        try:
+            self.visibility.change(False)
+        except ValueError as error:
+            self._fail(str(error))
+
+    @Slot()
+    def summonAvatar(self):
+        try:
+            self.visibility.change(True)
+        except ValueError as error:
+            self._fail(str(error))
+
+    @Slot(bool)
+    def setExternalAgent(self, enabled):
+        if self._external_agent == enabled:
+            return
+        self.presentations.cancel_all()
+        self._chat.stop()
+        self._external_agent = enabled
+        self._settings.setValue('chat/source', 'external' if enabled else 'builtin')
+        self.changed.emit()
+
+    @Slot()
+    def stopExternalPresentations(self):
+        self.presentations.cancel_all()
     busy = Property(bool, lambda self: bool(self._jobs) or (self._job is not None and not self._job.poll), notify=changed)
     status = Property(str, lambda self: self._status, notify=changed)
     lastError = Property(str, lambda self: self._error, notify=changed)
@@ -460,12 +513,18 @@ class Controller(QObject):
             return False
         self._state = state
         self._state_revision += 1
+        self._schedule_motion_end()
         selected = next((i for i, f in enumerate(self._files) if f["path"] == state["animation_path"]), -1)
         if selected != self._selected:
             self._selected = selected
             self.libraryChanged.emit()
         self.stateChanged.emit()
         QTimer.singleShot(0, self._maybe_idle)
+        sequence = state.get('visibility_request_seq')
+        if isinstance(sequence, int):
+            previous, self._visibility_request_seq = self._visibility_request_seq, sequence
+            if previous is not None and sequence != previous:
+                self.toggleAvatar()
         sequence = state.get("chat_request_seq")
         if isinstance(sequence, int):
             previous, self._chat_request_seq = self._chat_request_seq, sequence
@@ -508,7 +567,10 @@ class Controller(QObject):
             return
         if action in ('load', 'unload', 'load_animation'):
             self._preview_path = ''
+        if action == 'set_expression':
+            self.presentations.cancel_all()
         if action in ("play", "pause", "set_time", "set_playback", "set_animation", "blend_to", "load_animation", "load", "unload"):
+            self.presentations.cancel_all()
             self._invalidate_motion()
             self._chat.stop()
         if self._tuning:
@@ -536,6 +598,7 @@ class Controller(QObject):
         if not model.is_file():
             self._fail(f"Model file does not exist: {model}")
             return
+        self.presentations.cancel_all()
         self._model = str(model)
         self._chat.stop()
         self._settings.setValue("model", self._model)
@@ -549,6 +612,7 @@ class Controller(QObject):
         if not model.is_file():
             self._fail(f"Model file does not exist: {model}")
             return
+        self.presentations.cancel_all()
         # Don't apply the bundled fox's node animations to a newly imported human.
         generic_folders = {e['animations'] for e in self._starter_avatars if e['rig'] == 'generic'}
         managed_generic = Path(self._avatars.folder) / 'generic-animations'
@@ -692,6 +756,7 @@ class Controller(QObject):
         if not folder.is_dir():
             self._fail(f"Animation folder does not exist: {folder}")
             return
+        self.presentations.cancel_all()
         self._folder = str(folder)
         self._preview_path = ''
         self._invalidate_motion()
@@ -712,6 +777,7 @@ class Controller(QObject):
         """An explicit one-pass preview, independent of automatic permissions."""
         if not self._connected or not self._state["model_loaded"] or not 0 <= index < len(self._files):
             return
+        self.presentations.cancel_all()
         self._invalidate_motion()
         self._chat.stop()
         self._flush_tuning()
@@ -750,11 +816,25 @@ class Controller(QObject):
         return True
 
     def _invalidate_motion(self):
+        self._motion_end.stop()
         self._motion_generation += 1
         self._motion = None
 
+    def _schedule_motion_end(self):
+        self._motion_end.stop()
+        owner, state = self._motion, self._state
+        if (not owner or not self._connected or not state.get('playing') or state.get('loop') or
+                owner['path'] != state.get('animation_path') or owner['model'] != state.get('model_path')):
+            return
+        speed = state.get('speed', 1)
+        remaining = state.get('duration', 0) - state.get('time', 0)
+        if speed > 0 and remaining > .0001 and math.isfinite(remaining / speed):
+            # A completion snapshot should not wait for the 250 ms UI poll.
+            delay = max(1, min(2147483647, math.ceil(remaining / speed * 1000)))
+            self._motion_end.start(delay)
+
     def _idle_entries(self):
-        return [f for f in self._files if f['enabled'] and f["is_idle"] and not f.get("config_error")]
+        return [f for f in self._files if f['enabled'] and f["is_idle"] and not f.get('is_exit') and not f.get("config_error")]
 
     def _choose_idle(self,pose=None):
         entries = self._idle_entries()
@@ -779,7 +859,7 @@ class Controller(QObject):
 
     @Slot()
     def resumeIdle(self):
-        if not self._connected or not self._state["model_loaded"]:
+        if not self._connected or not self._state["model_loaded"] or not self.visibility.wanted:
             return
         self._chat.stop()
         self._flush_tuning()
@@ -837,6 +917,11 @@ class Controller(QObject):
         self._queue(commands, label, done=completed, failed=rejected, guard=current)
 
     def _start_avatar(self, path, *, keep_animation_folder=False):
+        self.visibility.generation += 1
+        self.visibility.wanted = True
+        self.visibility.phase = 'visible'
+        self.visibility.timer.stop()
+        self.changed.emit()
         self._preview_path = ''
         self._chat.stop()
         self._invalidate_motion()
@@ -847,7 +932,7 @@ class Controller(QObject):
             self.scanAnimations()
         self._settings.setValue("model", path)
         self._settings.setValue("animations", self._folder)
-        startup = next((f for f in self._files if f['enabled'] and f["startup"] and not f.get("config_error")), None)
+        startup = next((f for f in self._files if f['enabled'] and f["startup"] and not f.get('is_exit') and not f.get("config_error")), None)
         entry = startup or self._choose_idle('standing')
         commands = [{"action": "load", "path": path, "defer_show": entry is not None}]
         if profile and profile.get('camera'):
@@ -861,6 +946,7 @@ class Controller(QObject):
             motion[1]['duration']=0
             commands.extend(motion)
         commands.append({"action": "auto_blink_enable", "enabled": True})
+        commands.append(dict(action='set_visible', visible=True))
         if entry:
             self._queue_owned_motion(commands, "Load avatar", entry["path"], "startup" if startup else "idle", model=path)
         else:
@@ -896,6 +982,8 @@ class Controller(QObject):
         if owner.get('followup'):
             if finished:self._dispatch_pose_steps(*owner['followup'])
             return
+        if owner['mode'] == 'exit' or not self.visibility.wanted:
+            return
         if owner["mode"] == "action":
             if self._chat.busy or self._speech.busy or (not finished and not state["loop"]):
                 return
@@ -909,6 +997,7 @@ class Controller(QObject):
 
     @Slot(str)
     def playAudio(self, path):
+        self.presentations.cancel_all()
         audio = local_path(path)
         if not audio.is_file():
             self._fail(f"Audio file does not exist: {audio}")
@@ -922,6 +1011,10 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         self._closing = True
+        self.visibility.timer.stop()
+        self._visibility_shortcut.shutdown()
+        self.presentations.cancel_all()
+        self.presentations.timer.stop()
         self._avatars.shutdown()
         self._invalidate_motion()
         self._chat.shutdown()

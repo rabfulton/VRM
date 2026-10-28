@@ -40,6 +40,7 @@ Flags use exactly `0` or `1`; invalid values are disabled and reported by Studio
 | `loopable` | Whether the clip may repeat. `0` forbids repeats, including forced API loops/counts. `1` allows looping, with the existing seam treatment. |
 | `startup` | Eligible as the initial entrance when Studio loads an avatar. The startup role always plays once, regardless of loopability. |
 | `is_idle` | Eligible for the automatic idle chain between character actions. Each idle gets a pass before the next is selected. |
+| `is_exit` | **Play before hiding**. Defaults to `0`; enabled exits play once before hiding and are excluded from the idle pool. Independent of `exit_pose`, which describes body posture. |
 | `llm_enabled` | **Available to LLM**. Offer the clip to the chat model only while its sidebar master switch is also on. Stored in the sidecar; absent values inherit the existing LLM choice or conservative first-use defaults. |
 | `entry_pose`, `exit_pose` | `standing`, `sitting`, `lying` or `crouching`; default `standing`. Describe pose compatibility for automatic actions. |
 | `floor_contact` | `0` releases flat-floor IK for this clip; `1` permits it when the user's global foot locking is enabled. Defaults to `1`. |
@@ -56,6 +57,14 @@ These defaults do not write to every animation automatically. The local referenc
 They remain user-owned ignored assets, not redistributed test fixtures.
 
 ## Startup and idle selection
+
+**Play at startup** assigns a role; the animation's sidebar checkbox must also
+be on for automatic use. **Available to LLM** can stay off: startup playback does
+not require giving the AI access to that clip.
+
+The entrance is also used when summoning a hidden avatar. See Studio's
+[hide/summon lifecycle](studio.md#hiding-and-summoning) for exit selection,
+interruptions and shortcuts.
 
 When Studio starts its renderer and loads an avatar, or you explicitly load a new
 avatar, it chooses the first enabled, valid startup clip by library filename order, plays

@@ -52,39 +52,29 @@ and removal without deleting user data. The project is now MIT licensed and
 installation includes third-party notices. The CC0 starter pack already supplies
 redistributable starter/test content.
 
-## 2. Optional, user-authored agent skills
+## 2. External agents through MCP
 
-Add structured streaming tool-call/result support to chat, with bounded execution
-turns, then a small tool runtime outside the renderer. Keep tools distinct from
-the existing speech/animation cue parser.
-Skills should be installable by users and individually enabled or disabled in
-Studio. A skill should describe its purpose, configuration, required programs,
-tool argument/result schemas and executable handlers, with optional prompt
-instructions. Instructions alone do not implement a capability.
+The avatar is an MCP capability for external agents. Built-in chat is the basic
+standalone option; advanced users choose External agent in Studio and use their
+agent’s own interface, tools and skills. See [MCP setup](mcp.md) and the
+[selected architecture](plugins.md).
 
-Expose only enabled, configured tools to the model. Validate calls and return
-structured results so the avatar can report what actually happened. Keep an
-activity view, bounded execution, cancellation and useful missing-dependency
-errors. Disabling a skill must invalidate its pending actions, just as animation
-access changes do today. Define an execution boundary for user-authored handlers;
-a separate process helps lifecycle management but does not itself sandbox code.
-Access choices should distinguish music playback, reading screen contents and
-running commands rather than granting all of them together.
+The initial local stdio server exposes capabilities, queued speech/gesture
+presentations, per-session status, cancellation and hide/summon through the controller’s single
+renderer connection. Test agent-specific integration and the experience of using
+existing filesystem, music, mail and scheduling tools to drive the avatar.
 
-Start with **music control**: query a configured beets library, select tracks and
-control a configured MPRIS player through playerctl. Library lookup and playback
-control are separate operations; opening tracks and queue management depend on
-the selected player's capabilities. Keep beets/playerctl requirements local to
-this skill, and test calls against fixtures before touching the real library.
-Use this example to write a short authoring guide before growing a skill catalogue.
+Hide/summon now shares an optional exit/entrance lifecycle between Studio, the
+right-click menu, MCP and an editable global shortcut. Xorg key grabs have a real
+keyboard smoke check; Hyprland's Lua/Hyprlang runtime registration and config-reload
+recovery still need validation on the Wayland machine. Other compositors remain
+contribution-driven.
 
-Next explore **guided desktop help**: identify a relevant control and have the
-avatar point or display a click-through marker. Establish screen capture, target
-coordinates and how to invalidate a target when a window moves. Guidance and
-executing an action should be distinct tools. Add command execution as its own
-configurable skill, with visible results and an explicit execution policy;
-ordinary music control should not require general shell access. These are planned
-capabilities, not currently advertised by the chat prompt.
+Keep ordinary speech, expressions and gestures consistent across both conversation
+sources. Build future avatar-specific extensions—pointing, captions and visual
+effects—on the presentation API. Add streaming and agent-input adapters as needed.
+A general internal agent harness, custom executable skill ecosystem and built-in
+mail/cron integrations are deferred; external agents can supply those capabilities.
 
 ## 3. Voice, conversation pacing and character behaviour
 
@@ -102,6 +92,11 @@ Build on the QML chat and speech/gesture coordinator with gaze, smoother emotion
 ramps and richer gesture timing. Startup-to-idle handoff and automatic motion
 ownership now use [per-animation flags](animation-properties.md). Review a few reliable clips, give them stable
 semantic names, and curate the animation library before expanding the catalogue.
+Rendering now has a 60 FPS cap and reports averaged presented FPS. Owned one-shot
+motions schedule their completion checks instead of waiting for the 250 ms UI
+poll. Preload/prepare the next idle before the entrance finishes to remove the
+remaining synchronous clip-switch work; retain bounded memory and safe
+cancellation when the avatar or library changes.
 Add microphone/ASR as an optional adapter and an optional current-sentence bubble.
 Broaden fixture-driven behaviour scenarios as capabilities grow.
 

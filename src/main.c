@@ -10,6 +10,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <limits.h>
+#include <time.h>
+#include <errno.h>
 
 #include "../deps/cjson/cJSON.h"
 #include "../deps/miniaudio.h"
@@ -19,6 +21,7 @@
 #include "audio.h"
 #include "camera.h"
 #include "event.h"
+#include "frame_clock.h"
 #include "gltf_loader.h"
 #include "ipc.h"
 #include "hit_capture.h"
@@ -62,8 +65,10 @@ typedef struct {
   double pending_scroll, last_scroll_time;
   char current_model_path[4096];
   float frame_rate;
+  FrameClock frame_clock;
   uint32_t chat_request_seq;
   uint32_t studio_request_seq;
+  uint32_t visibility_request_seq;
   uint32_t overlay_menu_seq;
   int overlay_menu_x, overlay_menu_y;
   ClipBoundsCache bounds_cache[32];
@@ -73,7 +78,7 @@ typedef struct {
   uint64_t slow_frames, window_resizes;
   char current_anim_path[4096];
   bool has_current_anim;
-  bool animation_startup, animation_idle;
+  bool animation_startup, animation_idle, animation_exit;
   bool audio_stream_open;
   bool presentation_pending;
   bool spring_pose_pending; /* Initialize tails from the first animated pose. */
@@ -113,6 +118,7 @@ static void apply_animation_metadata(const AnimConfig *cfg) {
   animator_set_loop_policy(&app.animator, cfg->has_loopable, cfg->loopable);
   app.animation_startup = cfg->has_startup && cfg->startup;
   app.animation_idle = cfg->has_is_idle && cfg->is_idle;
+  app.animation_exit = cfg->has_is_exit && cfg->is_exit;
   bool allowed=!cfg->has_floor_contact || cfg->floor_contact;
   if (app.animator.foot_lock.clip_allowed!=allowed) foot_lock_reset(&app.animator.foot_lock);
   app.animator.foot_lock.clip_allowed=allowed;
@@ -557,6 +563,7 @@ static void respond_state(int id) {
   cJSON_AddBoolToObject(properties, "explicit_loopable", app.animator.loop_policy_set);
   cJSON_AddBoolToObject(properties, "startup", app.has_current_anim && app.animation_startup);
   cJSON_AddBoolToObject(properties, "is_idle", app.has_current_anim && app.animation_idle);
+  cJSON_AddBoolToObject(properties, "is_exit", app.has_current_anim && app.animation_exit);
   cJSON_AddBoolToObject(properties,"floor_contact",app.animator.foot_lock.clip_allowed);
   cJSON_AddStringToObject(state, "backend", animator_get_use_ozz(&app.animator) ? "ozz" : "legacy");
 #ifdef VRM_USE_OZZ
@@ -565,8 +572,10 @@ static void respond_state(int id) {
   cJSON_AddBoolToObject(state, "ozz_available", false);
 #endif
   cJSON_AddNumberToObject(state, "frame_rate", app.frame_rate);
+  cJSON_AddNumberToObject(state, "frame_rate_limit", 60);
   cJSON_AddNumberToObject(state, "chat_request_seq", app.chat_request_seq);
   cJSON_AddNumberToObject(state, "studio_request_seq", app.studio_request_seq);
+  cJSON_AddNumberToObject(state, "visibility_request_seq", app.visibility_request_seq);
   cJSON_AddStringToObject(state, "window_backend", platform_backend_name());
   cJSON_AddNumberToObject(state, "overlay_menu_seq", app.overlay_menu_seq);
   cJSON *menu = cJSON_AddObjectToObject(state, "overlay_menu_position");
@@ -859,7 +868,13 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "set_visible") == 0) {
     cJSON *vis = cJSON_GetObjectItem(json, "visible");
     if (vis) {
+      bool was_visible = app.visible;
       app.visible = cJSON_IsTrue(vis);
+      if (app.visible != was_visible) {
+        frame_clock_reset(&app.frame_clock, platform_get_time());
+        app.frame_rate = 0;
+      }
+      if (app.visible && !was_visible) app.spring_pose_pending = true;
       if (!app.visible) hit_capture_reset(&app.hit_capture);
       if (app.visible)
         platform_show_window(app.window);
@@ -1459,7 +1474,8 @@ static void on_menu_action(int action, void *user) {
   (void)user;
   if (action == 0) app.chat_request_seq++;
   else if (action == 1) app.studio_request_seq++;
-  else if (action == 2) app.running = false;
+  else if (action == 2) app.visibility_request_seq++;
+  else if (action == 3) app.running = false;
 }
 
 static void on_scroll(double dx, double dy, void *user) {
@@ -1708,6 +1724,8 @@ int main(int argc, char *argv[]) {
   app.running = true;
   app.last_time = platform_get_time();
 
+  frame_clock_reset(&app.frame_clock, app.last_time);
+
   printf("VRM Overlay started. Press 'q' to quit, 't' for always-on-top\n");
   printf("Press 'c' to toggle cel shading\n");
   printf("Press 'b' to toggle cloth spring mode\n");
@@ -1733,6 +1751,18 @@ int main(int argc, char *argv[]) {
     ipc_poll(&app.ipc);
     apply_scroll_zoom();
     double ipc_finished = platform_get_time();
+    if (app.visible && platform_frame_ready(app.window)) {
+      double delay = frame_clock_delay(&app.frame_clock, ipc_finished);
+      if (delay > 0) {
+        struct timespec wait = {(time_t)delay, (long)((delay - (time_t)delay) * 1e9)};
+        while (nanosleep(&wait, &wait) != 0 && errno == EINTR) {}
+        double paced = platform_get_time();
+        /* Deliberate pacing is not an IPC or rendering stall. */
+        frame_started += paced - ipc_finished;
+        ipc_finished = paced;
+      }
+      frame_clock_begin(&app.frame_clock, ipc_finished);
+    }
 
     // Event system updates
     event_drain_commands();
@@ -1747,8 +1777,6 @@ int main(int argc, char *argv[]) {
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
     app.last_time = now;
-    if (dt > 0.0f)
-      app.frame_rate = 1.0f / dt;
 
     animator_update(&app.animator, dt);
     if (app.model_loaded) {
@@ -1789,6 +1817,11 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    if (!app.visible) {
+      struct timespec hidden_wait = {0, 16000000};
+      nanosleep(&hidden_wait, NULL); /* Keep IPC responsive without a busy loop. */
+      continue;
+    }
     if (!platform_frame_ready(app.window)) continue;
     fit_overlay_window(false);
     sync_render_size();
@@ -1824,6 +1857,7 @@ int main(int argc, char *argv[]) {
     double render_finished = platform_get_time();
     platform_swap_buffers(app.window);
     double frame_finished = platform_get_time();
+    app.frame_rate = frame_clock_present(&app.frame_clock, frame_finished);
     app.frame_ms = (frame_finished-frame_started)*1000;
     if (app.frame_ms > 50) app.slow_frames++;
     if (app.frame_ms > app.peak_frame_ms) {

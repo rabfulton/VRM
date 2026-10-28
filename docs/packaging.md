@@ -53,6 +53,7 @@ Installed layout with `/usr` as the package prefix:
 | Content | Destination |
 | --- | --- |
 | Launcher and renderer | `/usr/bin/domovushka`, `/usr/bin/vrm-overlay` |
+| Optional MCP stdio adapter launcher | `/usr/bin/domovushka-mcp` (requires optional `python-mcp`) |
 | Python module, QML and thumbnail resources | Python's versioned `site-packages/vrm_overlay/` |
 | Read-only starter pack, catalogues and provenance | `/usr/share/domovushka/assets/starter/` |
 | Desktop entry | `/usr/share/applications/domovushka.desktop` |

@@ -57,6 +57,8 @@ def main():
     interpreter = Path(sys.base_prefix) / 'bin/python3'
     write(f'#!{interpreter}\nfrom vrm_overlay import gui\nraise SystemExit(gui.main())\n',
           prefix / 'bin/domovushka', 0o755)
+    write(f'#!{interpreter}\nfrom vrm_overlay import mcp_server\nraise SystemExit(mcp_server.main())\n',
+          prefix / 'bin/domovushka-mcp', 0o755)
     for source in (ROOT / 'vrm_overlay').glob('*.py'):
         copy(source, module / source.name)
     for folder, suffixes in [('qml', {'.qml'}), ('thumbnails', {'.png'})]:

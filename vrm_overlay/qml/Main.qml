@@ -52,6 +52,7 @@ ApplicationWindow {
     Connections {
         target: bridge
         function onStudioRequested() { window.show(); window.raise(); window.requestActivate() }
+        function onChanged() { if (bridge.externalAgent) chatWindow.hide() }
     }
     AnimationProperties { id: animationProperties; controller: bridge; parent: Overlay.overlay }
     Shortcut {
@@ -61,6 +62,24 @@ ApplicationWindow {
     }
 
     AvatarImportDialog { id: avatarDialog; controller: bridge }
+    Dialog {
+        id: shortcutDialog
+        title: "Hide / summon shortcut"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(460, window.width - 40)
+        onOpened: shortcutText.text = bridge.visibilityShortcut.sequence
+        contentItem: ColumnLayout {
+            Label { text: "A global shortcut works while other applications have focus. Supported desktops: X11 and Hyprland."; Layout.fillWidth: true; wrapMode: Text.Wrap }
+            TextField { id: shortcutText; objectName: "avatarShortcutField"; placeholderText: "Ctrl+Alt+Space"; Layout.fillWidth: true; selectByMouse: true }
+            Label { text: bridge.visibilityShortcut.status; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
+            RowLayout {
+                Button { text: "Apply"; onClicked: bridge.visibilityShortcut.apply(shortcutText.text) }
+                Button { text: "Clear"; onClicked: { shortcutText.text = ""; bridge.visibilityShortcut.apply("") } }
+                Button { text: "Close"; onClicked: shortcutDialog.close() }
+            }
+        }
+    }
     FolderDialog {
         id: folderDialog
         title: "Choose animation library"
@@ -85,29 +104,12 @@ ApplicationWindow {
                 Label { text: "Animation & behaviour workspace"; color: "#9eacc0" }
             }
             Item { Layout.fillWidth: true }
-            Button { objectName: "openChatButton"; text: "Chat…"; onClicked: bridge.chat.open(); ToolTip.visible: hovered; ToolTip.text: "Chat with your companion (Ctrl+Enter)" }
+            Button { objectName: "openChatButton"; text: "Chat…"; enabled: !bridge.externalAgent; onClicked: bridge.chat.open(); ToolTip.visible: hovered; ToolTip.text: "Chat with your companion (Ctrl+Enter)" }
             Button { objectName: "resumeIdleButton"; text: "Resume idle"; enabled: window.canControl; onClicked: bridge.resumeIdle() }
-            RowLayout {
-                objectName: "runtimeStatusArea"
-                Layout.minimumWidth: 220
-                Layout.preferredWidth: 220
-                Layout.maximumWidth: 220
-                BusyIndicator { objectName: "runtimeActivityIndicator"; running: window.activityBusy; Layout.preferredWidth: 26; Layout.preferredHeight: 30 }
-                Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
-                Label {
-                    objectName: "runtimeStatusLabel"
-                    text: window.activityStatus
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    HoverHandler { id: statusHover }
-                    ToolTip.visible: statusHover.hovered
-                    ToolTip.text: text
-                }
-            }
             Button {
-                objectName: "connectionButton"
-                text: bridge.connected ? "Disconnect" : "Connect"
-                onClicked: bridge.connected ? bridge.disconnectRuntime() : bridge.connectRuntime()
+                objectName: "globalShortcutButton"
+                text: "Global shortcut…"
+                onClicked: shortcutDialog.open()
             }
         }
         Frame {
@@ -134,10 +136,6 @@ ApplicationWindow {
                     anchors.fill: parent
                     spacing: 12
                     Label { text: "AVATAR"; font.bold: true; color: "#9eacc0"; font.letterSpacing: 1.5 }
-                    Label {
-                        text: window.runtime.model_path.length ? window.runtime.model_path.split("/").pop() : "No avatar loaded"
-                        font.pixelSize: 18; font.bold: true; Layout.fillWidth: true; elide: Text.ElideMiddle
-                    }
                     Button {
                         objectName: "loadModelButton"
                         text: "Choose / import avatar…"; Layout.fillWidth: true
@@ -184,8 +182,6 @@ ApplicationWindow {
                                     }
                                     onToggled: bridge.setAnimationEnabled(modelData.sourceIndex, checked)
                                     Accessible.name: "Enable automatic use of " + modelData.name
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "Enable startup, idle, transitions and permitted LLM use. Click the name to preview once."
                                 }
                                 Label {
                                     text: modelData.name
@@ -199,21 +195,14 @@ ApplicationWindow {
                                     visible: modelData.llm_enabled
                                     color: modelData.enabled ? "#52cbb4" : "#8793a5"
                                     font.pixelSize: 11
-                                    HoverHandler { id: llmHover }
-                                    ToolTip.visible: llmHover.hovered
-                                    ToolTip.text: "LLM cue: [[animation:" + modelData.llm_id + "]] · requires library enable"
                                 }
                                 ToolButton {
                                     objectName: "animationPropertiesButton" + modelData.sourceIndex
                                     text: "⋯"
                                     Accessible.name: "Properties for " + modelData.name
                                     onClicked: animationProperties.edit(bridge.animationFiles[modelData.sourceIndex])
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "LLM access, looping, startup, idle and pose properties"
                                 }
                             }
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Preview once · " + modelData.file
                         }
                         Label {
                             anchors.centerIn: parent
@@ -463,19 +452,74 @@ ApplicationWindow {
                             }
                         }
                     }
-                    SpeechPanel { speech: bridge.speech; connected: window.canControl }
-                    ScrollView {
-                        TextArea { text: bridge.logText; readOnly: true; wrapMode: TextEdit.Wrap; font.family: "monospace"; font.pixelSize: 12; selectByMouse: true }
+                    SpeechPanel { speech: bridge.speech; connected: window.canControl; controller: bridge }
+                    ColumnLayout {
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Button {
+                                objectName: "disconnectControllerButton"
+                                text: "Disconnect controller"
+                                enabled: bridge.connected
+                                onClicked: bridge.disconnectRuntime()
+                            }
+                            Label { text: "Leave the renderer running for another controller."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0"; font.pixelSize: 12 }
+                        }
+                        ScrollView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            TextArea { text: bridge.logText; readOnly: true; wrapMode: TextEdit.Wrap; font.family: "monospace"; font.pixelSize: 12; selectByMouse: true }
+                        }
                     }
                 }
             }
         }
-        RowLayout {
+        Item {
+            objectName: "studioFooter"
             Layout.fillWidth: true
-            Label { text: bridge.socketPath; color: "#9eacc0"; font.pixelSize: 12 }
-            Item { Layout.fillWidth: true }
-            Label { text: bridge.connected ? Math.round(window.runtime.frame_rate) + " fps · " + window.runtime.backend : "Ready to connect"; color: "#9eacc0"; font.pixelSize: 12 }
-            Label { text: "Close to hide · Right-click avatar to reopen"; color: "#9eacc0"; font.pixelSize: 12 }
+            implicitHeight: 30
+            RowLayout {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, parent.width / 2 - 110)
+                Label { text: bridge.socketPath; Layout.fillWidth: true; elide: Text.ElideMiddle; color: "#9eacc0"; font.pixelSize: 12 }
+                Button {
+                    objectName: "reconnectButton"
+                    text: "Reconnect"
+                    visible: !bridge.connected
+                    enabled: !window.activityBusy
+                    onClicked: bridge.connectRuntime()
+                }
+            }
+            RowLayout {
+                objectName: "runtimeStatusArea"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: 220
+                Item { Layout.fillWidth: true }
+                BusyIndicator { objectName: "runtimeActivityIndicator"; running: window.activityBusy; visible: running; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+                Rectangle { width: 8; height: 8; radius: 4; color: bridge.connected ? "#52cbb4" : "#8793a5" }
+                Label {
+                    objectName: "runtimeStatusLabel"
+                    text: window.activityStatus
+                    Layout.maximumWidth: 175
+                    horizontalAlignment: Text.AlignRight
+                    elide: Text.ElideRight
+                    color: "#9eacc0"
+                    font.pixelSize: 12
+                    HoverHandler { id: statusHover }
+                    ToolTip.visible: statusHover.hovered
+                    ToolTip.text: text
+                }
+            }
+            Label {
+                objectName: "frameRateLabel"
+                anchors.centerIn: parent
+                width: 200
+                horizontalAlignment: Text.AlignHCenter
+                text: bridge.connected ? Math.round(window.runtime.frame_rate) + " fps · " + window.runtime.backend : ""
+                color: "#9eacc0"
+                font.pixelSize: 12
+            }
         }
     }
 }

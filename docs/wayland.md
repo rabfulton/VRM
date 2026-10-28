@@ -34,7 +34,7 @@ when a frame is unavailable. Hidden avatars retain an empty transparent surface
 and do not request ongoing frames.
 
 Right-click opens a renderer-owned `xdg_popup` associated with the layer surface,
-using the actual Wayland button serial and pointer location. Chat and Studio actions
+using the actual Wayland button serial and pointer location. Chat, Studio and Hide avatar actions
 travel over the existing IPC state stream; Quit exits the companion. Popup grab,
 outside dismissal and Escape are handled in the renderer. Studio/Chat remain
 ordinary Qt windows, with compositor-controlled placement and focus. The X11 QML

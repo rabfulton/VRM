@@ -15,6 +15,7 @@ depends=('glibc' 'libgcc' 'libstdc++' 'libepoxy' 'glfw' 'libx11' 'libxext'
 makedepends=('git' 'cmake' 'wayland-protocols')
 checkdepends=('desktop-file-utils')
 optdepends=('vulkan-icd-loader: local speech with Vulkan (also requires your GPU driver)'
+            'python-mcp>=1.26: external-agent MCP stdio server'
             'org.freedesktop.secrets: store API keys using a running, unlocked Secret Service provider'
             'python-dbus: use the KWallet keyring backend'
             'jack: optional JACK audio backend')

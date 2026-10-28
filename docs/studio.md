@@ -3,6 +3,11 @@
 domovushka studio is a separate Python/PySide6 application controlled through JSON IPC.
 The renderer owns a single transparent avatar window.
 
+The Speech tab’s **Conversation** selector chooses Built-in chat or External agent
+(MCP). External mode uses your agent’s own chat interface and disables the built-in
+Chat button; Studio continues to configure the avatar and voice. **Stop external
+output** cancels queued and active external presentations. See [MCP setup](mcp.md).
+
 The Speech tab selects Nano (default), Turbo, Kokoro or Piper, saves separate
 provider/model profiles, prepares native engines/models, and previews speech with
 automatic lip sync. `qt_speech.py` runs synthesis outside the event loop and
@@ -25,14 +30,66 @@ A new renderer loads the selected model, plays a configured startup once,
 then transitions to an idle and enables blinking. Studio starts hidden; pass
 `--studio` to show it immediately. Missing assets/errors open it automatically.
 Closing Studio or chat hides that window while the controller keeps running.
-Right-click the avatar to reopen **Chat** or **Studio**, toggle **Always on top**,
+Right-click the avatar to reopen **Chat** or **Studio**, **Hide avatar**, toggle **Always on top**,
 or choose **Quit** to stop
 the companion and controller. The overlay sets X11 utility/skip-taskbar/skip-pager
 hints; the window manager controls their presentation. `--attach` never starts a
-renderer; explicit **Quit** still shuts down the attached companion. Disconnect Studio before
-using a different controller; the runtime currently services one connection.
+renderer; explicit **Quit** still shuts down the attached companion. For advanced
+controller handoff, **Log → Disconnect controller** releases Studio's connection
+and leaves the renderer running. **Reconnect** appears in the footer while
+disconnected. Connection/activity status is right-aligned in the footer, with FPS
+centred independently. Rendering is capped at 60 FPS; the readout averages actual
+presented frames over roughly half a second.
+Normal companion use does not require disconnecting; the runtime services one
+renderer-controller connection at a time.
 
 Options: `--studio`, `--attach`, `--socket PATH`, `--model PATH`, `--animation-dir PATH`.
+
+## Hiding and summoning
+
+Use **Hide avatar** in the avatar's right-click menu. Restore a hidden companion
+with its global shortcut, `domovushka --summon`, or MCP, without restarting it.
+Hiding cancels speech, chat and external presentations;
+the controller and MCP endpoint keep running. Hidden avatars stop drawing and
+remain available for IPC. Summoning interrupts an unfinished exit, restarts the
+entrance without blending from the exit pose, then returns to automatic idles.
+
+In an animation's **⋯ properties**, select **Play before hiding** to mark an exit.
+The first enabled, valid exit with a safe pose route plays once, regardless of
+its loop setting. Exit clips are excluded from the idle pool. If no safe exit is
+available or playback fails, hiding happens immediately. No exit asset is chosen
+automatically. Summoning uses the first enabled startup animation, or an idle if
+none is configured. LLM access is independent of these local lifecycle roles.
+
+Open **Global shortcut…** in Studio's header, enter a chord such as `Ctrl+Alt+Space` or
+`Super+F9`, and press **Apply**. **Clear** releases the binding. The shortcut is
+unassigned initially and saved with Studio preferences. Check the status message:
+conflicting or unavailable shortcuts report an error. Letters, digits, F1–F35,
+Space, Tab, Escape, Return, arrows and navigation keys are supported with Ctrl,
+Alt, Shift and/or Super. A held key toggles once. Reapply after changing the X11
+keyboard mapping if the helper reports that the key moved.
+
+On **Xorg**, the application grabs the key globally using its existing libX11
+dependency, including Caps/Num/Scroll Lock variants. On **Hyprland**, it uses
+`hyprctl` runtime bindings, supporting Lua and older Hyprlang configurations,
+and reinstalls the binding after a compositor config reload. It does not edit
+your Hyprland files. The registration is removed on normal exit. Existing
+bindings are checked before registration and are not overwritten. Other Wayland
+compositors do not currently have a shortcut backend. The implementation follows
+Hyprland's [binding](https://wiki.hypr.land/configuring/core/binds/) and
+[hyprctl](https://wiki.hypr.land/Configuring/Advanced-and-Cool/Using-hyprctl/) APIs.
+
+You can also control a running instance from a terminal or your own binding:
+
+```sh
+domovushka --hide-avatar
+domovushka --summon
+domovushka --toggle-avatar
+```
+
+These commands connect to the existing companion without opening another GUI.
+Pass `--companion-socket PATH` for a custom instance. MCP exposes the same
+[visibility controls](mcp.md).
 Model/library/audio choices are remembered with QSettings. Attaching to an existing
 runtime preserves its current model, playback and behaviour state.
 

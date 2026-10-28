@@ -5,7 +5,9 @@ import QtQuick.Dialogs
 
 ScrollView {
     id: panel
+    objectName: "speechPanel"
     required property var speech
+    required property var controller
     required property bool connected
     clip: true
     contentWidth: availableWidth
@@ -17,6 +19,22 @@ ScrollView {
     ColumnLayout {
         width: parent.width
         spacing: 14
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "Conversation"; color: "#9eacc0" }
+            ComboBox {
+                objectName: "conversationSource"
+                Layout.fillWidth: true
+                model: ["Built-in chat", "External agent (MCP)"]
+                currentIndex: panel.controller.externalAgent ? 1 : 0
+                onActivated: index => panel.controller.setExternalAgent(index === 1)
+            }
+            Button {
+                visible: panel.controller.externalAgent
+                text: "Stop external output"
+                onClicked: panel.controller.stopExternalPresentations()
+            }
+        }
         GroupBox {
             title: "Speech settings"
             Layout.fillWidth: true

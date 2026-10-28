@@ -8,9 +8,11 @@ typedef struct {
     bool loopable;
     bool startup;
     bool is_idle;
+    bool is_exit;
     bool has_loopable;
     bool has_startup;
     bool has_is_idle;
+    bool has_is_exit;
     bool floor_contact;
     bool has_floor_contact;
     float spring_stiffness;

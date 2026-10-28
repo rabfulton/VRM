@@ -12,6 +12,7 @@ Wayland/EGL/layer-shell. Maintained desktop targets are Xorg and Hyprland; see
 | --- | --- | --- |
 | Integration | `src/main.c` | Main loop, IPC handlers and authoritative state snapshot |
 | Desktop backend | `src/platform.c`, `platform_x11.c`, `platform_wayland.c` | Backend selection, window/surface lifecycle, presentation and pointer input |
+| Visibility | `vrm_overlay/visibility.py`, `qt_shortcut.py`, `visibility_shortcut.py` | Shared interruptible exit/entrance lifecycle and isolated Xorg/Hyprland global shortcut ownership |
 | Files and installation | `src/app_paths.c`, `vrm_overlay/paths.py`, `scripts/install.py` | Matching user config/runtime paths, checkout migration and installed resource discovery |
 | IPC | `src/ipc.c`, `vrm_overlay/client.py` | NDJSON framing, request IDs, queued responses and socket ownership |
 | Models | `src/gltf_loader.c`, `src/gltf_loader_impl.cpp` | VRM/glTF loading, humanoid mapping, morphs and expression metadata |
@@ -85,6 +86,12 @@ changes. A bounded parser separates caption text, speech tags
 and gesture/expression cues. The coordinator queues cues between utterances on
 Studio's transport; generation/profile/context guards discard cancelled work.
 Completed conversation context is kept in memory. See [chat](chat.md).
+Advanced users can instead use an external agent through the local
+[MCP server](mcp.md). `mcp_server.py` is an optional stdio adapter;
+`qt_companion.py` accepts private multi-session requests, and `presentation.py`
+coordinates bounded, session-owned output through the existing speech/animation
+pipeline. Studio selects the conversation source. The [extension architecture](plugins.md)
+keeps general tools and autonomous workflows in the external harness.
 
 Per-animation `loopable`, `startup` and `is_idle` flags share the native `.cfg`
 sidecars. `animation_config.py` handles Studio edits; native `anim_config.c`

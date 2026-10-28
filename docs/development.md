@@ -70,6 +70,17 @@ so objects from another build cannot be reused.
 
 ## Renderer integration checks
 
+`python3 tests/shortcut_smoke.py` uses a temporary Ctrl+Alt+Shift+Y global grab
+and XTest key events on Xorg to check activation, held-key repeat suppression,
+conflict detection and release/re-registration. It keeps user settings untouched.
+`build/mcp-env/bin/python tests/mcp_smoke.py --backend x11` exercises the official
+MCP client against a temporary real companion, including speech, cancellation and
+animated hide/summon. Use an environment containing PySide6 and
+`requirements-mcp.txt`; `--no-speech` avoids needing a prepared voice. Run the
+same smoke check with `--backend wayland` on the Hyprland machine. The shortcut
+unit tests cover both Hyprland configuration formats; live shortcut/reload
+verification still requires that compositor.
+
 ```sh
 make test-ui
 make test-speech

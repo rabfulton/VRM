@@ -141,6 +141,9 @@ $(TEST_BUILD_DIR)/input-mask-test: tests/input_mask_test.c src/input_mask.c src/
 $(TEST_BUILD_DIR)/settings-test: tests/settings_test.c src/settings.c src/settings.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/settings_test.c src/settings.c -o $@
 
+$(TEST_BUILD_DIR)/frame-clock-test: tests/frame_clock_test.c src/frame_clock.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/frame_clock_test.c -o $@ -lm
+
 $(TEST_BUILD_DIR)/app-paths-probe: tests/app_paths_probe.c src/app_paths.c src/app_paths.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/app_paths_probe.c src/app_paths.c -o $@
 
@@ -164,7 +167,7 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(TEST_BUILD_DIR)/frame-clock-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
@@ -176,7 +179,8 @@ test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUIL
 	$(TEST_BUILD_DIR)/bounds-test
 	$(TEST_BUILD_DIR)/input-mask-test
 	$(TEST_BUILD_DIR)/settings-test
-	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) VRM_TEST_PATHS_PROBE=$(abspath $(TEST_BUILD_DIR)/app-paths-probe) python3 -m unittest discover -s tests -v
+	$(TEST_BUILD_DIR)/frame-clock-test
+	VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) VRM_TEST_PATHS_PROBE=$(abspath $(TEST_BUILD_DIR)/app-paths-probe) $(PYTHON) -m unittest discover -s tests -v
 
 test-sanitize:
 	$(MAKE) test TEST_BUILD_DIR=build/tests/sanitize TEST_SANITIZERS=address,undefined

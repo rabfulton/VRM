@@ -19,7 +19,7 @@ if HAS_QT:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ["QT_QPA_PLATFORMTHEME"] = "basic"
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
-    from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, Qt, QUrl
+    from PySide6.QtCore import QObject, QPoint, QPointF, QSettings, QTimer, Qt, QUrl
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtNetwork import QLocalServer
     from PySide6.QtQml import QQmlApplicationEngine
@@ -32,6 +32,88 @@ if HAS_QT:
 
 @unittest.skipUnless(HAS_QT, "Install requirements-gui.txt for Qt Quick checks")
 class QtControllerTests(unittest.TestCase):
+    def test_hide_without_exit_then_summon_and_resume_idle(self):
+        entrance, idle = self.motion_library()
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy)
+        self.assertFalse(self.state['visible'])
+        self.assertFalse(self.bridge.state['visible'])
+        self.assertFalse(self.state['playing'])
+        self.assertFalse(self.bridge.avatarShown)
+        self.bridge.summonAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'visible' and not self.bridge.busy)
+        self.assertTrue(self.state['visible'])
+        self.assertEqual(self.state['animation_path'], str(entrance))
+        blend = [c for c in self.commands if c['action'] == 'blend_to'][-1]
+        self.assertEqual(blend['duration'], 0)
+        self.finish_current_motion()
+        self.wait_for(lambda: self.state['animation_path'] == str(idle) and not self.bridge.busy)
+
+    def exit_library(self):
+        from vrm_overlay.animation_config import save_properties
+        entrance, idle = self.motion_library()
+        exit_clip = Path(self.directory.name) / 'Exit.vrma'
+        exit_clip.touch()
+        save_properties(exit_clip, dict(loopable=True, startup=False, is_idle=True, is_exit=True))
+        self.bridge.scanAnimations()
+        return entrance, idle, exit_clip
+
+    def test_exit_runs_once_before_hiding_and_is_excluded_from_idle_pool(self):
+        _, _, exit_clip = self.exit_library()
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.state['animation_path'] == str(exit_clip) and not self.bridge.busy)
+        self.assertFalse(self.state['loop'])
+        self.assertTrue(self.state['visible'])
+        self.assertEqual(self.bridge.visibilityPhase, 'exiting')
+        self.assertNotIn(str(exit_clip), [e['path'] for e in self.bridge._idle_entries()])
+        self.finish_current_motion()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy)
+        self.assertFalse(self.state['visible'])
+        QTest.qWait(300)
+        self.assertEqual(self.state['animation_path'], str(exit_clip))
+
+    def test_summon_interrupts_exit_and_discards_late_hide(self):
+        entrance, _, exit_clip = self.exit_library()
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.state['animation_path'] == str(exit_clip) and not self.bridge.busy)
+        token = self.bridge.visibility.generation
+        self.bridge.summonAvatar()
+        self.bridge.visibility.finish_hide(token)
+        self.wait_for(lambda: self.state['animation_path'] == str(entrance) and not self.bridge.busy)
+        self.assertTrue(self.state['visible'])
+        self.assertTrue(self.bridge.avatarShown)
+        self.assertFalse(any(c['action'] == 'set_visible' and not c['visible'] for c in self.commands))
+
+    def test_failed_exit_hides_and_summon_can_recover(self):
+        self.exit_library()
+        self.fail_action = 'load_animation'
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy)
+        self.assertFalse(self.state['visible'])
+        self.fail_action = None
+        self.bridge.summonAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'visible' and not self.bridge.busy)
+        self.assertTrue(self.state['visible'])
+
+    def test_disabling_exit_mid_playback_finishes_hiding(self):
+        _, _, exit_clip = self.exit_library()
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.state['animation_path'] == str(exit_clip) and not self.bridge.busy)
+        index = next(i for i, e in enumerate(self.bridge._files) if e['path'] == str(exit_clip))
+        self.bridge.setAnimationEnabled(index, False)
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy)
+        self.assertFalse(self.state['visible'])
+
+    def test_hiding_cancels_presentations_and_blocks_new_output_until_summoned(self):
+        self.bridge.setExternalAgent(True)
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy)
+        with self.assertRaisesRegex(ValueError, 'Summon'):
+            self.bridge.presentations.submit('owner', expression='joy')
+        caps = self.bridge.presentations.capabilities()
+        self.assertFalse(caps['visibility']['requested_visible'])
+        self.assertEqual(caps['visibility']['phase'], 'hidden')
+
     @classmethod
     def setUpClass(cls):
         QQuickStyle.setStyle("Fusion")
@@ -102,6 +184,8 @@ class QtControllerTests(unittest.TestCase):
                     self.state["playing"] = True
                 elif action == "pause":
                     self.state["playing"] = False
+                elif action == 'set_visible':
+                    self.state['visible'] = command['visible']
                 elif action == 'set_playback':
                     self.state.update({k: command[k] for k in ('speed', 'loop') if k in command})
                 elif action == 'set_render' and 'always_on_top' in command:
@@ -261,18 +345,24 @@ class QtControllerTests(unittest.TestCase):
         status = self.window.findChild(QQuickItem, 'runtimeStatusLabel')
         indicator = self.window.findChild(QQuickItem, 'runtimeActivityIndicator')
         controls = [self.window.findChild(QQuickItem, name) for name in
-                    ('openChatButton', 'resumeIdleButton', 'runtimeStatusArea', 'connectionButton')]
+                    ('openChatButton', 'resumeIdleButton', 'globalShortcutButton', 'runtimeStatusArea')]
         for width in (940, 1120):
             self.window.setWidth(width)
             QTest.qWait(20)
             positions = [(c.x(), c.width()) for c in controls]
-            for _ in range(3):
+            for fps in (9, 99, 100, 144):
+                self.state['frame_rate'] = fps
                 self.bridge._queue([dict(action='audio_status')], 'Speech playback')
                 self.wait_for(lambda: not self.bridge.busy)
+                self.wait_for(lambda: self.bridge.state['frame_rate'] == fps)
                 QTest.qWait(20)
                 self.assertEqual(status.property('text'), 'Speaking')
                 self.assertTrue(indicator.property('running'))
                 self.assertEqual([(c.x(), c.width()) for c in controls], positions)
+                rate = self.window.findChild(QQuickItem, 'frameRateLabel')
+                self.assertAlmostEqual(rate.mapToScene(rate.boundingRect().center()).x(), width / 2, delta=1)
+                status_right = status.mapToScene(QPointF(status.width(), 0)).x()
+                self.assertAlmostEqual(status_right, width - 22, delta=1)
         speech._busy = False
         speech.changed.emit()
         self.wait_for(lambda: status.property('text') == 'Connected')
@@ -854,6 +944,20 @@ raise SystemExit(gui.main())
         self.assertEqual(self.state["animation_path"], str(entrance))
         self.assertIsNone(self.bridge._motion)
 
+    def test_motion_completion_refresh_does_not_wait_for_periodic_ui_poll(self):
+        entrance, idle = self.motion_library()
+        avatar = Path(self.directory.name) / 'new.vrm'
+        avatar.touch()
+        self.bridge.loadModel(str(avatar))
+        self.wait_for(lambda: self.bridge.state['animation_path'] == str(entrance) and not self.bridge.busy)
+        self.bridge._poll.stop()
+        self.state.update(duration=.08, time=0, loop=False)
+        self.bridge.refresh()
+        self.wait_for(lambda: self.bridge.state['duration'] == .08 and self.bridge._motion_end.isActive())
+        QTimer.singleShot(40, lambda: self.state.update(time=.08))
+        self.wait_for(lambda: self.state['animation_path'] == str(idle) and not self.bridge.busy)
+        self.assertFalse(self.bridge._poll.isActive())
+
     def test_one_shot_idle_cycles_to_another_idle(self):
         from vrm_overlay.animation_config import save_properties
         entrance, idle = self.motion_library(idle_loop=False)
@@ -982,6 +1086,7 @@ raise SystemExit(gui.main())
         self.assertTrue(dialog.property('visible'))
         dialog.findChild(QQuickItem,'animationLoopableProperty').setProperty('checked',True)
         dialog.findChild(QQuickItem,'animationStartupProperty').setProperty('checked',True)
+        dialog.findChild(QQuickItem,'animationExitProperty').setProperty('checked',True)
         self.click('saveAnimationPropertiesButton')
         self.wait_for(lambda:not dialog.property('visible'))
         text=path.with_suffix('.cfg').read_text()
@@ -989,6 +1094,7 @@ raise SystemExit(gui.main())
         self.assertIn('spring.drag=1.250',text)
         self.assertIn('bounds.world_w=2.345',text)
         self.assertIn('startup=1',text)
+        self.assertIn('is_exit=1',text)
         self.assertIn('loopable=1',text)
         self.assertIn('startup/entrance',self.bridge.chat.prompt)
         other=Controller(self.bridge.socketPath,attach=True,animation_dir=self.directory.name,settings=self.bridge._settings)
@@ -1021,6 +1127,20 @@ raise SystemExit(gui.main())
         self.bridge.connectRuntime()
         self.wait_for(lambda: self.bridge.connected)
 
+    def test_external_agent_source_disables_builtin_chat_and_revokes_presentations(self):
+        self.load_qml()
+        self.bridge.setExternalAgent(True)
+        QTest.qWait(20)
+        self.assertEqual(self.window.findChild(QQuickItem, 'conversationSource').property('currentIndex'), 1)
+        self.assertFalse(self.window.findChild(QQuickItem, 'openChatButton').property('enabled'))
+        self.bridge.chat.send('This must not start a model request.')
+        self.assertFalse(self.bridge.chat.busy)
+        self.assertIn('external agent', self.bridge.chat.error)
+        identifier = self.bridge.presentations.submit('fixture', expression='happy')['id']
+        self.bridge.setExternalAgent(False)
+        self.assertEqual(self.bridge.presentations.status('fixture', identifier)['state'], 'cancelled')
+        self.assertEqual(self.bridge._settings.value('chat/source'), 'builtin')
+
     def test_speech_profiles_survive_model_switch_and_controller_restart(self):
         self.load_qml()
         speech = self.bridge.speech
@@ -1052,6 +1172,12 @@ raise SystemExit(gui.main())
         with patch("vrm_overlay.qt_speech.create_tts", return_value=Synth()) as factory:
             self.load_qml()
             self.window.findChild(QQuickItem, "workspaceTabs").setProperty("currentIndex", 4)
+            QTest.qWait(20)
+            # Conversation controls add scrollable content above the preview.
+            flickable = self.window.findChild(QQuickItem, 'speechPanel').property('contentItem')
+            button = self.window.findChild(QQuickItem, 'speakPreviewButton')
+            bottom = button.mapToItem(flickable, QPointF(0, button.height())).y()
+            flickable.setProperty('contentY', max(0, flickable.property('contentY') + bottom - flickable.height() + 8))
             QTest.qWait(20)
             self.click("speakPreviewButton")
             self.wait_for(lambda: not self.bridge.speech.busy)

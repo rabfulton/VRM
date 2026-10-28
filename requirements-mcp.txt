@@ -1,0 +1,2 @@
+# Optional external-agent integration; the ordinary companion does not need this.
+mcp>=1.26,<2

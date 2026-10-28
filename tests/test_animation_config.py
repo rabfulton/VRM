@@ -10,6 +10,19 @@ from vrm_overlay.chat import capabilities, system_prompt
 
 
 class AnimationConfigTests(unittest.TestCase):
+    def test_optional_exit_role_round_trips_and_survives_other_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'Exit.vrma'
+            flags = dict(loopable=False, startup=False, is_idle=False)
+            self.assertFalse(load_properties(path)['is_exit'])
+            save_properties(path, flags | dict(is_exit=True))
+            save_properties(path, flags | dict(llm_enabled=False))
+            self.assertTrue(load_properties(path)['is_exit'])
+            with self.assertRaises(ValueError):
+                save_properties(path, flags | dict(is_exit='yes'))
+            path.with_suffix('.cfg').write_text('is_exit=bad\n')
+            self.assertIn('config_error', load_properties(path))
+
     def test_llm_access_sidecar_is_optional_strict_and_preserved_by_flag_edits(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'Wave.vrma'
@@ -46,7 +59,7 @@ class AnimationConfigTests(unittest.TestCase):
             self.assertFalse(load_properties(animation)['loopable'])
             values = dict(loopable=False, startup=True, is_idle=False)
             save_properties(animation, values)
-            self.assertEqual(load_properties(animation), values)
+            self.assertEqual(load_properties(animation), values | dict(is_exit=False))
             text = cfg.read_text()
             self.assertIn('# Motion notes\n', text)
             self.assertIn('spring.drag=1.250\n', text)
@@ -68,9 +81,9 @@ class AnimationConfigTests(unittest.TestCase):
     def test_defaults_and_invalid_values_are_conservative(self):
         with tempfile.TemporaryDirectory() as directory:
             entrance = Path(directory) / 'Enter_from_left.vrma'
-            self.assertEqual(load_properties(entrance), dict(loopable=False, startup=True, is_idle=False))
+            self.assertEqual(load_properties(entrance), dict(loopable=False, startup=True, is_idle=False, is_exit=False))
             entrance.with_suffix('.cfg').write_text('startup=0\nloopable=1\nis_idle=1 # allowed variation\n')
-            self.assertEqual(load_properties(entrance), dict(loopable=True, startup=False, is_idle=True))
+            self.assertEqual(load_properties(entrance), dict(loopable=True, startup=False, is_idle=True, is_exit=False))
             entrance.with_suffix('.cfg').write_text('loopable=1\nloopable=oops\nstartup=2\n')
             props=load_properties(entrance)
             self.assertFalse(props['loopable'])

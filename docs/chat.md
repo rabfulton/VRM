@@ -2,6 +2,9 @@
 
 Studio includes a compact, separate Qt Quick chat window. It shares the existing
 renderer connection and speech profile; it is not another IPC client.
+This is the basic conversation option. Selecting **Speech → Conversation → External agent
+(MCP)** in Studio disables built-in chat; use your agent’s own interface and the
+[avatar MCP tools](mcp.md) instead. Studio’s avatar and voice controls remain shared.
 
 ## Start a conversation
 

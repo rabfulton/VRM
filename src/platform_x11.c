@@ -18,6 +18,7 @@
 struct PlatformWindow {
     GLFWwindow *glfw;
     PlatformCallbacks cb;
+    bool show_pending;
 #ifdef GLFW_EXPOSE_NATIVE_X11
     Display *x_display;
     Window x_window;
@@ -143,6 +144,10 @@ void x11_poll_events(void) {
 
 void x11_swap_buffers(PlatformWindow *win) {
     glfwSwapBuffers(win->glfw);
+    if (win->show_pending) {
+        win->show_pending = false;
+        glfwShowWindow(win->glfw);
+    }
 }
 
 void x11_get_framebuffer_size(PlatformWindow *win, int *w, int *h) {
@@ -223,10 +228,12 @@ void x11_set_window_rect(PlatformWindow *win, int x, int y, int w, int h) {
 }
 
 void x11_show_window(PlatformWindow *win) {
-    glfwShowWindow(win->glfw);
+    /* Map only after a fresh frame, avoiding a flash of the old exit pose. */
+    if (!glfwGetWindowAttrib(win->glfw, GLFW_VISIBLE)) win->show_pending = true;
 }
 
 void x11_hide_window(PlatformWindow *win) {
+    win->show_pending = false;
     glfwHideWindow(win->glfw);
 }
 

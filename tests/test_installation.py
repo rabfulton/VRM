@@ -29,6 +29,10 @@ class InstallationTests(unittest.TestCase):
                        HOME=str(work), XDG_CONFIG_HOME=str(work / 'config'), XDG_DATA_HOME=str(work / 'data'),
                        XDG_CACHE_HOME=str(work / 'cache'), QT_QPA_PLATFORM='offscreen',
                        QT_QPA_PLATFORMTHEME='basic', QT_QUICK_BACKEND='software')
+            help_result = subprocess.run([str(stage / 'usr/bin/domovushka-mcp'), '--help'], cwd=work,
+                                         env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(help_result.returncode, 0, help_result.stderr)
+            self.assertIn('--companion-socket', help_result.stdout)
             probe = 'import vrm_overlay; print(vrm_overlay.__file__)'
             result = subprocess.run([sys.executable, '-c', probe], cwd=work, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)

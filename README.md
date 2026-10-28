@@ -115,7 +115,7 @@ To manage the renderer separately:
 ./domovushka --attach --socket /tmp/my-avatar.sock
 ```
 
-The runtime supports one active controller connection. Disconnect Studio before
+The runtime supports one active controller connection. Use **Log → Disconnect controller** in Studio before
 connecting another client. Use a separate socket for each independent instance.
 
 ## Capabilities
@@ -146,6 +146,19 @@ Hyprland and Xorg; other compositor integrations are welcome as contributed PRs.
 See the [roadmap](docs/roadmap.md) and [packaging guide](docs/packaging.md).
 
 ## Control from code
+
+Advanced users can use an external agent’s own chat, tools and skills while the
+avatar presents its responses. Select **Speech → Conversation → External agent (MCP)** in
+Studio, or launch with `domovushka --external-agent --studio`. Install the optional
+`python-mcp` package on Arch (or `requirements-mcp.txt` in a checkout environment),
+then configure your agent to run `domovushka-mcp` as a stdio server. The built-in
+chat remains the basic standalone option. See [MCP setup and tools](docs/mcp.md).
+
+Hide/summon is available through a global shortcut, command line and MCP; the
+avatar's right-click menu also offers Hide. Set a shortcut in Studio's header
+for Xorg or Hyprland, and mark an animation
+**Play before hiding** for an optional exit. Summoning replays the entrance.
+See [visibility and shortcut setup](docs/studio.md#hiding-and-summoning).
 
 Commands are newline-delimited JSON over a private Unix socket, defaulting to
 `$XDG_RUNTIME_DIR/domovushka/renderer.sock` (or `/tmp/domovushka-UID/renderer.sock`

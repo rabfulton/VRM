@@ -121,7 +121,7 @@ class SpeechController(QObject):
         if self._thread is not None:
             self._put(("release", self._generation, self._preferences.config, "", self._cancelled))
 
-    def _start(self, kind, text=""):
+    def _start(self, kind, text="", config=None):
         if self._closing:
             return
         self.stop()
@@ -130,7 +130,7 @@ class SpeechController(QObject):
         self._busy = True
         self._status = "Preparing speech…" if kind == "prepare" else "Synthesizing…"
         self.changed.emit()
-        self._put((kind, self._generation, self._preferences.config, text, self._cancelled))
+        self._put((kind, self._generation, config or self._preferences.config, text, self._cancelled))
 
     @Slot()
     def prepare(self):
@@ -138,7 +138,7 @@ class SpeechController(QObject):
             self._start("prepare")
 
     @Slot(str)
-    def speak(self, text):
+    def speak(self, text, *, config=None):
         text = text.strip()
         if not text:
             return
@@ -148,7 +148,10 @@ class SpeechController(QObject):
         if len(text) > 4096:
             self._failed("Speak up to 4096 characters at a time.")
             return
-        self._start("speak", text)
+        if config is not None:
+            from .tts import SpeechConfig
+            config = SpeechConfig.from_dict(config)
+        self._start("speak", text, config=config)
 
     @Slot()
     def stop(self, send_cancel=True):

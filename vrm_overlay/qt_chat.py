@@ -108,10 +108,16 @@ class ChatController(QObject):
 
     @Slot()
     def open(self):
+        if getattr(self._runtime, 'externalAgent', False):
+            self._runtime.showStudio()
+            return
         self.windowRequested.emit()
 
     @Slot()
     def openNearCursor(self):
+        if getattr(self._runtime, 'externalAgent', False):
+            self.open()
+            return
         from PySide6.QtGui import QCursor, QGuiApplication
         if QGuiApplication.platformName().startswith('wayland'):
             self.open()
@@ -224,6 +230,14 @@ class ChatController(QObject):
 
     @Slot(str)
     def send(self, text):
+        if hasattr(self._runtime, 'visibility') and not self._runtime.visibility.wanted:
+            self._error = 'Summon the avatar before starting a conversation.'
+            self.changed.emit()
+            return
+        if getattr(self._runtime, 'externalAgent', False):
+            self._error = 'Use your external agent to chat, or select Built-in chat in Studio.'
+            self.changed.emit()
+            return
         text = text.strip()
         if self._closing or not text:
             return

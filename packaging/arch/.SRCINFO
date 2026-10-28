@@ -37,6 +37,7 @@ pkgbase = domovushka-git
 	depends = qt6-wayland
 	depends = python-keyring>=25
 	optdepends = vulkan-icd-loader: local speech with Vulkan (also requires your GPU driver)
+	optdepends = python-mcp>=1.26: external-agent MCP stdio server
 	optdepends = org.freedesktop.secrets: store API keys using a running, unlocked Secret Service provider
 	optdepends = python-dbus: use the KWallet keyring backend
 	optdepends = jack: optional JACK audio backend

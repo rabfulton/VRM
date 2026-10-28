@@ -8,6 +8,7 @@ import tempfile
 
 FLAGS = ("loopable", "startup", "is_idle")
 ACCESS_FLAGS = ('llm_enabled',)
+ROLE_FLAGS = ('is_exit',)
 POSES = ('standing','sitting','lying','crouching')
 MOTION_KEYS = ('entry_pose','exit_pose','floor_contact')
 
@@ -31,7 +32,7 @@ def load_motion_properties(path):
 def default_properties(name):
     name = name.casefold()
     return dict(loopable=name in ("relax", "thinking"),
-                startup=name == "enter_from_left", is_idle=name == "relax")
+                startup=name == "enter_from_left", is_idle=name == "relax", is_exit=False)
 
 
 def load_access_properties(path):
@@ -65,7 +66,7 @@ def load_properties(path):
     for line in text.splitlines():
         key, sep, value = line.split("#", 1)[0].partition("=")
         key, value = key.strip(), value.strip()
-        if sep and key in FLAGS:
+        if sep and key in (*FLAGS, *ROLE_FLAGS):
             if value in ("0", "1"):
                 result[key] = value == "1"
             else:
@@ -75,8 +76,8 @@ def load_properties(path):
 
 
 def save_properties(path, values):
-    if (not set(FLAGS).issubset(values) or set(values)-set(FLAGS)-set(MOTION_KEYS)-set(ACCESS_FLAGS) or
-            any(type(values[key]) is not bool for key in (*FLAGS, *ACCESS_FLAGS) if key in values)):
+    if (not set(FLAGS).issubset(values) or set(values)-set(FLAGS)-set(MOTION_KEYS)-set(ACCESS_FLAGS)-set(ROLE_FLAGS) or
+            any(type(values[key]) is not bool for key in (*FLAGS, *ACCESS_FLAGS, *ROLE_FLAGS) if key in values)):
         raise ValueError("Expected loopable, startup, is_idle and optional llm_enabled booleans.")
     for key in MOTION_KEYS:
         if key not in values:continue
@@ -102,7 +103,7 @@ def save_properties(path, values):
             output.append(line)
     if output and not output[-1].endswith(("\n", "\r")):
         output[-1] += "\n"
-    output.extend(f"{key}={encoded(key)}\n" for key in (*FLAGS,*ACCESS_FLAGS,*MOTION_KEYS) if key in values and key not in seen)
+    output.extend(f"{key}={encoded(key)}\n" for key in (*FLAGS,*ROLE_FLAGS,*ACCESS_FLAGS,*MOTION_KEYS) if key in values and key not in seen)
     fd, temporary = tempfile.mkstemp(prefix=cfg.name + ".", suffix=".tmp", dir=cfg.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:

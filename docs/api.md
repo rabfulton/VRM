@@ -254,7 +254,9 @@ All parameters are optional - only specified values are updated.
 ### Window Control
 
 #### set_visible
-Show or hide the overlay window.
+Show or hide the overlay window immediately. This low-level renderer command
+does not choose animations or cancel controller-owned output. Use Studio or
+the [MCP visibility tools](mcp.md) for the shared exit/entrance lifecycle.
 ```json
 {"action": "set_visible", "visible": true}
 ```
@@ -402,24 +404,32 @@ handling live in the controller, not the renderer IPC server.
 
 ### Frame timing diagnostics
 
+`get_state.data.frame_rate` is the actual presented-frame average over roughly
+half a second. `frame_rate_limit` is 60. Rendering is capped at 60 FPS, with
+X11 v-sync or Wayland compositor callbacks also able to limit presentation.
+Hidden avatars report zero. Loading does not reset the FPS measurement clock
+and cannot produce an artificial high-FPS sample from a shortened update interval.
+
 `get_state.data.frame_timing` reports `frame_ms`, `peak_frame_ms`, `slow_frames`
 (frames above 50 ms), `window_resizes`, `last_load_ms` and `last_bounds_ms`.
 `peak_ipc_ms`, `peak_update_ms`, `peak_render_ms` and `peak_swap_ms` describe stages
 of the **same slowest frame**, not independent stage maxima. IPC includes event
 polling and synchronous loads; render is CPU submission, while swap may include
 GPU completion and compositor/v-sync waits. Bounds time is zero for a cache hit.
+Deliberate waiting for the 60 FPS cap is excluded from these work/stall timings.
 `reset_frame_timing` clears peaks and slow-frame/resize counters without changing
 playback. A measured startup/load pause is not evidence of a steady GPU bottleneck.
 
 ### Animation behaviour metadata
 
-Sibling `.cfg` files may set `loopable=0|1`, `startup=0|1` and `is_idle=0|1`.
+Sibling `.cfg` files may set `loopable=0|1`, `startup=0|1`, `is_idle=0|1`
+and `is_exit=0|1`. Studio owns exit/entrance selection for hide and summon.
 When `loopable=0`, requests to repeat through `set_playback.loop=true`,
 `blend_to.loop=true` or `blend_to.count>1` are rejected. The renderer keeps its
 geometric loop heuristic for automatic choices when the flag is absent.
 
 `get_state.data.animation_properties` contains the booleans `loopable`,
-`explicit_loopable`, `startup`, `is_idle` and `floor_contact`. `loopable` reports repeat permission;
+`explicit_loopable`, `startup`, `is_idle`, `is_exit` and `floor_contact`. `loopable` reports repeat permission;
 `loop` in the surrounding state still reports the current playback choice.
 
 ```json
@@ -456,7 +466,8 @@ readback buffer and synchronizes with the GPU. See [fitting tests](window-fittin
 `get_state.window_backend` reports `x11` or `wayland` (separate from the animation
 `backend`). `studio_request_seq` increments when Studio is chosen from the native
 Wayland popup; controllers consume changes after their initial snapshot, just like
-`chat_request_seq`. Native popup Quit shuts down the renderer; the owning Studio
+`chat_request_seq`. `visibility_request_seq` similarly requests hide/summon from
+the controller's animation lifecycle. Native popup Quit shuts down the renderer; the owning Studio
 controller follows its existing renderer-exit lifecycle.
 
 On Wayland, window geometry commands describe a bounded avatar viewport within

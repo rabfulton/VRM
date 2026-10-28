@@ -73,6 +73,15 @@ Window {
             }
         }
         Button {
+            objectName: "overlayVisibilityButton"
+            text: menu.controller.avatarShown ? "Hide avatar" : "Summon avatar"
+            palette: menu.palette
+            font: menu.font
+            Layout.fillWidth: true
+            enabled: menu.controller.connected
+            onClicked: { menu.hide(); menu.controller.toggleAvatar() }
+        }
+        Button {
             objectName: "overlayQuitButton"
             text: "Quit"
             palette: menu.palette

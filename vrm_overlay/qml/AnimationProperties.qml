@@ -22,6 +22,7 @@ Dialog {
         loopable.checked = entry.loopable
         startup.checked = entry.startup
         idle.checked = entry.is_idle
+        exitAnimation.checked = entry.is_exit ?? false
         floorContact.checked = entry.floor_contact ?? true
         entryPose.currentIndex = entryPose.model.indexOf(entry.entry_pose || "standing")
         exitPose.currentIndex = exitPose.model.indexOf(entry.exit_pose || "standing")
@@ -46,6 +47,8 @@ Dialog {
             Label { text: "Play once when the avatar loads, then return to an idle. If several are marked, the first by filename is used."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
             CheckBox { id: idle; objectName: "animationIdleProperty"; text: "Idle animation" }
             Label { text: "Eligible between actions in the matching pose. Several idles take turns; a lone loopable idle repeats."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
+            CheckBox { id: exitAnimation; objectName: "animationExitProperty"; text: "Play before hiding" }
+            Label { text: "Play once before hiding the avatar. The first enabled exit clip with a safe pose route is used. Summoning replays the startup animation."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: "#9eacc0" }
             RowLayout {
                 Label { text: "Starts in"; color: "#9eacc0" }
                 ComboBox { id: entryPose; objectName: "animationEntryPoseProperty"; model: ["standing", "sitting", "lying", "crouching"]; Layout.fillWidth: true }
@@ -66,7 +69,7 @@ Dialog {
             text: "Save"
             onClicked: {
                 if (dialog.controller.saveAnimationProperties(dialog.animationPath,
-                        {loopable: loopable.checked, startup: startup.checked, is_idle: idle.checked, llm_enabled: llmAccess.checked,
+                        {loopable: loopable.checked, startup: startup.checked, is_idle: idle.checked, is_exit: exitAnimation.checked, llm_enabled: llmAccess.checked,
                          entry_pose: entryPose.currentText, exit_pose: exitPose.currentText, floor_contact: floorContact.checked}))
                     dialog.close()
                 else dialog.configError = dialog.controller.lastError

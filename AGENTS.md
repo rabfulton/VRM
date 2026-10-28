@@ -53,6 +53,9 @@ local copies and third-party notices. Do not add generated binaries or objects.
 - `src/audio.c/.h`, `viseme.c/.h`: miniaudio playback, PCM ring and default lip sync.
 - `src/event.c/.h`: continuous `EventStream` data and discrete multi-clock scheduler.
 - `vrm_overlay/qt_controller.py`, `qml/`: asynchronous IPC and Studio lifecycle.
+  `visibility.py` owns hide/exit/summon/entrance across UI and MCP. Shortcut helpers
+  in `qt_shortcut.py` / `visibility_shortcut.py` own Xorg grabs or temporary
+  Hyprland bindings; never overwrite existing compositor bindings/configuration.
   Studio starts hidden; closing a window keeps the background controller alive.
   Overlay right-click requests open the independent QML menu; explicit Quit stops
   the companion. Automatically owned idles rotate; manual playback/pause cancels
@@ -73,6 +76,9 @@ Use audio sample indices for playback/lip sync, and monotonic nanoseconds for
 wall-time actions. The scheduler updates with `event_update_seconds(now_ns)` and
 `event_update_audio(now_samples)`. Despite its name, `EVENT_DOMAIN_SECONDS` stores
 integer nanoseconds. Springs use a bounded fixed-step accumulator.
+`frame_clock.h` caps presentation at 60 FPS and averages completed frames; keep
+that clock independent of animation/load timestamps and audio sample clocks.
+Owned one-shots schedule a completion refresh instead of waiting for UI polling.
 
 VRM expression metadata maps to morph binds. `gltf_set_expression()` records
 logical inputs and composes weights; packed GPU morph deltas are sampled by the vertex shader. If expressions
@@ -94,6 +100,9 @@ Analyze at ingest or use a non-destructive tap/FIFO.
 - [Motion](docs/motion.md), [foot planting](docs/foot-planting.md): algorithms/limits.
 - [Development](docs/development.md): build variants, assets and tests.
 - [Roadmap](docs/roadmap.md): outstanding product work.
+- [External-agent architecture](docs/plugins.md), [MCP](docs/mcp.md): optional
+  SDK-based stdio server, private companion API and session-owned presentation.
+  External harnesses own advanced tools/skills; keep built-in chat basic.
 - [Packaging](docs/packaging.md): Arch PKGBUILD, staged installs, user paths and
   migration. GitHub Actions package builds are planned for later.
 

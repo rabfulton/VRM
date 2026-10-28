@@ -30,7 +30,7 @@ int main(void) {
     assert(cfg.has_loopable && !cfg.loopable && cfg.startup && !cfg.is_idle);
     assert(cfg.spring_stiffness == 1.5f && cfg.spring_drag == 1.25f);
     AnimConfig properties = {.has_loopable=true,.loopable=true,.has_startup=true,.startup=false,.has_is_idle=true,.is_idle=true,
-                             .has_floor_contact=true,.floor_contact=false};
+                             .has_floor_contact=true,.floor_contact=false,.has_is_exit=true,.is_exit=true};
     assert(anim_config_save(animation,&properties));
     file=fopen(config,"r");assert(file);
     char *line=NULL;size_t cap=0;int loops=0,future=0;bool notes=false,last=false,long_value=false;
@@ -46,6 +46,7 @@ int main(void) {
     assert(anim_config_load(animation,&cfg));
     assert(cfg.loopable && !cfg.startup && cfg.is_idle);
     assert(cfg.has_floor_contact && !cfg.floor_contact);
+    assert(cfg.has_is_exit && cfg.is_exit);
     file=fopen(config,"w");assert(file);fprintf(file,"loopable=1\nloopable=bad\nstartup=2\nis_idle=-1\n");fclose(file);
     assert(anim_config_load(animation,&cfg));
     assert(cfg.has_loopable && !cfg.loopable && cfg.has_startup && !cfg.startup && !cfg.is_idle);

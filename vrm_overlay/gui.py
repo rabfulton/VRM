@@ -11,12 +11,32 @@ def main():
     parser.add_argument("--window-backend", choices=("auto", "x11", "wayland"), default="auto")
     parser.add_argument("--socket", help="Renderer socket (default: private user runtime directory)")
     parser.add_argument("--settings", help="Renderer preferences file (default: XDG config directory)")
+    parser.add_argument("--companion-socket", help="Private presentation socket for external MCP agents")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument('--external-agent', dest='external_agent', action='store_true', help='Use an external agent through MCP instead of built-in chat')
+    source.add_argument('--builtin-chat', dest='external_agent', action='store_false', help='Use the basic built-in chat window')
+    parser.set_defaults(external_agent=None)
     parser.add_argument("--attach", action="store_true", help="Connect only; leave the existing renderer running on exit")
     parser.add_argument("--model", help="Avatar to load when starting a new renderer")
     parser.add_argument("--animation-dir", help="Folder of VRMA/GLB animation files")
     parser.add_argument("--studio", action="store_true", help="Open Studio at launch (otherwise start with just the companion)")
     parser.add_argument("--check", action="store_true", help="Load QML and exit without connecting or starting a renderer")
+    visibility = parser.add_mutually_exclusive_group()
+    visibility.add_argument('--hide-avatar', action='store_true', help='Ask the running companion to hide')
+    visibility.add_argument('--summon', action='store_true', help='Ask the running companion to appear')
+    visibility.add_argument('--toggle-avatar', action='store_true', help='Toggle the running companion visibility')
     args = parser.parse_args()
+    if args.hide_avatar or args.summon or args.toggle_avatar:
+        from .companion import CompanionClient, companion_socket_path
+        client = CompanionClient(args.companion_socket or companion_socket_path(args.socket))
+        try:
+            tool = 'avatar_toggle' if args.toggle_avatar else 'avatar_summon' if args.summon else 'avatar_hide'
+            client.call(tool, {})
+        except (OSError, ValueError, ConnectionError) as error:
+            parser.exit(1, str(error) + '\n')
+        finally:
+            client.close()
+        return 0
     try:
         from PySide6.QtCore import QTimer, QUrl
         from PySide6.QtGui import QGuiApplication, QIcon
@@ -37,7 +57,18 @@ def main():
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'thumbnails/starter.png')))
     app.setQuitOnLastWindowClosed(False)
     bridge = Controller(args.socket, attach=args.attach, model=args.model, animation_dir=args.animation_dir,
-                        show_studio=args.studio, window_backend=args.window_backend, renderer_settings=args.settings)
+                        show_studio=args.studio, window_backend=args.window_backend, renderer_settings=args.settings,
+                        external_agent=args.external_agent)
+    companion = None
+    if not args.check:
+        from .companion import companion_socket_path
+        from .qt_companion import CompanionServer
+        try:
+            companion = CompanionServer(bridge, args.companion_socket or companion_socket_path(bridge.socketPath, create=True))
+            bridge.visibilityShortcut.start(args.companion_socket or companion_socket_path(bridge.socketPath))
+        except (OSError, RuntimeError, ValueError) as error:
+            bridge.shutdown()
+            parser.exit(1, str(error) + '\n')
     # QGuiApplication.quit() asks visible windows to close. Studio intentionally
     # rejects ordinary close events to hide itself, which can veto that request
     # after the renderer has already stopped. Explicit companion Quit must end
@@ -49,6 +80,8 @@ def main():
     if not engine.rootObjects():
         return 1
     app.aboutToQuit.connect(bridge.shutdown)
+    if companion:
+        app.aboutToQuit.connect(companion.close)
     if args.check:
         QTimer.singleShot(100, lambda: app.exit(0))
     else:
