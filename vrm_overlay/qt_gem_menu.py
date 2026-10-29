@@ -56,13 +56,20 @@ class GemMenu(QObject):
         self.register(MenuAction('studio','Studio','studio',r.showStudio,object_name='overlayStudioButton'))
         self.register(MenuAction('pin','Always on top','pin',lambda:r.command('set_render',dict(always_on_top=not r.state['always_on_top'])),
                       enabled=lambda:r.connected,checked=lambda:r.state['always_on_top'],object_name='overlayAlwaysOnTopCheck'))
-        self.register(MenuAction('visibility','Hide avatar','hide',r.toggleAvatar,enabled=lambda:r.connected,
-                      object_name='overlayVisibilityButton'))
+        self.register(MenuAction('move','Move','walk',target='movement',close=False))
         self.register(MenuAction('colours','Colours','colours',target='themes',close=False))
         self.register(MenuAction('quit','Quit','power',r.quitApplication,danger=True,object_name='overlayQuitButton'))
         for identity,label,icon in [('auto','Avatar','avatar')]+[(k,v[0].split()[0],'spark') for k,v in PRESETS.items()]:
             self.register(MenuAction('theme:'+identity,label,icon,lambda identity=identity:self.setTheme(identity),
                           checked=lambda identity=identity:self._theme_choice()==identity,close=False,group='themes'))
+        self.register(MenuAction('walk_stop','Stop walking','stop',lambda:r.walking.cancel_current(restore=True),
+                      enabled=lambda:hasattr(r,'walking') and r.walking.busy,group='movement',object_name='overlayWalkStopButton'))
+        self.register(MenuAction('walk_right','Walk right','right',lambda:r.walking.local('right'),
+                      enabled=lambda:hasattr(r,'walking') and r.walking.available and not r.walking.busy,group='movement',object_name='overlayWalkRightButton'))
+        self.register(MenuAction('visibility','Hide avatar','hide',r.toggleAvatar,enabled=lambda:r.connected,
+                      group='movement',object_name='overlayVisibilityButton'))
+        self.register(MenuAction('walk_left','Walk left','left',lambda:r.walking.local('left'),
+                      enabled=lambda:hasattr(r,'walking') and r.walking.available and not r.walking.busy,group='movement',object_name='overlayWalkLeftButton'))
         runtime.changed.connect(self.refresh)
         runtime.stateChanged.connect(self.refresh)
         self.refresh()
@@ -177,7 +184,7 @@ class GemMenu(QObject):
             entries=[row for row in rows if row['group']==group]
             for start in range(0,len(entries),PAGE_SIZE):
                 pages.append(dict(id=f'{group}:{start//PAGE_SIZE}',group=group,
-                                  title='Colours' if group=='themes' else 'Companion',
+                                  title={'themes':'Colours','movement':'Move'}.get(group,'Companion'),
                                   items=list(layout(entries[start:start+PAGE_SIZE]))))
         self._spec=dict(version=1,context=context,width=WIDTH,height=HEIGHT,center=list(CENTER),
                         palette=colours,icons=ICONS,pages=pages)

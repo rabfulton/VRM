@@ -60,6 +60,12 @@ class PresentationQueue(QObject):
         return dict(external_agent=self.runtime.externalAgent, connected=self.runtime.connected,
                     visibility=self.runtime.visibility.status() if hasattr(self.runtime, 'visibility') else dict(visible=True),
                     model_loaded=self.runtime.state['model_loaded'], speech_ready=bool(speech_configuration(self.runtime.speech.config)),
+                    walking=dict(available=self.runtime.walking.available, busy=self.runtime.walking.busy,
+                                 directions=['left', 'right'], modes=['relative','absolute'],
+                                 distance_units='screen', min_distance=24, max_distance=1600,
+                                 absolute_x_min=-131072, absolute_x_max=131072, anchor='viewport_center',
+                                 x=(self.runtime.state['window']['x']+self.runtime.state['window']['width']/2) if self.runtime.state.get('window') else None,
+                                 workarea=self.runtime.state.get('workarea')) if hasattr(self.runtime, 'walking') else dict(available=False),
                     gestures=gestures[:256], gestures_truncated=len(gestures) > 256,
                     expressions=[c.name for c in available.values() if c.kind == 'expression'],
                     max_text_characters=4096, queue_limit=16)
@@ -75,6 +81,8 @@ class PresentationQueue(QObject):
         return self.public(job)
 
     def submit(self, owner, text='', gesture='', expression=''):
+        if hasattr(self.runtime, 'walking') and self.runtime.walking.busy:
+            raise ValueError('Wait for walking to finish or cancel the motion before presenting.')
         if hasattr(self.runtime, 'visibility') and not self.runtime.visibility.wanted:
             raise ValueError('Summon the avatar before requesting a presentation.')
         if not self.runtime.externalAgent:

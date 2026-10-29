@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import hashlib
 import os
 from pathlib import Path
@@ -31,6 +32,14 @@ def schema(properties=None, required=()):
 
 IDENTIFIER = dict(type='string', minLength=1, maxLength=128)
 TOOLS = [
+    dict(name='avatar_walk', description='Walk a standing humanoid horizontally: supply direction (left/right) and optional relative distance (default 240), OR absolute x for the avatar viewport centre. Screen units are X11 desktop pixels or Wayland output logical coordinates. Clamps to the current workarea. Returns a motion ID and duration estimate; poll avatar_motion_status for completion after settling into idle. External-agent mode required.',
+         inputSchema=dict(schema(dict(direction=dict(type='string', enum=['left', 'right'], maxLength=5), distance=dict(type='number', minimum=24, maximum=1600, default=240), x=dict(type='number', minimum=-131072, maximum=131072))),
+                          oneOf=[dict(required=['direction'], **{'not':dict(required=['x'])}),
+                                 dict(required=['x'], **{'not':dict(anyOf=[dict(required=['direction']),dict(required=['distance'])])})])),
+    dict(name='avatar_motion_status', description='Read a walking motion owned by this agent session: phase, progress, distance, boundary clamping, estimated duration and remaining time. Only completed/cancelled/failed are terminal; duration estimates are not completion signals.',
+         inputSchema=schema(dict(motion_id=IDENTIFIER), ['motion_id'])),
+    dict(name='avatar_motion_cancel', description='Stop a walking motion owned by this agent session and return to standing idle. Poll avatar_motion_status until terminal.',
+         inputSchema=schema(dict(motion_id=IDENTIFIER), ['motion_id'])),
     dict(name='avatar_hide', description='Hide the companion after its optional exit animation, cancelling current speech and presentations. Available in either conversation mode. Returns the requested visibility and phase.', inputSchema=schema()),
     dict(name='avatar_summon', description='Show the companion and replay its entrance animation. Interrupts an in-progress exit. Available in either conversation mode.', inputSchema=schema()),
     dict(name='avatar_toggle', description='Atomically toggle requested companion visibility using the same hide/summon lifecycle as Studio and the global shortcut.', inputSchema=schema()),
@@ -58,12 +67,18 @@ def validate_call(name, arguments):
         raise ValueError('Unexpected or missing tool arguments.')
     for key, value in arguments.items():
         limits = spec['properties'][key]
-        if not isinstance(value, str) or '\0' in value or not limits.get('minLength', 0) <= len(value) <= limits['maxLength']:
+        valid = ((isinstance(value, str) and '\0' not in value and limits.get('minLength', 0) <= len(value) <= limits['maxLength']
+                  and ('enum' not in limits or value in limits['enum'])) if limits['type'] == 'string' else
+                 (type(value) in (int, float) and limits['minimum'] <= value <= limits['maximum'] and math.isfinite(value)))
+        if not valid:
             raise ValueError(f'Invalid {key}.')
     if name == 'avatar_present' and not arguments['text'].strip():
         raise ValueError('Speech text cannot be blank.')
     if name == 'avatar_perform' and not arguments:
         raise ValueError('Provide a gesture or expression ID.')
+    if name == 'avatar_walk' and not (('direction' in arguments and 'x' not in arguments) or
+                                     ('x' in arguments and 'direction' not in arguments and 'distance' not in arguments)):
+        raise ValueError('Provide direction and optional distance, or absolute x; do not mix them.')
 
 
 class CompanionRejection(ValueError):

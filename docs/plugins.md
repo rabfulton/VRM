@@ -65,6 +65,12 @@ one presentation cannot stop another session’s work or a superseding local voi
 preview. New companion/model sessions do not restore old IDs or replay speech.
 Queue size, retained status entries, input sizes and execution time are bounded.
 
+Horizontal humanoid walking uses separate session-owned motion jobs with estimates,
+progress and explicit completion after arrival and idle settling. One walk owns the
+body; presentations wait until it finishes (new presentation calls are rejected
+while walking). Native travel stays independent of the MCP transport. See
+[locomotion](locomotion.md) for the current API and limits.
+
 Visibility is a companion-wide control shared by Studio, the right-click menu,
 the global shortcut and MCP. Hide cancels all output and optionally plays an exit;
 summon replays the entrance. These controls work in either conversation mode and

@@ -30,7 +30,7 @@ A new renderer loads the selected model, plays a configured startup once,
 then transitions to an idle and enables blinking. Studio starts hidden; pass
 `--studio` to show it immediately. Missing assets/errors open it automatically.
 Closing Studio or chat hides that window while the controller keeps running.
-Right-click the avatar for the [radial gem menu](gem-menu.md): **Talk to me**, **Studio**, **Hide avatar**, **Colours**, **Always on top**,
+Right-click the avatar for the [radial gem menu](gem-menu.md): **Talk to me**, **Studio**, **Move**, **Colours**, **Always on top**,
 or choose **Quit** to stop
 the companion and controller. The overlay sets X11 utility/skip-taskbar/skip-pager
 hints; the window manager controls their presentation. `--attach` never starts a
@@ -47,7 +47,7 @@ Options: `--studio`, `--attach`, `--socket PATH`, `--model PATH`, `--animation-d
 
 ## Hiding and summoning
 
-Use **Hide avatar** in the avatar's right-click menu. Restore a hidden companion
+Use **Move → Hide avatar** in the avatar's right-click menu. Restore a hidden companion
 with its global shortcut, `domovushka --summon`, or MCP, without restarting it.
 Hiding cancels speech, chat and external presentations;
 the controller and MCP endpoint keep running. Hidden avatars stop drawing and

@@ -47,6 +47,10 @@ local copies and third-party notices. Do not add generated binaries or objects.
   `avatar_catalog.py` selects each starter avatar's matching animation library.
 - `src/animator.c/.h`, `ozz_bridge.cpp/.h`, `transition.c/.h`: animation sampling
   and inertial transition corrections; record pose history before contact IK.
+- `src/walk_motion.c/.h`, `vrm_overlay/qt_walking.py`: horizontal humanoid walking.
+  Native code owns travel timing, yaw and a fixed local viewport; the controller
+  owns bounded session jobs, cancellation and return to idle. Duration estimates
+  are advisory; completion requires actual arrival and a finished idle blend.
 - `src/foot_lock.cpp/.h`: flat-floor IK, raw-target classification and smooth release.
 - `src/pose.c`: shared world-transform propagation used by runtime and IK tests.
 - `src/spring_bones.c/.h`: fixed 120 Hz springs and garment/arm proxy contacts.
@@ -102,6 +106,7 @@ Analyze at ingest or use a non-destructive tap/FIFO.
 - [Animation properties](docs/animation-properties.md): loopability, startup, idle
   roles and manual/automatic motion ownership.
 - [Motion](docs/motion.md), [foot planting](docs/foot-planting.md): algorithms/limits.
+- [Locomotion](docs/locomotion.md): relative/absolute X walking, MCP jobs and completion.
 - [Development](docs/development.md): build variants, assets and tests.
 - [Roadmap](docs/roadmap.md): outstanding product work.
 - [External-agent architecture](docs/plugins.md), [MCP](docs/mcp.md): optional

@@ -100,9 +100,12 @@ Use **⋯** beside an animation to edit looping, startup, idle, pose and floor-c
 `.cfg` file; see [animation properties](docs/animation-properties.md).
 
 The companion starts with Studio hidden. Right-click for the avatar-coloured
-gem menu: **Talk to me**, **Studio**, **Always on top**, **Hide avatar**, **Colours**
-and **Quit**. Both desktop backends use the same menu; rendering
-preferences remain available in Studio. The floating preference is remembered
+gem menu: **Talk to me**, **Studio**, **Always on top**, **Move**, **Colours**
+and **Quit**. Both desktop backends use the same menu.
+The **Move** submenu offers **Walk left**, **Walk right**, **Stop walking** and
+**Hide avatar**. Walking uses the included humanoid gait and returns to standing
+idle; see [walking and motion completion](docs/locomotion.md).
+Rendering preferences remain available in Studio. The floating preference is remembered
 across restarts. Right-click again or left-click outside to dismiss the menu.
 Closing Studio or chat keeps the companion running;
 **Quit** stops it. Pass `--studio` to open the controls immediately. Missing assets
@@ -154,9 +157,11 @@ Studio, or launch with `domovushka --external-agent --studio`. Install the optio
 `python-mcp` package on Arch (or `requirements-mcp.txt` in a checkout environment),
 then configure your agent to run `domovushka-mcp` as a stdio server. The built-in
 chat remains the basic standalone option. See [MCP setup and tools](docs/mcp.md).
+`avatar_walk` accepts relative direction/distance or an absolute X destination;
+both provide motion IDs, duration estimates and completion tracking.
 
 Hide/summon is available through a global shortcut, command line and MCP; the
-avatar's right-click menu also offers Hide. Set a shortcut in Studio's header
+avatar's right-click **Move** menu also offers Hide. Set a shortcut in Studio's header
 for Xorg or Hyprland, and mark an animation
 **Play before hiding** for an optional exit. Summoning replays the entrance.
 See [visibility and shortcut setup](docs/studio.md#hiding-and-summoning).

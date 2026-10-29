@@ -26,6 +26,11 @@ compensates for that height change. The viewport can grow during playback but
 only shrinks on explicit refitting, such as a camera change, to avoid
 breathing with each gesture. Clip switches preserve the viewport; live expansion
 uses 64-pixel steps to avoid reallocating render surfaces for small spring changes.
+During [horizontal walking](locomotion.md), the renderer fits the gait/turn envelope
+once and holds the viewport size throughout travel. X11 then moves that fixed-size
+window; Wayland moves its viewport inside the output canvas. Normal idle fitting
+resumes after stopping.
+
 Window dimensions are limited by the monitor workarea
 and a 4096 logical-pixel cap; exceptionally large projected motion is reduced to
 fit those limits. Geometry crossing the camera's near plane cannot be fixed by

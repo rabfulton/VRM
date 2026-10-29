@@ -32,6 +32,187 @@ if HAS_QT:
 
 @unittest.skipUnless(HAS_QT, "Install requirements-gui.txt for Qt Quick checks")
 class QtControllerTests(unittest.TestCase):
+    def ready_to_walk(self):
+        self.state.update(humanoid=True, avatar_height_pixels=300,
+                          window=dict(x=300,y=200,width=200,height=500),
+                          workarea=dict(x=0,y=0,width=1920,height=1080))
+        self.bridge._update_state(dict(data=self.state.copy()))
+        self.wait_for(lambda: not self.bridge.busy)
+        self.bridge.setExternalAgent(True)
+        return self.bridge.walking
+
+    def test_walk_returns_job_id_and_waits_for_idle_blend_before_completion(self):
+        walking = self.ready_to_walk()
+        result = walking.start('agent', 'left', 200)
+        self.assertEqual(result['state'], 'preparing')
+        self.assertGreater(result['estimated_duration_seconds'], 0)
+        self.wait_for(lambda: any(c['action'] == 'start_walk' for c in self.commands) and not self.bridge.busy)
+        self.assertEqual(self.state['walk']['requested_distance'], -200)
+        gait_load = next(c for c in self.commands if c['action']=='load_animation' and c['path']==walking.gait)
+        self.assertIs(gait_load.get('neutral_facing'), True)
+        self.assertEqual(self.bridge._motion['mode'], 'locomotion')
+        with self.assertRaisesRegex(ValueError, 'session'):
+            walking.status('stranger', result['id'])
+        with self.assertRaisesRegex(ValueError, 'finish'):
+            self.bridge.presentations.submit('agent', expression='joy')
+        self.state['walk'].update(phase='completed', progress=1, remaining_seconds=0,
+                                  actual_distance=-200, distance=-200)
+        self.state['blend']['active'] = True
+        self.bridge.refresh()
+        self.wait_for(lambda: self.state['animation_path'] == walking.fallback_idle and not self.bridge.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'settling')
+        self.state['blend']['active'] = False
+        self.bridge.refresh()
+        self.wait_for(lambda: walking.status('agent', result['id'])['state'] == 'completed')
+        self.assertEqual(walking.status('agent', result['id'])['actual_distance'], -200)
+        self.assertFalse(walking.busy)
+        idle_load = [c for c in self.commands if c['action']=='load_animation'][-1]
+        self.assertNotIn('neutral_facing', idle_load)
+
+    def test_walk_cancel_before_start_discards_queued_start_and_restores_idle(self):
+        walking = self.ready_to_walk()
+        result = walking.start('agent', 'right')
+        walking.cancel('agent', result['id'])
+        self.wait_for(lambda: not walking.busy and not self.bridge.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'cancelled')
+        self.assertFalse(any(c['action'] == 'start_walk' for c in self.commands))
+        self.assertEqual(self.state['animation_path'], walking.fallback_idle)
+
+    def test_walk_hide_cancels_without_late_idle_or_start(self):
+        walking = self.ready_to_walk()
+        result = walking.start('agent', 'left')
+        self.bridge.hideAvatar()
+        self.wait_for(lambda: self.bridge.visibilityPhase == 'hidden' and not self.bridge.busy and not walking.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'cancelled')
+        self.assertFalse(any(c['action'] == 'start_walk' for c in self.commands))
+        self.assertFalse(self.state['visible'])
+        self.assertFalse(self.state['playing'])
+
+    def test_walk_native_cancellation_restores_saved_speed_and_records_clamping(self):
+        walking = self.ready_to_walk()
+        self.state['speed'] = self.bridge._state['speed'] = 1.6
+        result = walking.start('agent', 'right', 800)
+        self.wait_for(lambda: 'walk' in self.state and not self.bridge.busy)
+        self.state['walk'].update(phase='walking', distance=60, actual_distance=25, clamped=True,
+                                  progress=.5, remaining_seconds=.7)
+        self.bridge.refresh()
+        self.wait_for(lambda: walking.status('agent', result['id'])['clamped'])
+        status = walking.status('agent', result['id'])
+        self.assertEqual(status['distance'], 60)
+        self.assertEqual(status['actual_distance'], 25)
+        self.state['walk']['phase'] = 'cancelled'
+        self.bridge.refresh()
+        self.wait_for(lambda: not walking.busy and not self.bridge.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'cancelled')
+        self.assertEqual([c for c in self.commands if c['action'] == 'play'][-1]['speed'], 1.6)
+
+    def test_walk_load_failure_is_terminal_and_does_not_start_travel(self):
+        walking = self.ready_to_walk()
+        self.fail_action = 'load_animation'
+        result = walking.start('agent', 'right')
+        self.wait_for(lambda: not walking.busy and not self.bridge.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'failed')
+        self.assertFalse(any(c['action'] == 'start_walk' for c in self.commands))
+
+    def test_walk_rejects_nonhumanoids_overlaps_and_nonstanding_pose(self):
+        walking = self.ready_to_walk()
+        self.bridge._state['humanoid'] = False
+        with self.assertRaisesRegex(ValueError, 'humanoid'):
+            walking.start('agent', 'left')
+        self.bridge._state['humanoid'] = True
+        for distance in (float('nan'), float('inf'), True, -10, 0, 1601):
+            with self.assertRaises(ValueError):walking.start('agent', 'left', distance)
+        walking.start('agent', 'left')
+        with self.assertRaisesRegex(ValueError, 'current'):
+            walking.start('agent', 'right')
+
+    def test_walk_menu_operates_in_builtin_mode_and_manual_pause_wins(self):
+        walking = self.ready_to_walk()
+        self.bridge.setExternalAgent(False)
+        self.bridge.gemMenu.activate('walk_right')
+        self.assertTrue(walking.busy)
+        identifier = walking.active['id']
+        self.bridge.command('pause', {})
+        self.wait_for(lambda:not walking.busy and not self.bridge.busy)
+        self.assertEqual(walking.status('menu', identifier)['state'], 'cancelled')
+        self.assertFalse(any(c['action'] == 'start_walk' for c in self.commands))
+        self.assertFalse(self.state['playing'])
+
+    def test_walk_completed_clock_waits_for_actual_window_arrival(self):
+        walking = self.ready_to_walk()
+        result = walking.start('agent', 'right', 100)
+        self.wait_for(lambda:'walk' in self.state and not self.bridge.busy)
+        self.state['walk'].update(phase='completed', progress=1, remaining_seconds=0,
+                                  distance=100, actual_distance=80)
+        self.bridge.refresh()
+        self.wait_for(lambda:walking.status('agent', result['id'])['state']=='arriving')
+        self.assertEqual(self.state['animation_path'], walking.gait)
+        self.state['walk']['actual_distance'] = 100
+        self.bridge.refresh()
+        self.wait_for(lambda:not walking.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'completed')
+
+    def test_walk_disconnect_immediately_releases_job_ownership(self):
+        walking = self.ready_to_walk()
+        result = walking.start('agent', 'left')
+        self.wait_for(lambda:'walk' in self.state and not self.bridge.busy)
+        self.bridge.disconnectRuntime()
+        self.assertFalse(walking.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'cancelled')
+
+    def test_absolute_walk_uses_native_x_and_reports_the_reachable_destination(self):
+        walking=self.ready_to_walk()
+        result=walking.start('agent',x=2000)
+        self.assertEqual(result['mode'],'absolute')
+        self.assertEqual(result['start_x'],400)
+        self.assertEqual(result['requested_x'],2000)
+        self.wait_for(lambda:'walk' in self.state and not self.bridge.busy)
+        command=next(c for c in self.commands if c['action']=='start_walk')
+        self.assertEqual(command['x'],2000)
+        self.assertNotIn('distance',command)
+        self.state['walk'].update(phase='completed', progress=1, remaining_seconds=0,
+                                  distance=1420,actual_distance=1420,clamped=True,
+                                  start_x=400,requested_x=2000,target_x=1820,x=1820)
+        self.state['window']['x']=1720
+        self.bridge.refresh()
+        self.wait_for(lambda:not walking.busy)
+        status=walking.status('agent',result['id'])
+        self.assertEqual(status['state'],'completed')
+        self.assertEqual(status['x'],1820)
+        self.assertEqual(status['target_x'],1820)
+        self.assertTrue(status['clamped'])
+
+    def test_absolute_walk_already_at_destination_and_small_moves_complete(self):
+        walking=self.ready_to_walk()
+        for x in (400,400.5):
+            result=walking.start('agent',x=x)
+            self.wait_for(lambda:self.state.get('walk',{}).get('id')==result['id'] and not self.bridge.busy)
+            delta=x-400
+            self.state['walk'].update(phase='completed',progress=1,remaining_seconds=0,
+                                      requested_distance=delta,distance=delta,actual_distance=delta)
+            self.bridge.refresh()
+            self.wait_for(lambda:not walking.busy and not self.bridge.busy)
+            self.assertEqual(walking.status('agent',result['id'])['state'],'completed')
+
+    def test_absolute_walk_rejects_conflicting_or_invalid_arguments(self):
+        walking=self.ready_to_walk()
+        for kwargs in (dict(x=900,direction='right'),dict(x=900,distance=240),dict(x=True),dict(x=float('inf'))):
+            with self.assertRaises(ValueError):walking.start('agent',**kwargs)
+        capabilities=self.bridge.presentations.capabilities()['walking']
+        self.assertEqual(capabilities['x'],400)
+        self.assertEqual(capabilities['anchor'],'viewport_center')
+        self.assertEqual(capabilities['modes'],['relative','absolute'])
+
+    def test_walk_revoking_return_idle_stops_without_loading_disabled_clip(self):
+        walking = self.ready_to_walk()
+        self.bridge._files[0].update(is_idle=True, enabled=True, entry_pose='standing', exit_pose='standing')
+        result = walking.start('agent', 'right')
+        self.wait_for(lambda:'walk' in self.state and not self.bridge.busy)
+        self.bridge.setAnimationEnabled(0, False)
+        self.wait_for(lambda:not walking.busy)
+        self.assertEqual(walking.status('agent', result['id'])['state'], 'cancelled')
+        self.assertFalse(any(c['action']=='load_animation' and c['path']==str(self.files[0]) for c in self.commands))
+
     def test_hide_without_exit_then_summon_and_resume_idle(self):
         entrance, idle = self.motion_library()
         self.bridge.hideAvatar()
@@ -182,8 +363,17 @@ class QtControllerTests(unittest.TestCase):
                     self.state.update(loop=command.get("loop",False), time=0)
                 elif action == "play":
                     self.state["playing"] = True
+                    self.state['speed'] = command.get('speed', 1)
                 elif action == "pause":
                     self.state["playing"] = False
+                elif action == 'start_walk':
+                    w=self.state.get('window',dict(x=300,width=200))
+                    delta=command.get('distance',command.get('x',400)-(w['x']+w['width']/2))
+                    self.state['walk'] = dict(id=command['motion_id'], phase='preparing', progress=0,
+                        requested_distance=delta, distance=delta, actual_distance=0,
+                        clamped=False, duration_seconds=2, remaining_seconds=2)
+                elif action == 'cancel_walk' and self.state.get('walk', {}).get('id') == command['motion_id']:
+                    self.state['walk']['phase'] = 'cancelled'
                 elif action == 'set_visible':
                     self.state['visible'] = command['visible']
                 elif action == 'set_playback':

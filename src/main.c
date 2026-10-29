@@ -23,6 +23,7 @@
 #include "event.h"
 #include "frame_clock.h"
 #include "gem_menu.h"
+#include "walk_motion.h"
 #include "gltf_loader.h"
 #include "ipc.h"
 #include "hit_capture.h"
@@ -41,6 +42,7 @@ typedef struct {
   struct timespec modified;
   off_t size;
   float correction[4];
+  bool neutral_facing;
   GltfBounds bounds;
   bool valid;
 } ClipBoundsCache;
@@ -66,6 +68,15 @@ typedef struct {
   double pending_scroll, last_scroll_time;
   char current_model_path[4096];
   float frame_rate;
+  WalkMotion walk;
+  char walk_id[49];
+  bool walk_pending,walk_started;
+  bool walk_absolute;
+  double walk_target_x;
+  int fit_requested_w,fit_requested_h,walk_goal_w,walk_goal_h;
+  int64_t walk_pending_at_ns;
+  double walk_requested,walk_nominal_speed,walk_estimate,walk_start_anchor;
+  float walk_saved_speed;
   FrameClock frame_clock;
   uint32_t chat_request_seq;
   uint32_t studio_request_seq;
@@ -82,6 +93,7 @@ typedef struct {
   uint64_t slow_frames, window_resizes;
   char current_anim_path[4096];
   bool has_current_anim;
+  bool animation_neutral_facing;
   bool animation_startup, animation_idle, animation_exit;
   bool audio_stream_open;
   bool presentation_pending;
@@ -107,6 +119,19 @@ extern float g_anim_seam_blend_time_default;
 static void build_view_with_model_transform(float out_view[16]);
 static bool model_hit_test(int x, int y);
 static bool save_springs_to_config(void);
+static bool walking(void) { return app.walk_pending || walk_motion_active(&app.walk); }
+static void cancel_walk(void) {
+  bool active=walking();
+  if(active) {
+    app.walk_pending=false;
+    walk_motion_cancel(&app.walk);
+    app.model_rotation[1]=(float)app.walk.base_yaw;
+    renderer_set_model_transform(&app.renderer,app.model_position,app.model_rotation,app.model_scale);
+    animator_pause(&app.animator);
+    app.animator.speed=app.walk_saved_speed;
+  }
+  if(app.walk_id[0])app.walk.phase=WALK_CANCELLED;
+}
 
 static void set_always_on_top(bool enabled) {
   app.always_on_top = enabled;
@@ -271,7 +296,7 @@ static void msaa_resize(VrmApp *s, int w, int h) {
 }
 
 static void fit_overlay_window(bool allow_shrink) {
-  if (!app.auto_resize || !app.model_loaded) return;
+  if (!app.auto_resize || !app.model_loaded || walking()) return;
   int old_x, old_y, old_w, old_h;
   platform_get_window_pos(app.window, &old_x, &old_y);
   platform_get_window_size(app.window, &old_w, &old_h);
@@ -306,6 +331,7 @@ static void fit_overlay_window(bool allow_shrink) {
     if (h > old_h) h = (int)fminf(max_h, ceilf(h*reserve/chunk)*chunk);
   }
   app.fit_zoom = zoom;
+  app.fit_requested_w=w;app.fit_requested_h=h;
   app.camera.viewport_height_scale = h / (base_h*zoom);
   app.camera.aspect = (float)w/h;
   if (w != old_w || h != old_h) {
@@ -313,6 +339,60 @@ static void fit_overlay_window(bool allow_shrink) {
     /* Preserve the screen-space camera centre and pixel density. */
     platform_set_window_rect(app.window,old_x+(old_w-w)/2,old_y+(old_h-h)/2,w,h);
   }
+}
+
+static double avatar_height_pixels(void) {
+  double height=app.clip_bounds.valid?app.clip_bounds.max[1]-app.clip_bounds.min[1]:1.7;
+  double base_h=fmax(100,550*app.model_scale);
+  double pixels=height*app.model_scale*base_h*fmax(app.fit_zoom,.01)/(2*tan(app.camera.fov*.5)*fmax(app.camera.distance,.1));
+  return fmax(60,fmin(4000,pixels));
+}
+
+static void prepare_walk_tick(int64_t now_ns) {
+  if(!app.walk_pending)return;
+  int x,y,w,h;platform_get_window_pos(app.window,&x,&y);platform_get_window_size(app.window,&w,&h);
+  if((w!=app.walk_goal_w || h!=app.walk_goal_h) && now_ns-app.walk_pending_at_ns<350000000LL)return;
+  int wx,wy,ww,wh;platform_get_window_workarea(app.window,&wx,&wy,&ww,&wh);
+  (void)wy;(void)wh;
+  /* Absolute targets use the camera/viewport centre, independent of fitting.
+   * Relative requests never reverse direction to correct an offscreen start. */
+  if(app.walk_absolute)app.walk_requested=app.walk_target_x-(x+w*.5);
+  double goal=walk_motion_target(x,w,wx,ww,app.walk_absolute?app.walk_target_x:app.walk_requested,app.walk_absolute);
+  double facing=walk_motion_heading(app.camera.azimuth,goal-x);
+  app.walk_start_anchor=x+w*.5;
+  walk_motion_begin(&app.walk,now_ns,x,y,goal-x,app.walk_nominal_speed,app.walk.base_yaw,facing);
+  app.walk_estimate=walk_motion_seconds(&app.walk);app.walk_pending=false;app.walk_started=true;
+  if(!walk_motion_active(&app.walk)) {animator_pause(&app.animator);app.animator.speed=app.walk_saved_speed;}
+}
+
+static void respond_walk_state(cJSON *parent) {
+  int x,y,w,h;platform_get_window_pos(app.window,&x,&y);platform_get_window_size(app.window,&w,&h);
+  int wx,wy,ww,wh;platform_get_window_workarea(app.window,&wx,&wy,&ww,&wh);
+  cJSON *rect=cJSON_AddObjectToObject(parent,"window");
+  cJSON_AddNumberToObject(rect,"x",x);cJSON_AddNumberToObject(rect,"y",y);
+  cJSON_AddNumberToObject(rect,"width",w);cJSON_AddNumberToObject(rect,"height",h);
+  cJSON *area=cJSON_AddObjectToObject(parent,"workarea");
+  cJSON_AddNumberToObject(area,"x",wx);cJSON_AddNumberToObject(area,"y",wy);
+  cJSON_AddNumberToObject(area,"width",ww);cJSON_AddNumberToObject(area,"height",wh);
+  cJSON_AddBoolToObject(parent,"humanoid",app.model_loaded && app.model.humanoid_bone_count>0);
+  cJSON_AddNumberToObject(parent,"avatar_height_pixels",avatar_height_pixels());
+  cJSON *motion=cJSON_AddObjectToObject(parent,"walk");
+  cJSON_AddStringToObject(motion,"id",app.walk_id);
+  cJSON_AddStringToObject(motion,"mode",app.walk_absolute?"absolute":"relative");
+  cJSON_AddNumberToObject(motion,"x",x+w*.5);
+  cJSON_AddNumberToObject(motion,"start_x",app.walk_start_anchor);
+  cJSON_AddNumberToObject(motion,"requested_x",app.walk_absolute?app.walk_target_x:app.walk_start_anchor+app.walk_requested);
+  cJSON_AddNumberToObject(motion,"target_x",app.walk_started?app.walk_start_anchor+app.walk.distance:
+      app.walk_absolute?app.walk_target_x:app.walk_start_anchor+app.walk_requested);
+  cJSON_AddStringToObject(motion,"phase",app.walk_pending?"preparing":walk_motion_phase(&app.walk));
+  cJSON_AddNumberToObject(motion,"progress",app.walk.progress);
+  cJSON_AddNumberToObject(motion,"yaw",app.walk.yaw);
+  cJSON_AddNumberToObject(motion,"remaining_seconds",app.walk_pending?app.walk_estimate:app.walk.remaining);
+  cJSON_AddNumberToObject(motion,"duration_seconds",app.walk_estimate);
+  cJSON_AddNumberToObject(motion,"requested_distance",app.walk_requested);
+  cJSON_AddNumberToObject(motion,"distance",app.walk_started?app.walk.distance:app.walk_requested);
+  cJSON_AddNumberToObject(motion,"actual_distance",app.walk_started?x+w*.5-app.walk_start_anchor:0);
+  cJSON_AddBoolToObject(motion,"clamped",app.walk_started && fabs(app.walk.distance-app.walk_requested)>.5);
 }
 
 static void update_window_for_zoom(void) { fit_overlay_window(true); }
@@ -325,6 +405,7 @@ static void refit_animation_window(void) {
   if (can_cache) for (unsigned i=0; i<32; i++) {
     ClipBoundsCache *candidate = &app.bounds_cache[i];
     if (candidate->valid && strcmp(candidate->path,app.current_anim_path)==0 &&
+        candidate->neutral_facing==app.animation_neutral_facing &&
         candidate->size==info.st_size && candidate->modified.tv_sec==info.st_mtim.tv_sec &&
         candidate->modified.tv_nsec==info.st_mtim.tv_nsec &&
         memcmp(candidate->correction,app.model.anim_global_correction,sizeof(candidate->correction))==0) {
@@ -341,6 +422,7 @@ static void refit_animation_window(void) {
       entry = &app.bounds_cache[app.bounds_cache_cursor++ % 32];
       snprintf(entry->path,sizeof(entry->path),"%s",app.current_anim_path);
       entry->modified = info.st_mtim; entry->size = info.st_size;
+      entry->neutral_facing = app.animation_neutral_facing;
       memcpy(entry->correction,app.model.anim_global_correction,sizeof(entry->correction));
       entry->bounds = app.clip_bounds; entry->valid = true;
     }
@@ -557,6 +639,7 @@ static void respond_state(int id) {
   cJSON_AddBoolToObject(state, "model_loaded", app.model_loaded);
   cJSON_AddStringToObject(state, "model_path", app.current_model_path);
   cJSON_AddStringToObject(state, "animation_path", app.current_anim_path);
+  cJSON_AddBoolToObject(state, "animation_neutral_facing", app.animation_neutral_facing);
   cJSON_AddBoolToObject(state, "playing", app.animator.playing);
   cJSON_AddNumberToObject(state, "animation_index", app.animator.current_animation);
   cJSON_AddNumberToObject(state, "time", app.animator.time);
@@ -696,6 +779,7 @@ static void respond_state(int id) {
   cJSON_AddNumberToObject(camera, "azimuth", app.camera.azimuth);
   cJSON_AddNumberToObject(camera, "polar", app.camera.polar);
   cJSON_AddNumberToObject(camera, "dist", app.camera.distance);
+  respond_walk_state(state);
   char *text = cJSON_PrintUnformatted(state);
   ipc_respond_data(&app.ipc, id, text);
   free(text);
@@ -713,9 +797,61 @@ static void on_ipc_command(const char *action, void *params, int id,
   (void)user_data;
   cJSON *json = (cJSON *)params;
   platform_make_context_current(app.window);
+  if(walking() && (!strcmp(action,"load") || !strcmp(action,"unload") || !strcmp(action,"load_animation") ||
+      !strcmp(action,"pause") || !strcmp(action,"play") || !strcmp(action,"set_time") || !strcmp(action,"set_animation") ||
+      !strcmp(action,"blend_to") || !strcmp(action,"set_playback") || !strcmp(action,"set_camera") ||
+      !strcmp(action,"set_anim_backend") || !strcmp(action,"set_anim_correction") || !strcmp(action,"reload_animation_metadata") ||
+      !strcmp(action,"set_position") || !strcmp(action,"set_rotation") || !strcmp(action,"set_window") ||
+      !strcmp(action,"set_auto_resize") || (!strcmp(action,"set_visible") && cJSON_IsFalse(cJSON_GetObjectItem(json,"visible"))) ||
+      (!strcmp(action,"set_render") && cJSON_GetObjectItem(json,"scale"))))cancel_walk();
 
   if (strcmp(action, "ping") == 0) {
     ipc_respond(&app.ipc, id, true, NULL);
+  } else if (strcmp(action,"start_walk") == 0) {
+    cJSON *token=cJSON_GetObjectItem(json,"motion_id"),*distance=cJSON_GetObjectItem(json,"distance");
+    cJSON *target=cJSON_GetObjectItem(json,"x");
+    cJSON *restore=cJSON_GetObjectItem(json,"restore_speed");
+    if(!cJSON_IsString(token) || !token->valuestring[0] || strlen(token->valuestring)>48 ||
+        (target && distance) || (!target && !distance) ||
+        (target && !valid_number(target,-131072,131072)) ||
+        (distance && (!valid_number(distance,-1600,1600) || fabs(distance->valuedouble)<24)) ||
+        (restore && !valid_number(restore,.1,3))) {
+      ipc_respond(&app.ipc,id,false,"Expected motion_id and either signed distance (24–1600) or absolute x (-131072–131072)");return;
+    }
+    if(walking() || !app.visible || !app.model_loaded || app.model.humanoid_bone_count<=0 ||
+        app.animator.current_animation<0 || !app.animator.loop_allowed || !app.animator.playing) {
+      ipc_respond(&app.ipc,id,false,"Walking requires a visible humanoid and a prepared loopable gait");return;
+    }
+    double cycle=app.model.animations[app.animator.current_animation].duration;
+    if(!isfinite(cycle) || cycle<=0) {ipc_respond(&app.ipc,id,false,"Invalid walking cycle");return;}
+    GltfBounds bounds=app.clip_bounds,live;gltf_get_world_bounds(&app.model,&live);gltf_bounds_merge(&bounds,&live);
+    float radius=0;
+    for(int i=0;i<4;i++)radius=fmaxf(radius,hypotf(bounds.min[0]+(i&1)*(bounds.max[0]-bounds.min[0]),bounds.min[2]+((i>>1)&1)*(bounds.max[2]-bounds.min[2])));
+    bounds.min[0]=bounds.min[2]=-radius;bounds.max[0]=bounds.max[2]=radius;app.clip_bounds=bounds;
+    bool auto_resize=app.auto_resize;float zoom=app.fit_zoom>0?app.fit_zoom:1;
+    app.auto_resize=true;fit_overlay_window(true);app.auto_resize=auto_resize;
+    app.fit_zoom=fminf(zoom,app.fit_zoom);
+    int w,h;platform_get_window_size(app.window,&w,&h);
+    app.walk_goal_w=app.fit_requested_w>0?app.fit_requested_w:w;
+    app.walk_goal_h=app.fit_requested_h>0?app.fit_requested_h:h;
+    app.camera.viewport_height_scale=app.walk_goal_h/(fmaxf(100,550*app.model_scale)*fmaxf(app.fit_zoom,.01f));
+    memset(&app.walk,0,sizeof(app.walk));app.walk.base_yaw=app.model_rotation[1];app.walk.yaw=app.walk.base_yaw;
+    snprintf(app.walk_id,sizeof(app.walk_id),"%s",token->valuestring);
+    int start_x,start_y;platform_get_window_pos(app.window,&start_x,&start_y);
+    app.walk_start_anchor=start_x+w*.5;
+    app.walk_absolute=target!=NULL;app.walk_target_x=target?target->valuedouble:0;
+    app.walk_requested=target?target->valuedouble-app.walk_start_anchor:distance->valuedouble;
+    app.walk_pending_at_ns=(int64_t)(platform_get_time()*1e9);
+    app.walk_nominal_speed=fmax(20,avatar_height_pixels()*.45/cycle);
+    app.walk_estimate=.4+fmax(.5,fabs(app.walk_requested)/app.walk_nominal_speed+.25);
+    app.walk_saved_speed=restore?(float)restore->valuedouble:app.animator.speed;
+    app.walk_pending=true;app.walk_started=false;app.animator.speed=0;
+    ipc_respond(&app.ipc,id,true,NULL);
+  } else if(strcmp(action,"cancel_walk") == 0) {
+    cJSON *token=cJSON_GetObjectItem(json,"motion_id");
+    if(!cJSON_IsString(token)){ipc_respond(&app.ipc,id,false,"Expected motion_id");return;}
+    if(!strcmp(token->valuestring,app.walk_id))cancel_walk();
+    ipc_respond(&app.ipc,id,true,NULL);
   } else if (strcmp(action, "get_state") == 0) {
     respond_state(id);
   } else if (strcmp(action, "get_frame_bounds") == 0) {
@@ -826,6 +962,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       ipc_respond(&app.ipc,id,false,"defer_show must be boolean"); return;
     }
     app.presentation_pending=cJSON_IsTrue(defer);
+    app.animation_neutral_facing=false;
     hit_capture_reset(&app.hit_capture);
     if (app.model_loaded) {
       gltf_unload(&app.model);
@@ -860,6 +997,7 @@ static void on_ipc_command(const char *action, void *params, int id,
       ipc_respond(&app.ipc, id, false, "Failed to load VRM");
     }
   } else if (strcmp(action, "unload") == 0) {
+    app.animation_neutral_facing=false;
     hit_capture_reset(&app.hit_capture);
     app.presentation_pending=false;
     if (app.model_loaded) {
@@ -933,6 +1071,10 @@ static void on_ipc_command(const char *action, void *params, int id,
   } else if (strcmp(action, "load_animation") == 0) {
     double load_started = platform_get_time();
     cJSON *path = cJSON_GetObjectItem(json, "path");
+    cJSON *neutral = cJSON_GetObjectItem(json, "neutral_facing");
+    if (neutral && !cJSON_IsBool(neutral)) {
+      ipc_respond(&app.ipc,id,false,"neutral_facing must be boolean");return;
+    }
     if (!path || !path->valuestring) {
       ipc_respond(&app.ipc, id, false, "Missing path");
       return;
@@ -952,7 +1094,9 @@ static void on_ipc_command(const char *action, void *params, int id,
       snapshot_taken = ozz_bridge_snapshot_available();
     }
 #endif
-    if (gltf_load_animation(&app.model, path->valuestring)) {
+    bool neutral_facing=cJSON_IsTrue(neutral);
+    if (neutral_facing ? gltf_load_animation_neutral(&app.model, path->valuestring) : gltf_load_animation(&app.model, path->valuestring)) {
+      app.animation_neutral_facing=neutral_facing;
       update_anim_correction_mode(app.model.anim_correction_mode);
       animator_set_model(&app.animator, &app.model);
       app.has_current_anim = false;
@@ -1438,6 +1582,7 @@ static void on_mouse_move(double x, double y, void *user) {
     platform_move_window(win, window_drag_start_pos[0] + dx,
                          window_drag_start_pos[1] + dy);
   } else if (is_dragging) {
+    if(walking())cancel_walk();
     app.camera.azimuth += (float)(x - drag_start_x) * 0.01f;
     app.camera.polar += (float)(y - drag_start_y) * 0.01f;
     if (app.camera.polar < 0.1f)
@@ -1457,6 +1602,7 @@ static void on_mouse_button(int button, int action, void *user) {
   model_mouse_y = (int)cy;
   if (button == PLATFORM_MOUSE_LEFT) {
     if (action && model_hit_test(model_mouse_x, model_mouse_y)) {
+      if(walking())cancel_walk();
       int wx = 0, wy = 0;
       platform_get_window_pos(win, &wx, &wy);
       window_drag_start_x = wx + model_mouse_x;
@@ -1503,6 +1649,7 @@ static void on_scroll(double dx, double dy, void *user) {
   (void)user;
   (void)dx;
   if(!isfinite(dy) || dy==0)return;
+  if(walking())cancel_walk();
   app.pending_scroll=fmax(-100,fmin(100,app.pending_scroll+dy));
   app.last_scroll_time=platform_get_time();
 }
@@ -1772,6 +1919,7 @@ int main(int argc, char *argv[]) {
     hit_capture_poll(&app.hit_capture);
     platform_poll_events();
     ipc_poll(&app.ipc);
+    if(walking() && app.ipc.client_fd<0)cancel_walk();
     if(app.menu.context[0] && app.ipc.client_fd<0) {
       /* Detaching Studio must not leave a callback-only menu without its owner. */
       gem_menu_default(&app.menu);
@@ -1805,6 +1953,18 @@ int main(int argc, char *argv[]) {
     double now = platform_get_time();
     float dt = (float)(now - app.last_time);
     app.last_time = now;
+    prepare_walk_tick(now_ns);
+    if(walk_motion_active(&app.walk)) {
+      double previous=app.walk.position;
+      walk_motion_update(&app.walk,now_ns);
+      app.model_rotation[1]=(float)app.walk.yaw;
+      renderer_set_model_transform(&app.renderer,app.model_position,app.model_rotation,app.model_scale);
+      int x,y;platform_get_window_pos(app.window,&x,&y);
+      int next=(int)lround(app.walk.position);
+      if(x!=next)platform_move_window(app.window,next,y);
+      if(walk_motion_active(&app.walk))app.animator.speed=dt>0?(float)(fabs(app.walk.position-previous)/(app.walk_nominal_speed*dt)):0;
+      else {animator_pause(&app.animator);app.animator.speed=app.walk_saved_speed;}
+    }
 
     animator_update(&app.animator, dt);
     if (app.model_loaded) {

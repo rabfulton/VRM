@@ -70,6 +70,13 @@ so objects from another build cannot be reused.
 
 ## Renderer integration checks
 
+`make test-walk` exercises horizontal humanoid locomotion with the real renderer
+and companion socket: left/right travel, fixed viewport sizes, unclipped gait,
+screen-edge clamping, cancellation, session disconnection and return to idle.
+It uses the bundled avatar and isolated settings without a voice or AI service.
+Use `python3 tests/walking_smoke.py --model test.vrm` for another humanoid, or
+`--backend wayland` on the Hyprland machine. See [locomotion](locomotion.md).
+
 `python3 tests/shortcut_smoke.py` uses a temporary Ctrl+Alt+Shift+Y global grab
 and XTest key events on Xorg to check activation, held-key repeat suppression,
 conflict detection and release/re-registration. It keeps user settings untouched.

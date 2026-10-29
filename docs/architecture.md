@@ -19,6 +19,7 @@ Wayland/EGL/layer-shell. Maintained desktop targets are Xorg and Hyprland; see
 | Models | `src/gltf_loader.c`, `src/gltf_loader_impl.cpp` | VRM/glTF loading, humanoid mapping, morphs and expression metadata |
 | Rendering | `src/renderer.c` | Embedded shaders, skinning, GPU morphs and draw passes |
 | Animation | `src/animator.c`, `src/ozz_bridge.cpp`, `src/transition.c` | Sampling, retargeting and inertial transition corrections |
+| Locomotion | `src/walk_motion.c`, `src/main.c`, `vrm_overlay/qt_walking.py` | Native horizontal travel/yaw and fixed viewport, session-owned jobs, interruption and completion after arrival/idle blend |
 | Contacts | `src/foot_lock.cpp`, `src/pose.c` | Leg IK, contact history and shared world-transform propagation |
 | Secondary motion | `src/spring_bones.c` | Fixed-step hair/clothing simulation and proxy contacts |
 | Face | `src/expressions.c` | Logical expression inputs, bounded morph composition and speech-aware emotion strength |

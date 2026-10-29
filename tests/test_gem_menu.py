@@ -137,7 +137,7 @@ class GemMenuTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.menu.register(MenuAction('overflow','Overflow','spark'))
 
     def test_group_page_limit_matches_native_backend_and_rejection_is_atomic(self):
-        for i in range(14):self.menu.register(MenuAction('group:'+str(i),'Tool','spark',group='group'+str(i)))
+        for i in range(16-len(self.menu.pages)):self.menu.register(MenuAction('group:'+str(i),'Tool','spark',group='group'+str(i)))
         self.assertEqual(len(self.menu.pages),16)
         with self.assertRaisesRegex(ValueError,'pages'):
             self.menu.register(MenuAction('one_more','Tool','spark',group='overflow'))

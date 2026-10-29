@@ -46,7 +46,7 @@ ifeq ($(USE_OZZ),1)
   LDLIBS += $(OZZ_LIBS)
 endif
 
-C_SRC = src/main.c src/app_paths.c $(PLATFORM_SRC) src/gem_menu.c src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
+C_SRC = src/main.c src/app_paths.c $(PLATFORM_SRC) src/gem_menu.c src/walk_motion.c src/renderer.c src/input_mask.c src/hit_capture.c src/audio.c src/event.c src/viseme.c src/camera.c src/gltf_loader.c src/bounds.c src/expressions.c src/pose.c src/ipc.c src/animator.c src/transition.c src/spring_bones.c src/anim_config.c src/settings.c deps/cjson/cJSON.c
 CXX_SRC = src/gltf_loader_impl.cpp src/tinygltf_impl.cpp src/foot_lock.cpp
 ifeq ($(USE_OZZ),1)
   CXX_SRC += src/ozz_bridge.cpp
@@ -62,7 +62,7 @@ endif
 
 TARGET = vrm-overlay
 
-.PHONY: FORCE all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-render test-assets test-springs test-zoom studio
+.PHONY: FORCE all clean debug test test-sanitize test-ui test-speech test-chat test-fit test-desktop test-walk test-render test-assets test-springs test-zoom studio
 
 all: $(TARGET)
 
@@ -147,6 +147,9 @@ $(TEST_BUILD_DIR)/frame-clock-test: tests/frame_clock_test.c src/frame_clock.h |
 $(TEST_BUILD_DIR)/gem-menu-test: tests/gem_menu_test.c src/gem_menu.c src/gem_menu.h deps/cjson/cJSON.c | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/gem_menu_test.c src/gem_menu.c deps/cjson/cJSON.c -o $@ -lm
 
+$(TEST_BUILD_DIR)/walk-motion-test: tests/walk_motion_test.c src/walk_motion.c src/walk_motion.h | $(TEST_BUILD_DIR)
+	$(CC) $(TEST_CFLAGS) tests/walk_motion_test.c src/walk_motion.c -o $@ -lm
+
 $(TEST_BUILD_DIR)/app-paths-probe: tests/app_paths_probe.c src/app_paths.c src/app_paths.h | $(TEST_BUILD_DIR)
 	$(CC) $(TEST_CFLAGS) tests/app_paths_probe.c src/app_paths.c -o $@
 
@@ -170,7 +173,7 @@ OZZ_TEST = $(TEST_BUILD_DIR)/animation-transition-test
 FOOT_TEST = $(TEST_BUILD_DIR)/foot-lock-test
 endif
 
-test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(TEST_BUILD_DIR)/frame-clock-test $(TEST_BUILD_DIR)/gem-menu-test $(OZZ_TEST) $(FOOT_TEST)
+test: $(TEST_BUILD_DIR)/walk-motion-test $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUILD_DIR)/audio-test $(TEST_BUILD_DIR)/transition-test $(TEST_BUILD_DIR)/spring-test $(TEST_BUILD_DIR)/viseme-default-test $(TEST_BUILD_DIR)/expression-test $(TEST_BUILD_DIR)/anim-config-test $(TEST_BUILD_DIR)/bounds-test $(TEST_BUILD_DIR)/input-mask-test $(TEST_BUILD_DIR)/settings-test $(TEST_BUILD_DIR)/frame-clock-test $(TEST_BUILD_DIR)/gem-menu-test $(OZZ_TEST) $(FOOT_TEST)
 	$(if $(OZZ_TEST),$(OZZ_TEST),true)
 	$(if $(FOOT_TEST),$(FOOT_TEST),true)
 	$(TEST_BUILD_DIR)/audio-test
@@ -184,6 +187,7 @@ test: $(TEST_BUILD_DIR)/app-paths-probe $(TEST_BUILD_DIR)/ipc-server $(TEST_BUIL
 	$(TEST_BUILD_DIR)/settings-test
 	$(TEST_BUILD_DIR)/frame-clock-test
 	$(TEST_BUILD_DIR)/gem-menu-test
+	$(TEST_BUILD_DIR)/walk-motion-test
 	VRM_TEST_GEM_MENU_PROBE=$(abspath $(TEST_BUILD_DIR)/gem-menu-test) VRM_TEST_IPC_SERVER=$(abspath $(TEST_BUILD_DIR)/ipc-server) VRM_TEST_PATHS_PROBE=$(abspath $(TEST_BUILD_DIR)/app-paths-probe) $(PYTHON) -m unittest discover -s tests -v
 
 test-sanitize:
@@ -210,6 +214,9 @@ test-fit: all
 
 test-desktop: all
 	python3 tests/desktop_smoke.py
+
+test-walk: all
+	python3 tests/walking_smoke.py
 
 ZOOM_MODEL ?= assets/starter/models/anime.vrm
 test-zoom: all

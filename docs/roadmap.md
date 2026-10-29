@@ -1,6 +1,6 @@
 # Path to a useful desktop companion
 
-Priorities reviewed on 2026-10-28. This document records planned work; current
+Priorities reviewed on 2026-10-29. This document records planned work; current
 behaviour belongs in the feature guides linked below.
 
 ## Working foundation
@@ -68,6 +68,16 @@ The initial local stdio server exposes capabilities, queued speech/gesture
 presentations, per-session status, cancellation and hide/summon through the controller’s single
 renderer connection. Test agent-specific integration and the experience of using
 existing filesystem, music, mail and scheduling tools to drive the avatar.
+
+Horizontal humanoid walking now has local **Move** menu controls and MCP jobs with
+duration estimates, status, cancellation and completion after arrival/idle settling.
+MCP accepts relative left/right travel and absolute viewport-centre X destinations,
+with geometry discovery and explicit requested/reachable positions in status.
+Review gait speed and visual turns on varied humanoids, and exercise the same
+controller on Hyprland. See [locomotion](locomotion.md). Extend this with authored
+stride metadata, other gaits, vertical travel and pointing; target discovery
+remains the external agent's responsibility. Walking and presentations currently
+take turns owning the body.
 
 Hide/summon now shares an optional exit/entrance lifecycle between Studio, the
 right-click menu, MCP and an editable global shortcut. Xorg key grabs have a real

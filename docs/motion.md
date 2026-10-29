@@ -1,5 +1,7 @@
 # Motion and contact behaviour
 
+For screen movement and MCP motion jobs, see [horizontal walking](locomotion.md).
+
 ## Implementation
 
 The local reference avatar has six skirt chains referencing only thigh collider

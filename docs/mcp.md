@@ -64,6 +64,20 @@ external agent owns its model connection. Built-in chat credentials are separate
 | `avatar_summon` | Empty object | Interrupt an exit and replay the entrance |
 | `avatar_toggle` | Empty object | Atomically toggle requested visibility |
 | `avatar_visibility` | Empty object | Actual/requested visibility and lifecycle phase |
+| `avatar_walk` | Relative: `direction` (`left`/`right`) and optional `distance` (24–1600, default 240); absolute: `x` only | Motion ID, destination, state and duration estimate |
+| `avatar_motion_status` | `motion_id` | This session's motion phase, progress, clamping and estimated remaining time |
+| `avatar_motion_cancel` | `motion_id` | Stop walking and return to idle; poll until terminal |
+
+Walking requires External-agent mode and a standing humanoid. Its jobs are separate
+from presentation IDs. Poll until `completed`, `cancelled` or `failed`; an estimated
+duration does not prove completion. Completion includes arrival and the final idle
+blend. One walk owns the body; wait for it before requesting a presentation.
+Use `{"direction":"right","distance":350}` for relative travel or `{"x":900}`
+to put the viewport centre at an absolute X. Do not mix the forms. Both clamp to
+the current workarea; status reports `requested_x`, reachable `target_x`, current
+`x` and `clamped`. Capabilities expose the current position, workarea and coordinate
+limits. X11 uses desktop pixels; Wayland uses output-local logical coordinates.
+See [walking, timing and limits](locomotion.md).
 
 Visibility tools work in both conversation modes. Hide and summon affect the
 whole companion and survive adapter disconnection. Hiding cancels all current
@@ -98,6 +112,7 @@ Mode/model/library/voice changes or revoked action access invalidate pending wor
 Manual Studio animation controls and voice previews take precedence. Studio’s
 **Stop external output** cancels all external work without changing the selected
 conversation source. Switching back to Built-in chat also clears external output.
+These controls also stop an active walking job and return it to standing idle.
 
 ## Private sockets and multiple instances
 

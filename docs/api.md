@@ -96,6 +96,49 @@ Crossfade to animation over duration (seconds), with optional loop/count.
 - `loop`: If true, loop indefinitely; if false, play once
 - `count`: Number of times to play the clip (1 = play once). Overrides auto-loop detection.
 
+### Horizontal walking
+
+The controller/MCP owns gait selection and return to idle; see
+[walking and completion](locomotion.md). Native clients can prepare an in-place,
+forward-facing loopable humanoid gait with `load_animation`, `blend_to` and `play`,
+then send:
+
+```json
+{"action":"start_walk","motion_id":"walk_example","distance":240,"restore_speed":1.0}
+{"action":"start_walk","motion_id":"walk_absolute","x":900,"restore_speed":1.0}
+{"action":"cancel_walk","motion_id":"walk_example"}
+```
+
+`motion_id` is a nonempty string of at most 48 bytes. Signed `distance` is
+24–1600 screen units in magnitude (negative left). Alternatively pass absolute
+`x` between -131072 and 131072, addressing the viewport centre after fitting;
+do not combine it with `distance`. Absolute travel allows small/zero distances
+and longer journeys within the current workarea. Optional `restore_speed`
+is 0.1–3. Native walking requires a visible loaded humanoid and loopable active
+animation; overlapping walks are rejected. For the bundled walk, pass
+`"neutral_facing":true` to `load_animation`. This removes authored hips facing
+before retargeting and blending, so native yaw is the sole turn owner. This
+option requires canonical `normalizedHips`/`facingYaw` clip metadata; normal loads
+preserve authored facing. `get_state.animation_neutral_facing` reports the option.
+This is not arbitrary root-motion extraction.
+
+`get_state.data.walk` reports `id`, `phase`, `progress`, `remaining_seconds`,
+`duration_seconds`, `yaw` (renderer yaw in degrees), signed `requested_distance`, `distance`, `actual_distance`
+and `clamped`.
+`mode` is `relative` or `absolute`; `start_x`, `requested_x`, reachable `target_x`
+and current `x` use centre coordinates. Absolute destinations are clamped after
+viewport fitting. Fractional targets are placed to the nearest surface pixel.
+
+Native phases are `idle`, `preparing`, `turning`, `walking`,
+`turning_back`, `completed`, `cancelled`. Native completion pauses the gait and
+restores speed; the controller's higher-level completion additionally waits for
+arrival and the idle blend. Other animation/transform/window controls, mouse
+drag/orbit/zoom, hiding and controller disconnection interrupt native travel.
+
+Snapshots also include `humanoid`, `avatar_height_pixels` (a stride estimate),
+`window` and `workarea` rectangles with `x`, `y`, `width`, `height` in backend
+screen units. Movement remains on the current output/workarea.
+
 ### Model Transform
 
 #### set_position

@@ -12,7 +12,11 @@ Query avatar_capabilities first. Use only the returned gesture/expression IDs.
 avatar_present accepts plain spoken text, not inline animation cues or Markdown.
 Acceptance returns a presentation ID; poll avatar_status for completion and use
 avatar_cancel to interrupt your presentation. Use avatar_hide and avatar_summon
-for visibility, and avatar_visibility
+for visibility. Use avatar_walk with direction/distance for relative walking or
+x for an absolute viewport-centre destination; never mix these forms. Use avatar_motion_status to
+poll the returned motion ID until completed/cancelled/failed, and
+avatar_motion_cancel to stop. Estimates may change; they do not prove completion.
+Wait for walking to finish before requesting speech or gestures. Use avatar_visibility
 to check the lifecycle phase. Visibility tools work in either conversation mode;
 hiding cancels all output. Summon explicitly before presenting to a hidden avatar.
 Do not narrate secrets or raw tool

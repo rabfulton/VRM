@@ -284,6 +284,8 @@ void gltf_update_transforms(GltfModel *model);
 
 /* Load animation from separate file and apply to current model */
 bool gltf_load_animation(GltfModel *model, const char *anim_path);
+/* Remove the canonical clip's authored facing before retargeting/blending. */
+bool gltf_load_animation_neutral(GltfModel *model, const char *anim_path);
 
 /* Get a node by name (returns -1 if not found) */
 int gltf_find_node(const GltfModel *model, const char *name);

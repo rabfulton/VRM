@@ -1639,7 +1639,7 @@ extern "C" void gltf_unload_impl(GltfModel *model) {
 
 /* Load animation from VRMA file and apply to existing model */
 extern "C" bool gltf_load_animation_impl(GltfModel *model,
-                                         const char *anim_path) {
+                                         const char *anim_path, bool neutral_facing) {
   tinygltf::TinyGLTF loader;
   tinygltf::Model anim_gltf;
   std::string err, warn;
@@ -1661,6 +1661,21 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model,
   if (anim_gltf.animations.empty()) {
     fprintf(stderr, "No animations in file\n");
     return false;
+  }
+
+  float facing_inverse[4] = {0, 0, 0, 1};
+  if (neutral_facing) {
+    const auto &extras = anim_gltf.extras;
+    if (!extras.IsObject() || !extras.Has("vrmOverlay")) return false;
+    const auto &meta = extras.Get("vrmOverlay");
+    if (!meta.IsObject() || !meta.Has("normalizedHips") ||
+        !meta.Get("normalizedHips").IsBool() || !meta.Get("normalizedHips").Get<bool>() ||
+        !meta.Has("facingYaw") || !meta.Get("facingYaw").IsNumber()) return false;
+    double yaw = meta.Get("facingYaw").GetNumberAsDouble();
+    if (!std::isfinite(yaw) || std::abs(yaw) > 180) return false;
+    double angle = -yaw * 3.14159265358979323846 / 360;
+    facing_inverse[1] = (float)sin(angle);
+    facing_inverse[3] = (float)cos(angle);
   }
 
   /* Free existing animations */
@@ -2228,6 +2243,29 @@ extern "C" bool gltf_load_animation_impl(GltfModel *model,
 
       int anim_node_idx = channel.target_node;
       auto it = anim_to_model_node.find(anim_node_idx);
+      /* Undo only the canonical hips' baked facing, in source space, before
+       * rest-pose retargeting. Both samplers then contain a forward gait and
+       * inertial blending never has a second yaw turn to compose with travel. */
+      auto hips = model_humanoid_map.find("hips");
+      if (neutral_facing && sampler_valid && it != anim_to_model_node.end() &&
+          hips != model_humanoid_map.end() && it->second == hips->second) {
+        auto &s = a->samplers[c->sampler_index];
+        if (channel.target_path == "rotation" && s.output_stride == 4) {
+          for (int k = 0; k < s.keyframe_count; k++) {
+            float rotated[4];
+            qmul(facing_inverse, &s.output[k*4], rotated);
+            memcpy(&s.output[k*4], rotated, sizeof(rotated));
+          }
+        } else if (channel.target_path == "translation" && s.output_stride == 3) {
+          const auto &origin = anim_gltf.nodes[anim_node_idx].translation;
+          if (origin.size() == 3) for (int k = 0; k < s.keyframe_count; k++) {
+            vec3 delta, rotated;
+            for (int axis = 0; axis < 3; axis++) delta[axis] = s.output[k*3+axis] - (float)origin[axis];
+            glm_quat_rotatev(facing_inverse, delta, rotated);
+            for (int axis = 0; axis < 3; axis++) s.output[k*3+axis] = (float)origin[axis] + rotated[axis];
+          }
+        }
+      }
       if (it != anim_to_model_node.end()) {
         if (sampler_valid) {
           c->target_node = it->second;

@@ -60,6 +60,7 @@ class CompanionServer(QObject):
         state = self.peers.pop(peer, None)
         if state is not None:
             self.runtime.presentations.cancel_owner(state['owner'])
+            if hasattr(self.runtime, 'walking'):self.runtime.walking.cancel_owner(state['owner'])
         peer.deleteLater()
 
     def read(self, peer):
@@ -89,6 +90,12 @@ class CompanionServer(QObject):
                     result = self.runtime.visibility.change(visible)
                 elif name == 'avatar_capabilities':
                     result = manager.capabilities()
+                elif name == 'avatar_walk':
+                    result = self.runtime.walking.start(state['owner'], **arguments)
+                elif name == 'avatar_motion_status':
+                    result = self.runtime.walking.status(state['owner'], arguments['motion_id'])
+                elif name == 'avatar_motion_cancel':
+                    result = self.runtime.walking.cancel(state['owner'], arguments['motion_id'])
                 elif name == 'avatar_status':
                     result = manager.status(state['owner'], arguments['presentation_id'])
                 elif name == 'avatar_cancel':
@@ -108,5 +115,6 @@ class CompanionServer(QObject):
         self.server.close()
         for peer in list(self.peers):
             self.runtime.presentations.cancel_owner(self.peers[peer]['owner'])
+            if hasattr(self.runtime, 'walking'):self.runtime.walking.cancel_owner(self.peers[peer]['owner'])
             peer.abort()
         self.lock.unlock()

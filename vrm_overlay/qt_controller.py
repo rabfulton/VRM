@@ -25,6 +25,7 @@ from .paths import default_socket_path, development_file, renderer_executable
 from .presentation import PresentationQueue
 from .visibility import AvatarVisibility
 from .qt_shortcut import VisibilityShortcut
+from .qt_walking import WalkingController
 
 
 def local_path(value: str) -> Path:
@@ -161,6 +162,7 @@ class Controller(QObject):
         self.presentations = PresentationQueue(self)
         self.visibility = AvatarVisibility(self)
         self._visibility_shortcut = VisibilityShortcut(self)
+        self.walking = WalkingController(self)
         self._gem_menu = GemMenu(self)
         self._avatars = AvatarLibrary(self, root=avatar_dir)
         self.scanAnimations()
@@ -199,6 +201,7 @@ class Controller(QObject):
             return
         self.presentations.cancel_all()
         self._chat.stop()
+        self.walking.cancel_current(restore=True)
         self._external_agent = enabled
         self._settings.setValue('chat/source', 'external' if enabled else 'builtin')
         self.changed.emit()
@@ -206,6 +209,7 @@ class Controller(QObject):
     @Slot()
     def stopExternalPresentations(self):
         self.presentations.cancel_all()
+        self.walking.cancel_current(restore=True)
     busy = Property(bool, lambda self: bool(self._jobs) or (self._job is not None and not self._job.poll), notify=changed)
     status = Property(str, lambda self: self._status, notify=changed)
     lastError = Property(str, lambda self: self._error, notify=changed)
@@ -368,6 +372,10 @@ class Controller(QObject):
 
     @Slot()
     def disconnectRuntime(self):
+        if self.walking.busy and self._socket.state() == QLocalSocket.ConnectedState:
+            identifier = self.walking.active['id']
+            self._socket.write((json.dumps(dict(action='cancel_walk', motion_id=identifier))+'\n').encode())
+            self._socket.flush()
         self._preview_path = ''
         self._invalidate_motion()
         self._chat.stop()
@@ -384,6 +392,8 @@ class Controller(QObject):
         self._job = self._pending = None
         self._starting = False
         self._connected = False
+        if self.walking.active:
+            self.walking.finish(self.walking.active, 'cancelled')
         self._socket.abort()
         self._status = "Disconnected"
         self.changed.emit()
@@ -829,6 +839,7 @@ class Controller(QObject):
         return True
 
     def _invalidate_motion(self):
+        self.walking.cancel_current()
         self._motion_end.stop()
         self._motion_generation += 1
         self._motion = None
@@ -971,6 +982,8 @@ class Controller(QObject):
         self._queue_pose_motion(commands, label, path, "action", done=done, failed=failed, guard=guard)
 
     def _maybe_idle(self):
+        if self.walking.busy:
+            return
         owner = self._motion
         if owner is None or not self._connected or self.busy or self._closing or self._quitting:
             return
@@ -1024,6 +1037,7 @@ class Controller(QObject):
     @Slot()
     def shutdown(self):
         self._closing = True
+        self.walking.timer.stop()
         if self._overlay_menu_input:self._overlay_menu_input.close()
         self.visibility.timer.stop()
         self._visibility_shortcut.shutdown()

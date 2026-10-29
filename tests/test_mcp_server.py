@@ -36,7 +36,7 @@ class McpProtocolTests(fixtures.PresentationFixture if HAS_SDK and HAS_QT else u
                         initialized = await client.initialize()
                         self.assertEqual(initialized.serverInfo.name, 'domovushka')
                         tools = await client.list_tools()
-                        self.assertEqual(len(tools.tools), 9)
+                        self.assertEqual(len(tools.tools), 12)
                         bad = await client.call_tool('avatar_present', dict(text='Hi', command='rm'))
                         self.assertTrue(bad.isError)
                         caps = await client.call_tool('avatar_capabilities', {})

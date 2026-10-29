@@ -1,8 +1,11 @@
 # Radial gem menu
 
 Right-click the avatar to open a constellation of faceted gems. **Talk to me**,
-**Studio**, **Always on top**, **Hide avatar**, **Colours** and **Quit** are the
+**Studio**, **Always on top**, **Move**, **Colours** and **Quit** are the
 initial actions. The centre closes the main menu and goes back from a submenu.
+**Move** opens **Stop walking**, **Walk right**, **Hide avatar** and **Walk left**;
+the left/right controls occupy their corresponding sides of the orbit. Walking
+requires a visible humanoid. See [locomotion](locomotion.md).
 External-agent mode disables local chat and labels that gem **External agent**.
 
 The orbit opens with a short fade/scale animation, then stays still. Hover and

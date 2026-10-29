@@ -20,7 +20,7 @@
 /* These functions are implemented in gltf_loader_impl.cpp */
 extern bool gltf_load_impl(GltfModel *model, const char *path);
 extern void gltf_unload_impl(GltfModel *model);
-extern bool gltf_load_animation_impl(GltfModel *model, const char *anim_path);
+extern bool gltf_load_animation_impl(GltfModel *model, const char *anim_path, bool neutral_facing);
 
 bool gltf_load(GltfModel *model, const char *path) {
   memset(model, 0, sizeof(GltfModel));
@@ -38,7 +38,11 @@ void gltf_unload(GltfModel *model) {
 bool gltf_load_animation(GltfModel *model, const char *anim_path) {
   if (!model->loaded)
     return false;
-  return gltf_load_animation_impl(model, anim_path);
+  return gltf_load_animation_impl(model, anim_path, false);
+}
+
+bool gltf_load_animation_neutral(GltfModel *model, const char *anim_path) {
+  return model->loaded && gltf_load_animation_impl(model, anim_path, true);
 }
 
 
